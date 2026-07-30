@@ -148,6 +148,45 @@ network authentication server has timed out."
 
 ---
 
+## Madden DNAS gate — located, patched, unproven (2026-07-30)
+
+Static, from `SLUS_207.52`. The main ELF embeds a relocatable module whose
+string table exports exactly three names, so `DirtyDnasRel` is DirtyDnas
+**Rel**ocatable. The loader at `0x004f2270` resolves them and stores the
+pointers at `0x00574248` / `0x0057424c` / `0x00574250`; thin trampolines at
+`0x004f2338` (Init), `0x004f2360` (Updt) and `0x004f2388` (Exit) call through.
+
+`Updt`'s trampoline has exactly one caller — the DNAS poller at `0x00305238`,
+which returns **1, 2 or 3**:
+
+| Condition | Result |
+|---|---|
+| DNAS-active flag (`-3592(gp)`) is 0 | 1 |
+| `Updt` returns non-zero | 3 |
+| `Updt` returns 0 → `Exit` teardown | 2 **if `Exit` returned non-zero**, else 1 |
+
+With the servers dead it is 3 forever, which is what the endless
+"Authenticating DNAS data" screen is.
+
+**What is not known, and cannot be settled from this executable.** The poller's
+only caller (`0x00353eb0`) never tests the value: it does `sw v0, 0(s2)` and
+jumps to a shared exit — one entry in a dispatch table of script-callable
+functions. Which of 1/2/3 means "proceed" is decided by the game's script. The
+patch is therefore an experiment with a well-located target, not a proof.
+
+`patches/14F8B841.pnach` carries three variants: force the `Updt` test
+unconditional (A, active), return 2 immediately (B), or report 1 as though DNAS
+was never enabled (C). All three encodings were re-decoded against the ELF and
+every branch keeps its original target.
+
+**Correction worth keeping.** `0x00305278` is `movn s0, v1, v0` — *conditional*.
+An earlier note claimed the completion path always returns 2; it returns 2 only
+when `Exit` returns non-zero. The disassembler had no entry for funct `0x0b` and
+printed `.word`, and the gap was filled by assumption rather than checked. It
+now decodes `movz`/`movn`, the 64-bit forms and `ld`/`sd`.
+
+---
+
 ## Slice decision log
 
 Record here, once recon is in, which title+platform becomes the first

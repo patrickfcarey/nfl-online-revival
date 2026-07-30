@@ -1,27 +1,65 @@
 gametitle=Madden NFL 2004 (SLUS-20752, CRC 14F8B841)
-comment=Force the DNAS poll onto its completion path so online play proceeds
+comment=DNAS bypass - VARIANT A (force the poll off its "still working" path)
 
-// Sony's DNAS servers are gone, so DirtyDnasRelUpdt can never report success.
-// The title stops at "Authenticating DNAS data" and returns error -610.
+// ---------------------------------------------------------------------------
+// WHY
 //
-// The DNAS poller at 0x00305238 reads:
-//     00305248  beq v0, zero, 0x0030527c  ; DNAS disabled -> return 1
-//     0030524c  addiu s0, zero, 1         ; (delay slot) default result
-//     00305250  jal 0x004f2360            ; DirtyDnasRelUpdt trampoline
-//     00305258  beq v0, zero, 0x00305268  ; Updt == 0 -> COMPLETION path
-//     00305264  addiu s0, zero, 3         ; Updt != 0 -> return 3, still working
-//     00305268  jal 0x004f2388            ; completion: DirtyDnasRelExit teardown
-//     00305278  s0 = 2                    ; -> return 2, DNAS finished
+// Sony's DNAS servers are gone, so DirtyDnasRelUpdt never reports completion.
+// The title sits on "Authenticating DNAS data" and ends at error -610.
 //
-// Changing the branch's source register from v0 to zero makes it
-// unconditional, so the poll always takes the completion path. Updt still
-// runs; its result is simply no longer allowed to hold the title back.
-// The branch target is unchanged (0x00305268) and the delay slot is untouched.
+// THE CODE  (poller at 0x00305238, verified by disassembly)
 //
-//   before  0x10400003   beq v0, zero, +3
-//   after   0x10000003   beq zero, zero, +3
+//   00305238  addiu sp, sp, -32
+//   0030523c  lbu   v0, -3592(gp)          ; "is DNAS active?" flag
+//   00305248  beq   v0, zero, 0x0030527c   ; not active -> return s0
+//   0030524c  addiu s0, zero, 1            ; delay slot: default result = 1
+//   00305250  jal   0x004f2360             ; DirtyDnasRelUpdt trampoline
+//   00305258  beq   v0, zero, 0x00305268   ; Updt == 0 -> completion path
+//   00305260  beq   zero, zero, 0x0030527c
+//   00305264  addiu s0, zero, 3            ; delay slot: Updt != 0 -> result 3
+//   00305268  jal   0x004f2388             ; completion: DirtyDnasRelExit
+//   00305270  addiu v1, zero, 2
+//   00305274  jal   0x00305080
+//   00305278  movn  s0, v1, v0             ; delay slot: s0 = 2 ONLY IF Exit != 0
+//   0030527c  daddu v0, s0, zero           ; return s0
 //
-// SCOPE: this gets the title past its own DNAS gate. It does not obtain a DNAS
-// ticket, so if the game server later validates one, that must be handled
-// server-side -- which is fine, because we are writing that server.
+// So the result is 1, 2 or 3. With dead servers it is 3 forever, which is what
+// the endless "Authenticating" screen looks like.
+//
+// WHAT IS NOT KNOWN
+//
+// The poller's only caller (0x00353eb0) does not test the value -- it stores it
+// with `sw v0, 0(s2)` and jumps to a shared exit, one entry in a dispatch table
+// of script-callable functions. Which of 1/2/3 means "proceed" is therefore
+// decided by the game's script, not by this executable, and cannot be settled
+// by reading the ELF. The variants below are an experiment, not a proof.
+//
+// Note 0x00305278 is `movn` (conditional), not a plain move: on the completion
+// path s0 becomes 2 only when DirtyDnasRelExit returns non-zero, otherwise it
+// stays 1. An earlier version of this file claimed that path always returns 2.
+// ---------------------------------------------------------------------------
+
+// VARIANT A (active): make the Updt test unconditional, so the poll always
+// takes the completion path instead of parking on 3. Updt still runs; its
+// verdict just stops holding the title back. Branch target (0x00305268) and
+// delay slot are unchanged.
+//   before  0x10400003  beq v0,   zero, +3
+//   after   0x10000003  beq zero, zero, +3
 patch=1,EE,00305258,word,10000003
+
+// VARIANT B: if A leaves it stuck, return 2 immediately -- never calling Updt
+// or Exit, so Exit's return value cannot drag the result back down to 1.
+// Comment out A and uncomment both lines.
+//   00305248: beq v0,zero,+12 -> beq zero,zero,+12   (always take the exit)
+//   0030524c: addiu s0,zero,1 -> addiu s0,zero,2     (delay slot: result = 2)
+//patch=1,EE,00305248,word,1000000c
+//patch=1,EE,0030524c,word,24100002
+
+// VARIANT C: report 1, which is what the title itself returns when DNAS is not
+// active -- i.e. make it believe DNAS was never switched on.
+//   00305248: beq v0,zero,+12 -> beq zero,zero,+12
+//patch=1,EE,00305248,word,1000000c
+
+// SCOPE: any of these gets the title past its own DNAS gate. None obtains a
+// DNAS ticket. If the game server later validates one, that is handled
+// server-side -- which is fine, because we are writing that server.

@@ -33,6 +33,14 @@ _SPECIAL = {
     0x1B: "divu", 0x20: "add", 0x21: "addu", 0x22: "sub", 0x23: "subu",
     0x24: "and", 0x25: "or", 0x26: "xor", 0x27: "nor", 0x2A: "slt",
     0x2B: "sltu",
+    # R5900 is MIPS III/IV based: the 64-bit forms and the conditional moves
+    # are common in compiler output here. Leaving them as ".word" invites
+    # reading a conditional move as an unconditional assignment, which is
+    # exactly the mistake that produced a wrong patch note once.
+    0x0A: "movz", 0x0B: "movn", 0x2C: "dadd", 0x2D: "daddu", 0x2E: "dsub",
+    0x2F: "dsubu", 0x14: "dsllv", 0x16: "dsrlv", 0x17: "dsrav",
+    0x38: "dsll", 0x3A: "dsrl", 0x3B: "dsra", 0x3C: "dsll32",
+    0x3E: "dsrl32", 0x3F: "dsra32",
 }
 _OPCODES = {
     0x02: "j", 0x03: "jal", 0x04: "beq", 0x05: "bne", 0x06: "blez",
@@ -40,6 +48,7 @@ _OPCODES = {
     0x0C: "andi", 0x0D: "ori", 0x0E: "xori", 0x0F: "lui",
     0x20: "lb", 0x21: "lh", 0x23: "lw", 0x24: "lbu", 0x25: "lhu",
     0x28: "sb", 0x29: "sh", 0x2B: "sw",
+    0x18: "daddi", 0x19: "daddiu", 0x37: "ld", 0x3F: "sd", 0x27: "lwu",
 }
 
 
@@ -124,6 +133,11 @@ def disassemble(word: int, vaddr: int = 0) -> str:
             return "%s %s" % (name, _REGS[rd])
         if name in ("mult", "multu", "div", "divu"):
             return "%s %s, %s" % (name, _REGS[rs], _REGS[rt])
+        if name in ("movz", "movn"):
+            # Conditional: rd is written only when rt is zero / non-zero.
+            return "%s %s, %s, %s" % (name, _REGS[rd], _REGS[rs], _REGS[rt])
+        if name in ("dsll", "dsrl", "dsra", "dsll32", "dsrl32", "dsra32"):
+            return "%s %s, %s, %d" % (name, _REGS[rd], _REGS[rt], shamt)
         return "%s %s, %s, %s" % (name, _REGS[rd], _REGS[rs], _REGS[rt])
     name = _OPCODES.get(op)
     if name is None:
@@ -138,7 +152,8 @@ def disassemble(word: int, vaddr: int = 0) -> str:
         return "%s %s, 0x%08x" % (name, _REGS[rs], vaddr + 4 + (simm << 2))
     if name == "lui":
         return "lui %s, 0x%04x" % (_REGS[rt], imm)
-    if name in ("lb", "lh", "lw", "lbu", "lhu", "sb", "sh", "sw"):
+    if name in ("lb", "lh", "lw", "lbu", "lhu", "sb", "sh", "sw", "ld", "sd",
+                "lwu"):
         return "%s %s, %d(%s)" % (name, _REGS[rt], simm, _REGS[rs])
     if name in ("andi", "ori", "xori"):
         return "%s %s, %s, 0x%04x" % (name, _REGS[rt], _REGS[rs], imm)
