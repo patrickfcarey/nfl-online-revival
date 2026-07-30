@@ -109,6 +109,18 @@ def _cmd_sink(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_tls(args: argparse.Namespace) -> int:
+    from . import tlssink
+
+    try:
+        tlssink.serve(bind=args.bind, port=args.port, cert=args.cert,
+                      key=args.key, transcript_path=args.out)
+    except tlssink.TlsSinkError as exc:
+        print("error: %s" % exc, file=sys.stderr)
+        return 1
+    return 0
+
+
 def _cmd_classify(args: argparse.Namespace) -> int:
     from . import classify
 
@@ -181,6 +193,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="canned greeting sent on TCP connect, for services "
                              "where the server speaks first")
     p_sink.set_defaults(func=_cmd_sink)
+
+    p_tls = sub.add_parser("tls", help="terminate TLS and report if the client "
+                                       "validates the certificate")
+    p_tls.add_argument("--bind", default="0.0.0.0")
+    p_tls.add_argument("--port", type=_port, default=443)
+    p_tls.add_argument("--cert", help="certificate PEM (generated if absent)")
+    p_tls.add_argument("--key", help="private key PEM (generated if absent)")
+    p_tls.add_argument("--out", help="JSONL transcript path")
+    p_tls.set_defaults(func=_cmd_tls)
 
     p_cls = sub.add_parser("classify", help="fingerprint a capture")
     p_cls.add_argument("path", help="a .pcap, or a sink transcript with --transcript")

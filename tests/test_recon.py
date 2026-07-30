@@ -23,7 +23,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from recon import __main__ as recon_cli  # noqa: E402
-from recon import classify, dnsd, pcapreader, sinkd  # noqa: E402
+from recon import classify, dnsd, pcapreader, sinkd, tlssink  # noqa: E402
 
 
 # --------------------------------------------------------------------------
@@ -616,6 +616,84 @@ class MisuseTests(unittest.TestCase):
         args = recon_cli.build_parser().parse_args(
             ["sink", "--tcp", "80", "--greet-hex", "5c6c635c"])
         self.assertEqual(args.greet_hex, b"\\lc\\")
+
+
+def client_hello(sni=None, version=0x0303, ciphers=(0x002f, 0x0035)):
+    """Build a minimal but structurally valid TLS ClientHello."""
+    body = struct.pack(">H", version) + b"\x00" * 32 + b"\x00"
+    body += struct.pack(">H", len(ciphers) * 2)
+    for c in ciphers:
+        body += struct.pack(">H", c)
+    body += b"\x01\x00"                       # compression methods
+    ext = b""
+    if sni is not None:
+        name = sni.encode()
+        server_name = b"\x00" + struct.pack(">H", len(name)) + name
+        sni_ext = struct.pack(">H", len(server_name)) + server_name
+        ext += struct.pack(">HH", 0x0000, len(sni_ext)) + sni_ext
+    body += struct.pack(">H", len(ext)) + ext
+    handshake = b"\x01" + struct.pack(">I", len(body))[1:] + body
+    return b"\x16\x03\x01" + struct.pack(">H", len(handshake)) + handshake
+
+
+class ClientHelloTests(unittest.TestCase):
+    """SNI is the only field that says which hostname the client thinks it is
+    calling, when every name resolves to the same sinkhole address."""
+
+    def test_sni_is_recovered(self):
+        info = tlssink.parse_client_hello(client_hello(sni="gate1.us.dnas.playstation.org"))
+        self.assertTrue(info["is_tls"])
+        self.assertEqual(info["sni"], "gate1.us.dnas.playstation.org")
+
+    def test_version_and_ciphers(self):
+        info = tlssink.parse_client_hello(client_hello(ciphers=(0x002f, 0x0035, 0x000a)))
+        self.assertEqual(info["version"], "TLS 1.2")
+        self.assertEqual(info["ciphers"], ["0x002f", "0x0035", "0x000a"])
+
+    def test_absent_sni_is_reported_not_invented(self):
+        info = tlssink.parse_client_hello(client_hello(sni=None))
+        self.assertTrue(info["is_tls"])
+        self.assertIsNone(info["sni"])
+
+    def test_old_ssl3_client_is_understood(self):
+        info = tlssink.parse_client_hello(client_hello(version=0x0300))
+        self.assertEqual(info["version"], "SSL 3.0")
+
+    def test_non_tls_payload_is_flagged_not_guessed(self):
+        info = tlssink.parse_client_hello(b"GET / HTTP/1.0\r\n\r\n")
+        self.assertFalse(info["is_tls"])
+        self.assertIn("not a TLS handshake", str(info["error"]))
+
+    def test_truncated_hello_does_not_raise(self):
+        info = tlssink.parse_client_hello(client_hello(sni="x.com")[:20])
+        self.assertTrue(info["is_tls"])  # record header was valid
+        self.assertIsNotNone(info.get("error") or info.get("version"))
+
+    def test_empty_input(self):
+        self.assertFalse(tlssink.parse_client_hello(b"")["is_tls"])
+
+
+class TlsVerdictTests(unittest.TestCase):
+    def test_no_connections_says_so(self):
+        self.assertIn("no connections", tlssink.format_summary([]))
+
+    def test_accepted_handshake_gives_the_go_ahead(self):
+        summary = tlssink.format_summary([
+            {"handshake": "ok", "hello": {"sni": "gate1.us.dnas.playstation.org"}}])
+        self.assertIn("accepts an unknown certificate", summary)
+        self.assertIn("gate1.us.dnas.playstation.org", summary)
+
+    def test_refused_handshake_points_at_the_patch_route(self):
+        summary = tlssink.format_summary([{"handshake": "failed: bad cert",
+                                           "hello": {"sni": None}}])
+        self.assertIn("refused the certificate", summary)
+        self.assertIn("Patching", summary)
+
+    def test_describe_is_readable(self):
+        text = tlssink.describe_client_hello(
+            tlssink.parse_client_hello(client_hello(sni="a.b.com")))
+        self.assertIn("a.b.com", text)
+        self.assertIn("TLS version", text)
 
 
 if __name__ == "__main__":

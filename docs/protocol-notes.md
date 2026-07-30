@@ -97,6 +97,57 @@ capture.sh now excludes those ports by default.
 
 ---
 
+## Static analysis of the discs (2026-07-30)
+
+No emulator needed; read-only. Both ISOs listed with `xorriso`, key files
+extracted, `strings` run per file rather than over the whole 4 GB image.
+
+### Madden NFL 2004 — EA DirtySDK, symbols intact
+
+| Fact | Evidence |
+|---|---|
+| Network SDK is **EA DirtySock (DirtySDK)** | `Dirtysock`, `DirtyClut` in `SLUS_207.52` |
+| DNAS is wrapped by EA, not called raw | `DirtyDnasRelInit`, `DirtyDnasRelAuthStart`, `DirtyDnasRelUpdateDnas`, `DirtyDnasRelUpdateHttp`, `DirtyDnasRelExit` |
+| **Two hooks worth their weight in gold** | `DirtyDnasRelSimError` (simulate an error) and `DirtyDnasRelSetProxy` (redirect) |
+| Sony DNAS API used underneath | `sceDNAS2AuthNetStart`, `sceDNAS2AuthGetUniqueID`, `sceDNAS2AuthDataDownload`, `sceDNAS2AuthInstall` |
+| Server hostname is **stored literally** | `ps2madden04.ea.com` in `SLUS_207.52` |
+| DNAS module ships as a disc file | `/DNAS270.IMG` (251 KB) |
+| Protocol vocabulary (4-char tokens, FESL family) | `AUTH`, `CHAT`, `DISC`, `GAME`, `GAMEID`, `PING`, `ROOM`, `STAT`, `STATE`, `STATUS`, `USER`, `USERNAME` |
+| Other EA host seen | `demangler01.pogo.com` (NAT/connection assist) |
+
+`ROOM` + `GAME` + `USER` is a room-based lobby model, and four-character
+uppercase tokens are the shape of EA's FESL-family protocols. That matters:
+unlike GameSpy, this is a *documented family* with prior reverse-engineering
+work on later EA titles, so the "reusable prior art" hope is not entirely dead —
+it just moved from GameSpy to DirtySDK.
+
+`/DATA/ONLINE.DAT` is almost entirely EULA text, plus `bio_gethostbyname`.
+`/NETGUI/NTGUI.ELF` is Sony's stock network-config GUI, not EA code.
+
+### ESPN NFL 2K5 — everything hidden in the packed containers
+
+The main ELF `SLUS_209.19` (12.6 MB) contains **no hostnames and no lobby
+vocabulary at all** — only `sceLibnetInitialize`, `socket`, and
+`authorityKeyIdentifier`. That last one is an X.509 extension name, so 2K5
+carries certificate-parsing code, which is directly relevant to whether DNAS
+can be impersonated.
+
+Its game code lives in `/VC_20919/0` .. `/4` — five Visual Concepts packed
+containers, ~4.3 GB total, VC-LZ compressed. **This is the same pack-table and
+VC-LZ format the 2K5 mod tools already decode**, so unpacking them and
+re-scanning is a known quantity rather than new research.
+
+`/VC_20919/DATA/DNAS271.IMG` (269 KB) is the DNAS module, version 2.7.1.
+
+### Both discs
+
+DNAS ships **as a file on the disc** in both cases, so it is extractable and
+analysable offline. Error strings recovered: "The authentication has failed.",
+"A network authentication system error has occurred.", "Connection to the
+network authentication server has timed out."
+
+---
+
 ## Slice decision log
 
 Record here, once recon is in, which title+platform becomes the first
@@ -121,3 +172,25 @@ DNAS spike itself, and it decides whether the PS2 path is viable at all.
 If DNAS proves to be a wall, the fallback is the **Xbox** side of both titles,
 where Insignia already solves the platform-auth layer. That reverses the
 original platform preference and is worth re-testing early rather than late.
+Note the rig currently holds **no Xbox images** of either title, so that path
+has an acquisition step before it can even be tested.
+
+**2026-07-30, after static analysis — DNAS is a gate, not necessarily a wall,
+and Madden is still the first slice.**
+
+The pessimism above was overstated. We are writing the game server, so it can
+accept whatever token the client presents; DNAS only has to satisfy the
+*client's own* check. That gives two routes, and the second is well-trodden:
+
+1. **Serve DNAS** — needs Sony's keys. Hard, and the TLS spike decides whether
+   it is even possible (does the client validate our certificate?).
+2. **Patch the client's check** — PCSX2 has a native patch/cheat system, so this
+   needs no modified ISO. Madden hands us the hooks: `DirtyDnasRelSimError` and
+   `DirtyDnasRelSetProxy` are EA's own error-simulation and redirection entry
+   points, and the symbols are intact.
+
+**Madden 2004 (PS2) is the first vertical slice** — not for the original reason
+(GameSpy reuse, dead) but because it is the tractable one: intact symbols, a
+literal hostname, a documented SDK family, and EA's own bypass-shaped hooks.
+2K5 hides its network code inside VC-LZ containers and reveals no server at all,
+so it is strictly harder and should follow, reusing whatever Madden teaches.

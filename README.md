@@ -67,6 +67,10 @@ python3 -m recon sink --tcp 80,443,18300 --udp 27900,28900 --out captures/run.js
 python3 -m recon classify --transcript captures/run.jsonl
 python3 -m recon classify capture.pcap             # or a NIC pcap from tcpdump
 python3 -m recon pcap capture.pcap                 # raw flow dump
+
+# 4. For a service the client reaches over TLS: terminate it and find out
+#    whether the client validates the certificate (serve-vs-patch decision).
+sudo python3 -m recon tls --port 443 --out captures/dnas.jsonl
 ```
 
 The typical loop: run `dns` to enumerate hostnames, take one NIC capture to
