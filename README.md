@@ -70,8 +70,17 @@ python3 -m recon pcap capture.pcap                 # raw flow dump
 
 # 4. For a service the client reaches over TLS: terminate it and find out
 #    whether the client validates the certificate (serve-vs-patch decision).
-sudo python3 -m recon tls --port 443 --out captures/dnas.jsonl
+#    NOTE: the TLS sinkhole needs a DNS responder running too, or the title
+#    never resolves the gateway and never connects. Use the script:
+./dnas_probe.sh <rig-ip> madden       # runs BOTH; this is the DNAS spike
 ```
+
+Session scripts, so the halves cannot be run apart:
+
+| Script | Runs | For |
+|---|---|---|
+| `./capture.sh <label> <rig-ip>` | DNS responder + tcpdump | discovering hostnames and ports |
+| `./dnas_probe.sh <rig-ip> [label]` | DNS responder + TLS sinkhole | the serve-vs-patch decision |
 
 The typical loop: run `dns` to enumerate hostnames, take one NIC capture to
 learn ports, then `sink` those ports and `classify` the result.

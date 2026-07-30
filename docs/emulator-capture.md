@@ -173,6 +173,27 @@ design lives with that checkout, not in this repo.
 Rule of thumb: hook the socket/kernel call, not the emulated wire. The wire is
 where the encryption already happened.
 
+## The DNAS spike (TLS)
+
+`./dnas_probe.sh <rig-ip> [label]` runs the DNS responder **and** the TLS
+sinkhole together. Both halves are required: the TLS sinkhole alone records
+nothing, because without DNS the title cannot resolve the auth gateway and
+never opens a connection to terminate.
+
+The signature of getting this wrong is unmistakable in PCSX2's emulog --
+every lookup reads `DNS: Answer Count 0`, and the title reaches its
+"Authenticating DNAS data" screen, spins, and errors. That is the title failing
+to resolve, not a finding about DNAS.
+
+What the verdict means:
+
+* **handshake accepted** -- the client does not validate the certificate, so a
+  substitute DNAS endpoint can be served.
+* **handshake refused** -- the client pins or validates. Serving it needs its
+  trust anchor; patching its own check is the other route.
+* **no connections at all** -- read the DNS log first; the title never got that
+  far.
+
 ## Where output goes
 
 Everything lands in `captures/` (gitignored): `*.pcap` from tcpdump, `*.jsonl`
