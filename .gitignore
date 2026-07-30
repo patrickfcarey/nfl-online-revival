@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Machine-local rig details (address, user) — never commit; template is tracked
+.env.local
+
+# Capture output: transcripts and pcaps are large and may hold personal data
+captures/*
+!captures/.gitkeep
+*.pcap
+*.pcapng
+*.jsonl
