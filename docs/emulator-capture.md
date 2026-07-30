@@ -9,12 +9,19 @@ The rig shares one VR headset across three emulators. Run this as its own
 command and read the output before starting any emulator:
 
 ```bash
-pgrep -x pcsx2-qt; pgrep -x mupen64plus; pgrep -f qemu-system-i386
+pgrep -x pcsx2-qt; pgrep -x mupen64plus; pgrep -f "qemu-system-i38[6]"
 ```
 
 Any hit means someone may be in the headset — stop and ask. Never chain an
 emulator launch behind the check in one command. Read-only file access over SSH
 is always fine.
+
+Note the brackets in `qemu-system-i38[6]`. `pgrep -f` matches whole command
+lines, so if the literal string `qemu-system-i386` appears in the shell command
+running the check — which it does when sent over SSH as `bash -c '...'` — pgrep
+matches *itself* and reports a phantom emulator. The bracket form cannot match
+its own text. A false positive here is not harmless: it stops real work, and if
+you learn to wave it off you have broken the check that protects the headset.
 
 ## The one thing to understand first: which layer is plaintext
 
@@ -64,13 +71,20 @@ pcapng.
 
 ```bash
 sudo tcpdump -i any -w captures/title.pcap host RIG_IP
-# then:
+# then (both read the link type from the file; `-i any` on libpcap >= 1.10
+# writes LINUX_SLL2, which the reader handles):
 python3 -m recon pcap captures/title.pcap
 python3 -m recon classify captures/title.pcap
 ```
 
 This gives you the ports the client dials and, for PS2/system-link, the actual
 payloads and their stack.
+
+If `recon pcap` prints `(0 flow record(s))`, that is a real signal, not a
+mystery: the reader raises on a link type it cannot decode and warns when a
+capture yields nothing, so zero records means the filter matched nothing rather
+than that parsing failed silently. Check the `host` filter and that the
+emulator actually has its NIC enabled.
 
 ## Step 3 — sinkhole the ports and probe
 

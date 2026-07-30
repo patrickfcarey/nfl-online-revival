@@ -36,6 +36,8 @@ def _parse_question(msg: bytes) -> Tuple[str, int, int, int]:
     """
     if len(msg) < 12:
         raise ValueError("short DNS message")
+    if struct.unpack_from(">H", msg, 4)[0] < 1:
+        raise ValueError("query carries no question (QDCOUNT=0)")
     offset = 12  # skip the 12-byte header
     labels = []
     while True:
@@ -63,6 +65,10 @@ def build_response(query: bytes, answer_ip: Optional[str]) -> bytes:
     name gets NOERROR with no answer, so the client falls back to an A lookup
     rather than treating the name as dead.
     """
+    if len(query) < 12:
+        raise ValueError("short DNS message")
+    if answer_ip is not None:
+        validate_ip(answer_ip, "answer address")
     (msg_id,) = struct.unpack_from(">H", query, 0)
     (flags,) = struct.unpack_from(">H", query, 2)
     rd = flags & 0x0100  # preserve the client's recursion-desired bit
@@ -90,12 +96,38 @@ def build_response(query: bytes, answer_ip: Optional[str]) -> bytes:
     return header + question
 
 
+def validate_ip(text: str, label: str = "address") -> str:
+    """Return *text* if it is a dotted-quad IPv4 address, else raise.
+
+    Called at startup: an unusable answer address must not become an exception
+    on the first query, which would take the responder down mid-capture.
+    """
+    try:
+        socket.inet_aton(text)
+    except OSError:
+        raise ValueError("%s is not a valid IPv4 address: %r" % (label, text))
+    if text.count(".") != 3:  # inet_aton also accepts "10" and "10.1"
+        raise ValueError("%s must be a dotted quad, got %r" % (label, text))
+    return text
+
+
 def _resolve(qname: str, default_ip: Optional[str],
              hostmap: Dict[str, str]) -> Optional[str]:
-    """Exact host->IP map wins; else the default IP; else unresolved."""
-    mapped = hostmap.get(qname.lower())
+    """Exact host wins, then any parent domain, then the default IP.
+
+    Parent matching is deliberate: a title resolves several names under one
+    domain, and mapping ``ea.com`` should catch ``easo.ea.com`` rather than
+    silently NXDOMAIN it.
+    """
+    name = qname.lower().rstrip(".")
+    mapped = hostmap.get(name)
     if mapped:
         return mapped
+    labels = name.split(".")
+    for index in range(1, len(labels)):
+        mapped = hostmap.get(".".join(labels[index:]))
+        if mapped:
+            return mapped
     return default_ip
 
 
@@ -105,10 +137,20 @@ def serve(bind: str = "0.0.0.0", port: int = 53,
           on_query: Optional[Callable[[str, str, Optional[str]], None]] = None
           ) -> None:
     """Run until interrupted, logging and answering queries."""
-    hostmap = {k.lower(): v for k, v in (hostmap or {}).items()}
+    hostmap = {k.lower().rstrip("."): v for k, v in (hostmap or {}).items()}
+    if default_ip is not None:
+        validate_ip(default_ip, "--ip")
+    for host, ip in hostmap.items():
+        validate_ip(ip, "--map %s" % host)
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind((bind, port))
+    try:
+        sock.bind((bind, port))
+    except OSError as exc:
+        hint = (" Port %d needs root: rerun with sudo, or use a high port plus a "
+                "firewall redirect." % port) if port < 1024 else ""
+        raise OSError("cannot bind %s:%d: %s.%s" % (bind, port, exc, hint))
     where = "everything -> %s" % default_ip if default_ip else "map-only"
     print("[dns] listening on %s:%d (%s), %d mapped host(s)"
           % (bind, port, where, len(hostmap)), flush=True)

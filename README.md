@@ -72,6 +72,17 @@ python3 -m recon pcap capture.pcap                 # raw flow dump
 The typical loop: run `dns` to enumerate hostnames, take one NIC capture to
 learn ports, then `sink` those ports and `classify` the result.
 
+Tests (offline — no sockets, no capture, no game data):
+
+```bash
+python3 tests/test_recon.py          # 55 tests
+```
+
+Failure modes that would otherwise look like "the game never phoned home" are
+covered deliberately: `tcpdump -i any` link types (libpcap >= 1.10 writes
+LINUX_SLL2), an unbindable sinkhole port, and IP fragments. Each is a named
+regression test.
+
 ## Safety on the rig
 
 The rig shares one VR headset across three emulators. Before launching any
@@ -79,7 +90,7 @@ emulator, run the H-2 live-session check as its own command and read it — any
 hit means someone may be in the headset, so stop and ask:
 
 ```bash
-pgrep -x pcsx2-qt; pgrep -x mupen64plus; pgrep -f qemu-system-i386
+pgrep -x pcsx2-qt; pgrep -x mupen64plus; pgrep -f "qemu-system-i38[6]"
 ```
 
 Never chain an emulator launch behind that check. Read-only access to rig files
