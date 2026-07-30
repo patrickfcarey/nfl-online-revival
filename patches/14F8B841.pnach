@@ -1,0 +1,27 @@
+gametitle=Madden NFL 2004 (SLUS-20752, CRC 14F8B841)
+comment=Force the DNAS poll onto its completion path so online play proceeds
+
+// Sony's DNAS servers are gone, so DirtyDnasRelUpdt can never report success.
+// The title stops at "Authenticating DNAS data" and returns error -610.
+//
+// The DNAS poller at 0x00305238 reads:
+//     00305248  beq v0, zero, 0x0030527c  ; DNAS disabled -> return 1
+//     0030524c  addiu s0, zero, 1         ; (delay slot) default result
+//     00305250  jal 0x004f2360            ; DirtyDnasRelUpdt trampoline
+//     00305258  beq v0, zero, 0x00305268  ; Updt == 0 -> COMPLETION path
+//     00305264  addiu s0, zero, 3         ; Updt != 0 -> return 3, still working
+//     00305268  jal 0x004f2388            ; completion: DirtyDnasRelExit teardown
+//     00305278  s0 = 2                    ; -> return 2, DNAS finished
+//
+// Changing the branch's source register from v0 to zero makes it
+// unconditional, so the poll always takes the completion path. Updt still
+// runs; its result is simply no longer allowed to hold the title back.
+// The branch target is unchanged (0x00305268) and the delay slot is untouched.
+//
+//   before  0x10400003   beq v0, zero, +3
+//   after   0x10000003   beq zero, zero, +3
+//
+// SCOPE: this gets the title past its own DNAS gate. It does not obtain a DNAS
+// ticket, so if the game server later validates one, that must be handled
+// server-side -- which is fine, because we are writing that server.
+patch=1,EE,00305258,word,10000003

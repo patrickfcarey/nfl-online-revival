@@ -87,7 +87,8 @@ TCPDUMP_PID=$!
 cleanup() {
     echo
     echo "[capture] stopping tcpdump (pid $TCPDUMP_PID)"
-    kill -INT "$TCPDUMP_PID" 2>/dev/null
+    # -INT is ignored for background jobs; -TERM is what actually arrives.
+    kill -TERM "$TCPDUMP_PID" 2>/dev/null
     wait "$TCPDUMP_PID" 2>/dev/null
     echo
     if [ -s "$PCAP" ]; then

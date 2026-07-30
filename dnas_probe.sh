@@ -70,6 +70,25 @@ PROBE
     done
 fi
 
+# A previous run that did not die still owns the port, and the error ("errno 98,
+# address already in use") does not say who. Name the squatter up front.
+for spec in "udp:53" "tcp:443"; do
+    proto="${spec%%:*}"; port="${spec##*:}"
+    holder=$(ss -H "-${proto:0:1}lpn" 2>/dev/null | grep -E "[:.]${port} " | head -1)
+    if [ -n "$holder" ]; then
+        pid=$(printf '%s' "$holder" | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
+        echo "!! ${proto}/${port} is already in use$( [ -n "$pid" ] && echo " by pid $pid" )."
+        printf '%s\n' "   $holder"
+        if [ -n "$pid" ]; then
+            owner=$(ps -o user= -p "$pid" 2>/dev/null | tr -d ' ')
+            echo "   Clear it with:  ${owner:+sudo }kill $pid"
+        fi
+        echo "!! Tip: with cap_net_bind_service granted to python3 you do NOT need"
+        echo "!! sudo here, and an orphan would then be yours to kill without it."
+        exit 1
+    fi
+done
+
 echo "=============================================================="
 echo " DNAS probe: $LABEL"
 echo "   dns log  -> $DNSLOG"
@@ -92,12 +111,15 @@ tail -f "$TLSLOG" & TAIL_PID=$!
 cleanup() {
     echo
     echo "[probe] stopping the TLS sinkhole"
-    kill -INT "$TLS_PID" 2>/dev/null
+    # NOT -INT: a shell starts background jobs with SIGINT ignored, so the
+    # signal is dropped and the listener survives to squat the port.
+    kill -TERM "$TLS_PID" 2>/dev/null
     # Give it a moment to print its verdict before the tail is cut.
     for _ in 1 2 3 4 5 6 7 8 9 10; do
         kill -0 "$TLS_PID" 2>/dev/null || break
         sleep 0.3
     done
+    kill -KILL "$TLS_PID" 2>/dev/null   # last resort; the port must be free
     kill "$TAIL_PID" 2>/dev/null
     wait "$TLS_PID" 2>/dev/null
     echo

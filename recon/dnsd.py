@@ -14,6 +14,7 @@ redirect works too -- see docs/emulator-capture.md.
 from __future__ import annotations
 
 from collections import OrderedDict
+import signal
 import socket
 import struct
 import time
@@ -165,6 +166,15 @@ def serve(bind: str = "0.0.0.0", port: int = 53,
           % (bind, port, where, len(hostmap)), flush=True)
     if log_path:
         print("[dns] log -> %s" % log_path, flush=True)
+
+    # Backgrounded processes have SIGINT ignored; SIGTERM is what reaches them.
+    def _terminate(_signum, _frame):
+        raise KeyboardInterrupt
+
+    try:
+        signal.signal(signal.SIGTERM, _terminate)
+    except (ValueError, OSError):  # pragma: no cover - not the main thread
+        pass
 
     # qname -> [count, answer, first qtype seen]; insertion order is first-seen.
     seen: "OrderedDict[str, list]" = OrderedDict()
