@@ -81,7 +81,7 @@ Two layers get conflated here, and both must agree:
 | `EthEnable` | `true` | the adapter must exist at all |
 | `EthApi` | `Sockets` | translates PS2 socket calls to host sockets |
 | `InterceptDHCP` | `true` | PCSX2 hands the PS2 its address *and our DNS* |
-| `PS2IP` | e.g. `192.168.68.200` | virtual in Sockets mode; a LAN clash is harmless |
+| `PS2IP` | *(ignored)* | PCSX2 assigns `192.0.2.100/24` from TEST-NET-1 regardless; expect a PTR lookup on `100.2.0.192.in-addr.arpa`, which is the title reverse-resolving its own address, not a server |
 | `ModeDNS1` / `ModeDNS2` | `Manual` | otherwise the host resolver is used and we see nothing |
 | `DNS1` / `DNS2` | the rig's IP | **both**, so no fallback bypasses the responder |
 | `EthLogDNS` / `EthLogDHCP` | `true` | PCSX2's own log, an independent check on ours |
@@ -101,6 +101,15 @@ In the title's own network setup, choose **automatic / DHCP** so it takes the
 address and DNS that `InterceptDHCP` hands out. If a title insists on manual
 entry, set its DNS to the rig's IP by hand. The setting is saved to the memory
 card, so it only has to be done once per title.
+
+### PCSX2's own log is the best cross-check
+
+`~/.config/PCSX2/logs/emulog.txt` is more informative than the packet capture
+once `EthLogDNS`/`EthLogDHCP` are on. It gives the DNS names as DEV9 saw them,
+the DHCP handout, connection outcomes (`Recv error: 111` is ECONNREFUSED), and
+-- critically -- **which title was running**, via its `Name:` / `Serial:` /
+`ELF Loading:` lines. Attribute findings by those boot lines, not by the capture
+filename: two titles played back to back land in one capture file.
 
 ### Confirming it works
 
