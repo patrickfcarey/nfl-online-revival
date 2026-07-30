@@ -673,6 +673,59 @@ class ClientHelloTests(unittest.TestCase):
         self.assertFalse(tlssink.parse_client_hello(b"")["is_tls"])
 
 
+def sslv2_hello(version=0x0301, ciphers=((0x00, 0x00, 0x2f), (0x01, 0x00, 0x80))):
+    """Build an SSLv2-format ClientHello, the framing a 2004 console opens with."""
+    specs = b"".join(bytes(c) for c in ciphers)
+    session = b""
+    challenge = b"\xAA" * 16
+    body = (b"\x01" + struct.pack(">H", version)
+            + struct.pack(">HHH", len(specs), len(session), len(challenge))
+            + specs + session + challenge)
+    return struct.pack(">H", 0x8000 | len(body)) + body
+
+
+class Sslv2HelloTests(unittest.TestCase):
+    """Regression: the real console opened with 0x80 framing and the parser
+    called it 'plaintext', so no handshake was attempted and DNAS errored."""
+
+    def test_sslv2_hello_is_recognised_not_called_plaintext(self):
+        info = tlssink.parse_client_hello(sslv2_hello())
+        self.assertTrue(info["is_sslv2_hello"])
+        self.assertFalse(info["is_tls"])
+
+    def test_intended_version_is_recovered(self):
+        # The framing is old but the version field says what it really wants.
+        self.assertEqual(tlssink.parse_client_hello(sslv2_hello(0x0301))["version"],
+                         "TLS 1.0")
+        self.assertEqual(tlssink.parse_client_hello(sslv2_hello(0x0300))["version"],
+                         "SSL 3.0")
+
+    def test_three_byte_cipher_specs_are_decoded(self):
+        info = tlssink.parse_client_hello(
+            sslv2_hello(ciphers=((0x00, 0x00, 0x2f), (0x00, 0x00, 0x35),
+                                 (0x01, 0x00, 0x80))))
+        self.assertIn("0x002f", info["ciphers"])
+        self.assertIn("0x0035", info["ciphers"])
+        self.assertIn("SSL2_0x010080", info["ciphers"])
+
+    def test_description_explains_why_openssl_refuses(self):
+        text = tlssink.describe_client_hello(tlssink.parse_client_hello(sslv2_hello()))
+        self.assertIn("SSLv2-FORMAT", text)
+        self.assertIn("OpenSSL", text)
+
+    def test_verdict_does_not_claim_the_cert_was_judged(self):
+        summary = tlssink.format_summary([
+            {"handshake": "sslv2-hello-unanswerable",
+             "hello": {"is_sslv2_hello": True, "sni": None}}])
+        self.assertIn("SSLv2-format hello", summary)
+        self.assertIn("UNKNOWN", summary)
+
+    def test_a_real_tls_hello_is_still_tls(self):
+        info = tlssink.parse_client_hello(client_hello(sni="x.com"))
+        self.assertTrue(info["is_tls"])
+        self.assertFalse(info.get("is_sslv2_hello"))
+
+
 class TlsVerdictTests(unittest.TestCase):
     def test_no_connections_says_so(self):
         self.assertIn("no connections", tlssink.format_summary([]))

@@ -76,6 +76,53 @@ def ensure_certificate(cert_path: str, key_path: str,
     return cert_path, key_path
 
 
+def parse_sslv2_hello(data: bytes) -> Dict[str, object]:
+    """Decode an SSLv2-format ClientHello (first byte 0x80).
+
+    A 2004 console opens with the *old* record framing even when it intends to
+    speak SSL 3.0 / TLS 1.0 -- the version field inside says which. Modern
+    OpenSSL removed support for this hello entirely, so it must be read by hand
+    rather than handed to ``ssl``.
+
+    Layout: 2-byte length (high bit set), msg type, 2-byte version, then the
+    cipher-spec / session-id / challenge lengths, then those three blocks.
+    Cipher specs are **3** bytes each here, not 2; a leading zero byte means the
+    remaining two are an ordinary TLS cipher id.
+    """
+    out: Dict[str, object] = {"is_tls": False, "is_sslv2_hello": True,
+                              "sni": None, "ciphers": [], "version": None,
+                              "error": None}
+    try:
+        if len(data) < 11 or not (data[0] & 0x80):
+            out["error"] = "not an SSLv2 record"
+            out["is_sslv2_hello"] = False
+            return out
+        record_len = ((data[0] & 0x7F) << 8) | data[1]
+        out["record_length"] = record_len
+        if data[2] != 0x01:
+            out["error"] = "SSLv2 message type 0x%02x is not CLIENT-HELLO" % data[2]
+            return out
+        version = struct.unpack_from(">H", data, 3)[0]
+        out["version"] = _TLS_VERSIONS.get(version, "0x%04x" % version)
+        cipher_len, session_len, challenge_len = struct.unpack_from(">HHH", data, 5)
+        out["session_id_length"] = session_len
+        out["challenge_length"] = challenge_len
+        offset = 11
+        ciphers = []
+        for index in range(0, cipher_len - (cipher_len % 3), 3):
+            spec = data[offset + index:offset + index + 3]
+            if len(spec) < 3:
+                break
+            if spec[0] == 0x00:
+                ciphers.append("0x%02x%02x" % (spec[1], spec[2]))       # TLS id
+            else:
+                ciphers.append("SSL2_0x%02x%02x%02x" % (spec[0], spec[1], spec[2]))
+        out["ciphers"] = ciphers
+    except (struct.error, IndexError) as exc:
+        out["error"] = "malformed SSLv2 hello: %s" % exc
+    return out
+
+
 def parse_client_hello(data: bytes) -> Dict[str, object]:
     """Pull version, cipher suites and SNI out of a raw ClientHello.
 
@@ -86,6 +133,8 @@ def parse_client_hello(data: bytes) -> Dict[str, object]:
     out: Dict[str, object] = {"is_tls": False, "sni": None, "ciphers": [],
                               "version": None, "error": None}
     try:
+        if data and (data[0] & 0x80) and len(data) > 2 and data[2] == 0x01:
+            return parse_sslv2_hello(data)
         if len(data) < 6 or data[0] != _RECORD_HANDSHAKE:
             out["error"] = "not a TLS handshake record (first byte 0x%02x)" % (
                 data[0] if data else 0)
@@ -140,6 +189,18 @@ def parse_client_hello(data: bytes) -> Dict[str, object]:
 
 def describe_client_hello(info: Dict[str, object]) -> str:
     """One human-readable block summarising a parsed ClientHello."""
+    if info.get("is_sslv2_hello"):
+        lines = ["  SSLv2-FORMAT ClientHello (legacy framing, first byte 0x80)",
+                 "  version it actually wants : %s" % info.get("version")]
+        ciphers = info.get("ciphers") or []
+        lines.append("  cipher specs offered: %d  %s"
+                     % (len(ciphers), ", ".join(ciphers[:10])
+                        + (" ..." if len(ciphers) > 10 else "")))
+        if info.get("error"):
+            lines.append("  note: %s" % info["error"])
+        lines.append("  -> OpenSSL 1.1+ refuses this hello outright, so a stock "
+                     "TLS server cannot answer it.")
+        return "\n".join(lines)
     if not info.get("is_tls"):
         return "  NOT TLS: %s" % info.get("error")
     lines = ["  TLS version offered : %s" % info.get("version")]
@@ -157,8 +218,25 @@ def describe_client_hello(info: Dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+def _append(transcript_path: Optional[str], record: Dict[str, object],
+            lock: threading.Lock) -> None:
+    """Flush one record now. Waiting until exit lost the only ClientHello we
+    had once already; a captured handshake must survive a hard kill."""
+    if not transcript_path:
+        return
+    import json
+    with lock:
+        try:
+            with open(transcript_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, default=str) + "\n")
+                handle.flush()
+        except OSError as exc:
+            print("[tls] could not write transcript: %s" % exc, flush=True)
+
+
 def _handle(raw: socket.socket, addr, port: int, context: ssl.SSLContext,
-            results: List[Dict[str, object]], lock: threading.Lock) -> None:
+            results: List[Dict[str, object]], lock: threading.Lock,
+            transcript_path: Optional[str] = None) -> None:
     peer = "%s:%d" % addr
     record: Dict[str, object] = {"peer": peer, "port": port,
                                  "ts": time.time(), "handshake": None}
@@ -174,8 +252,16 @@ def _handle(raw: socket.socket, addr, port: int, context: ssl.SSLContext,
 
         if not info.get("is_tls"):
             body = raw.recv(4096)
-            record["plain"] = body.hex()
-            print("  plaintext instead of TLS, %d bytes" % len(body), flush=True)
+            record["first_bytes"] = body.hex()
+            record["handshake"] = ("sslv2-hello-unanswerable"
+                                   if info.get("is_sslv2_hello") else "not-tls")
+            print("  captured %d bytes of the opening message" % len(body),
+                  flush=True)
+            for i in range(0, min(len(body), 112), 16):
+                chunk = body[i:i + 16]
+                print("   %04x  %-47s  %s" % (i, " ".join("%02x" % b for b in chunk),
+                      "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)),
+                      flush=True)
             return
         try:
             tls = context.wrap_socket(raw, server_side=True)
@@ -211,6 +297,7 @@ def _handle(raw: socket.socket, addr, port: int, context: ssl.SSLContext,
     finally:
         with lock:
             results.append(record)
+        _append(transcript_path, record, lock)
         try:
             raw.close()
         except OSError:
@@ -259,7 +346,8 @@ def serve(bind: str = "0.0.0.0", port: int = 443,
         while True:
             conn, addr = srv.accept()
             threading.Thread(target=_handle,
-                             args=(conn, addr, port, context, results, lock),
+                             args=(conn, addr, port, context, results, lock,
+                                   transcript_path),
                              daemon=True).start()
     except KeyboardInterrupt:
         print("\n[tls] stopping", flush=True)
@@ -267,11 +355,8 @@ def serve(bind: str = "0.0.0.0", port: int = 443,
         srv.close()
         print(format_summary(results), flush=True)
         if transcript_path:
-            import json
-            with open(transcript_path, "a", encoding="utf-8") as handle:
-                for row in results:
-                    handle.write(json.dumps(row) + "\n")
-            print("[tls] transcript -> %s" % transcript_path, flush=True)
+            print("[tls] transcript -> %s (written as each connection arrived)"
+                  % transcript_path, flush=True)
 
 
 def format_summary(results: List[Dict[str, object]]) -> str:
@@ -279,6 +364,8 @@ def format_summary(results: List[Dict[str, object]]) -> str:
     if not results:
         return ("[tls] no connections. The console never reached this port: "
                 "check the DNS redirect and that the title got that far.")
+    sslv2 = [r for r in results
+             if r.get("hello") and r["hello"].get("is_sslv2_hello")]
     accepted = [r for r in results if r.get("handshake") == "ok"]
     refused = [r for r in results if str(r.get("handshake", "")).startswith("failed")]
     lines = ["", "=" * 72, "TLS SINKHOLE RESULT (%d connection(s))" % len(results),
@@ -289,6 +376,16 @@ def format_summary(results: List[Dict[str, object]]) -> str:
         lines.append("  hostnames named via SNI: %s" % ", ".join(snis))
     lines.append("  handshakes accepted: %d" % len(accepted))
     lines.append("  handshakes refused : %d" % len(refused))
+    if sslv2 and not accepted:
+        lines.append("")
+        lines.append("  VERDICT: the client opens with an SSLv2-format hello.")
+        lines.append("  Modern OpenSSL refuses that framing, so no stock TLS "
+                     "server can answer it. Whether it would accept our")
+        lines.append("  certificate is still UNKNOWN -- the handshake never got "
+                     "that far. Read the version and ciphers above: they say")
+        lines.append("  which protocol it actually intends to speak.")
+        lines.append("=" * 72)
+        return "\n".join(lines)
     if accepted:
         lines.append("")
         lines.append("  VERDICT: the client accepts an unknown certificate.")
