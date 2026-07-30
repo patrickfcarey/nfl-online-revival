@@ -37,8 +37,10 @@ _PORT_HINTS = {
 _GAMESPY_TOKENS = (b"\\gamename\\", b"\\challenge\\", b"\\secure\\",
                    b"\\login\\", b"\\getpid\\", b"\\gpsp\\", b"\\basic\\",
                    b"\\status\\", b"\\heartbeat\\")
-_EA_TOKENS = (b"TXN=", b"theater", b"Blaze", b"easfc", b"fsys", b"acct",
-              b"pnow", b"subs")
+#: Strong enough to stand alone anywhere in the header.
+_EA_TOKENS = (b"TXN=", b"theater", b"Blaze", b"easfc")
+#: FESL component names -- short and generic, so only trusted inside text.
+_EA_WEAK_TOKENS = (b"fsys", b"acct", b"pnow", b"subs")
 _DNAS_TOKENS = (b"DNAS", b"dnas")
 _HTTP_TOKENS = (b"GET ", b"POST ", b"HEAD ", b"PUT ", b"HTTP/")
 
@@ -57,6 +59,14 @@ def shannon_entropy(data: bytes) -> float:
             p = count / n
             entropy -= p * math.log2(p)
     return entropy
+
+
+def _mostly_text(data: bytes, threshold: float = 0.85) -> bool:
+    """True when the bytes look like text rather than a binary struct."""
+    if not data:
+        return False
+    printable = sum(1 for b in data if 32 <= b < 127 or b in (9, 10, 13))
+    return printable / len(data) >= threshold
 
 
 def _show(token: bytes) -> str:
@@ -81,6 +91,12 @@ def classify_payload(data: bytes) -> Tuple[str, str]:
     for token in _EA_TOKENS:
         if token in data[:64]:
             return "ea", "token %s" % _show(token)
+    # Four-letter component names would otherwise match inside binary or
+    # encrypted payloads and send the whole investigation the wrong way.
+    if _mostly_text(data[:64]):
+        for token in _EA_WEAK_TOKENS:
+            if token in data[:64]:
+                return "ea", "component name %s in text payload" % _show(token)
     for token in _DNAS_TOKENS:
         if token in data:
             return "ps2-dnas", "token %s" % _show(token)

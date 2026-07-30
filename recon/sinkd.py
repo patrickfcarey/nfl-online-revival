@@ -77,13 +77,22 @@ class _Transcript:
             self._handle.close()
 
 
+#: Console dump cap. The transcript keeps every byte; the terminal does not need
+#: 4096 lines from one 64 KB read while a capture is in progress.
+CONSOLE_DUMP_LIMIT = 512
+
+
 def _log(proto: str, port: int, peer: str, direction: str, payload: bytes) -> None:
     arrow = "->" if direction == "recv" else "<-"
     print("\n[sink] %s %s/%d  %s %s  %d bytes"
           % (time.strftime("%H:%M:%S"), proto, port, peer, arrow, len(payload)),
           flush=True)
-    if payload:
-        print(hexdump(payload), flush=True)
+    if not payload:
+        return
+    print(hexdump(payload[:CONSOLE_DUMP_LIMIT]), flush=True)
+    if len(payload) > CONSOLE_DUMP_LIMIT:
+        print("  ... %d more byte(s); full payload is in the transcript"
+              % (len(payload) - CONSOLE_DUMP_LIMIT), flush=True)
 
 
 def _bind_tcp(bind: str, port: int) -> Optional[socket.socket]:
@@ -112,10 +121,18 @@ def _bind_udp(bind: str, port: int) -> Optional[socket.socket]:
 
 
 def _serve_tcp_conn(conn: socket.socket, addr, port: int,
-                    transcript: _Transcript, respond: Optional[bytes]) -> None:
+                    transcript: _Transcript, respond: Optional[bytes],
+                    greet: Optional[bytes] = None) -> None:
     peer = "%s:%d" % addr
     replied = False
     try:
+        # Several of these services speak first (GameSpy presence sends its
+        # challenge on connect). Without a greeting such a client sits waiting
+        # and reads as "sent nothing", which is a wrong answer, not a quiet one.
+        if greet:
+            conn.sendall(greet)
+            _log("tcp", port, peer, "send", greet)
+            transcript.record("tcp", port, peer, "send", greet)
         while True:
             data = conn.recv(65535)
             if not data:
@@ -134,14 +151,16 @@ def _serve_tcp_conn(conn: socket.socket, addr, port: int,
 
 
 def _accept_loop(srv: socket.socket, port: int, transcript: _Transcript,
-                 respond: Optional[bytes]) -> None:
+                 respond: Optional[bytes], greet: Optional[bytes] = None) -> None:
     while True:
         try:
             conn, addr = srv.accept()
         except OSError:
             return
+        print("\n[sink] %s tcp/%d  %s:%d connected"
+              % (time.strftime("%H:%M:%S"), port, addr[0], addr[1]), flush=True)
         threading.Thread(target=_serve_tcp_conn,
-                         args=(conn, addr, port, transcript, respond),
+                         args=(conn, addr, port, transcript, respond, greet),
                          daemon=True).start()
 
 
@@ -168,7 +187,8 @@ def _udp_loop(sock: socket.socket, port: int, transcript: _Transcript,
 def serve(bind: str = "0.0.0.0", tcp_ports: Optional[List[int]] = None,
           udp_ports: Optional[List[int]] = None,
           transcript_path: Optional[str] = None,
-          respond: Optional[bytes] = None) -> None:
+          respond: Optional[bytes] = None,
+          greet: Optional[bytes] = None) -> None:
     """Bind every port, then serve until interrupted.
 
     Raises :class:`SinkError` if nothing could be bound, so a privilege problem
@@ -209,9 +229,14 @@ def serve(bind: str = "0.0.0.0", tcp_ports: Optional[List[int]] = None,
         print("[sink] transcript -> %s" % transcript_path, flush=True)
 
     for proto, port, sock in listeners:
-        target = _accept_loop if proto == "tcp" else _udp_loop
-        threading.Thread(target=target, args=(sock, port, transcript, respond),
-                         daemon=True).start()
+        if proto == "tcp":
+            thread = threading.Thread(
+                target=_accept_loop, args=(sock, port, transcript, respond, greet),
+                daemon=True)
+        else:
+            thread = threading.Thread(
+                target=_udp_loop, args=(sock, port, transcript, respond), daemon=True)
+        thread.start()
         print("[sink] %s/%d listening" % (proto, port), flush=True)
 
     print("[sink] up on %d listener(s). Ctrl-C to stop." % len(listeners), flush=True)

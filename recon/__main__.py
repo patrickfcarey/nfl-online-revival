@@ -35,6 +35,16 @@ def _port(text: str) -> int:
     return _port_list(text)[0]
 
 
+def _non_negative(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("%r is not a number" % text)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be 0 or more, got %d" % value)
+    return value
+
+
 def _hex_bytes(text: str) -> bytes:
     cleaned = text.replace(" ", "").replace(":", "")
     try:
@@ -73,7 +83,7 @@ def _cmd_dns(args: argparse.Namespace) -> int:
         return 2
     try:
         dnsd.serve(bind=args.bind, port=args.port, default_ip=args.ip,
-                   hostmap=hostmap)
+                   hostmap=hostmap, log_path=args.out)
     except OSError as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 1
@@ -89,7 +99,7 @@ def _cmd_sink(args: argparse.Namespace) -> int:
     try:
         sinkd.serve(bind=args.bind, tcp_ports=args.tcp or [],
                     udp_ports=args.udp or [], transcript_path=args.out,
-                    respond=args.respond_hex)
+                    respond=args.respond_hex, greet=args.greet_hex)
     except sinkd.SinkError as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 1
@@ -104,6 +114,15 @@ def _cmd_classify(args: argparse.Namespace) -> int:
 
     try:
         if args.transcript:
+            with open(args.path, "rb") as probe:
+                head = probe.read(4)
+            if head[:4] in (b"\xa1\xb2\xc3\xd4", b"\xd4\xc3\xb2\xa1",
+                            b"\x4d\x3c\xb2\xa1", b"\xa1\xb2\x3c\x4d",
+                            b"\x0a\x0d\x0d\x0a"):
+                print("error: %s is a packet capture, not a sink transcript. "
+                      "Drop --transcript to read it as a pcap." % args.path,
+                      file=sys.stderr)
+                return 2
             classify.classify_transcript(args.path)
         else:
             classify.classify_pcap(args.path)
@@ -148,6 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_dns.add_argument("--ip", help="default A answer for unmapped names")
     p_dns.add_argument("--map", action="append", type=_host_ip, metavar="HOST=IP",
                        help="host (or parent domain) -> ip override; repeatable")
+    p_dns.add_argument("--out", help="also append the hostname log to this file")
     p_dns.set_defaults(func=_cmd_dns)
 
     p_sink = sub.add_parser("sink", help="sinkhole and log client connections")
@@ -156,7 +176,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_sink.add_argument("--udp", type=_port_list, help="comma-separated UDP ports")
     p_sink.add_argument("--out", help="JSONL transcript path")
     p_sink.add_argument("--respond-hex", type=_hex_bytes,
-                        help="canned reply, hex (e.g. 5c6f6b5c)")
+                        help="canned reply after the client speaks, hex")
+    p_sink.add_argument("--greet-hex", type=_hex_bytes,
+                        help="canned greeting sent on TCP connect, for services "
+                             "where the server speaks first")
     p_sink.set_defaults(func=_cmd_sink)
 
     p_cls = sub.add_parser("classify", help="fingerprint a capture")
@@ -167,7 +190,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_pcap = sub.add_parser("pcap", help="dump TCP/UDP flows from a .pcap")
     p_pcap.add_argument("path")
-    p_pcap.add_argument("--max", type=int, default=0, help="stop after N records")
+    p_pcap.add_argument("--max", type=_non_negative, default=0,
+                        help="stop after N records (0 = no limit)")
     p_pcap.set_defaults(func=_cmd_pcap)
     return parser
 

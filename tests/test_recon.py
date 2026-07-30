@@ -17,6 +17,7 @@ import socket
 import struct
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -489,6 +490,132 @@ class CliTests(unittest.TestCase):
     def test_classify_missing_file_exits_nonzero(self):
         main = recon_cli.main
         self.assertEqual(main(["classify", "/nonexistent/nope.pcap"]), 1)
+
+
+class DnsLoggingTests(unittest.TestCase):
+    """Regression: the log line dropped the hostname entirely, so two different
+    lookups printed identically -- the one fact Phase 1 exists to collect."""
+
+    def test_summary_lists_hostnames_counts_and_answers(self):
+        from collections import OrderedDict
+        seen = OrderedDict()
+        seen["easo.ea.com"] = [3, "10.0.0.5", "A"]
+        seen["nfl2k5.2ksports.com"] = [1, "NXDOMAIN", "A"]
+        summary = dnsd.format_summary(seen)
+        self.assertIn("easo.ea.com", summary)
+        self.assertIn("nfl2k5.2ksports.com", summary)
+        self.assertIn("x3", summary)
+        self.assertIn("NXDOMAIN", summary)
+        self.assertIn("2 unique", summary)
+
+    def test_empty_summary_says_the_console_never_asked(self):
+        summary = dnsd.format_summary({})
+        self.assertIn("no queries seen", summary)
+        self.assertIn("DNS setting", summary)
+
+    def test_live_responder_logs_the_hostname_and_persists_it(self):
+        """Drive the real responder over a socket and read what it recorded."""
+        import threading
+        log = tempfile.NamedTemporaryFile("w", suffix=".log", delete=False)
+        log.close()
+        port = 15399
+        stop = {"sock": None}
+
+        def run():
+            try:
+                dnsd.serve(bind="127.0.0.1", port=port, default_ip="10.0.0.5",
+                           log_path=log.name)
+            except OSError:
+                pass
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        try:
+            client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            client.settimeout(3)
+            deadline = time.time() + 5
+            reply = None
+            while time.time() < deadline and reply is None:
+                try:
+                    client.sendto(dns_query("easo.ea.com"), ("127.0.0.1", port))
+                    reply, _ = client.recvfrom(4096)
+                except socket.timeout:
+                    continue
+            self.assertIsNotNone(reply, "responder never answered")
+            self.assertTrue(reply.endswith(socket.inet_aton("10.0.0.5")))
+            # The log is flushed per query, so it is readable while still running.
+            deadline = time.time() + 3
+            body = ""
+            while time.time() < deadline and "easo.ea.com" not in body:
+                with open(log.name) as reader:
+                    body = reader.read()
+                time.sleep(0.05)
+            self.assertIn("easo.ea.com", body,
+                          "the hostname was not recorded -- the deliverable is lost")
+        finally:
+            os.unlink(log.name)
+            del stop
+
+
+class SinkConsoleTests(unittest.TestCase):
+    def test_large_payload_is_capped_on_console_only(self):
+        """A 64 KB read must not push 4096 lines past the operator."""
+        capped = sinkd.hexdump(b"x" * (sinkd.CONSOLE_DUMP_LIMIT * 4))
+        self.assertGreater(len(capped.splitlines()), 100)  # hexdump itself is uncapped
+        buffer = io.StringIO()
+        stdout, sys.stdout = sys.stdout, buffer
+        try:
+            sinkd._log("tcp", 80, "c:1", "recv", b"y" * (sinkd.CONSOLE_DUMP_LIMIT * 4))
+        finally:
+            sys.stdout = stdout
+        printed = buffer.getvalue()
+        self.assertIn("more byte(s)", printed)
+        expected_lines = sinkd.CONSOLE_DUMP_LIMIT // 16
+        self.assertLessEqual(len(printed.splitlines()), expected_lines + 6)
+
+
+class WeakTokenTests(unittest.TestCase):
+    """Regression: four-letter FESL component names matched inside binary and
+    encrypted payloads, which would send the investigation the wrong way."""
+
+    def test_component_name_in_text_is_accepted(self):
+        label, _ev = classify.classify_payload(b"TYPE=fsys\nSTATE=ok\n" + b" " * 20)
+        self.assertEqual(label, "ea")
+
+    def test_component_name_inside_binary_is_not_ea(self):
+        blob = bytes(range(60)) + b"acct" + bytes(range(60))
+        self.assertNotEqual(classify.classify_payload(blob)[0], "ea")
+
+    def test_strong_token_still_matches_anywhere(self):
+        self.assertEqual(classify.classify_payload(b"\x00\x01TXN=Auth")[0], "ea")
+
+    def test_mostly_text_helper(self):
+        self.assertTrue(classify._mostly_text(b"hello world\n"))
+        self.assertFalse(classify._mostly_text(bytes(range(64))))
+        self.assertFalse(classify._mostly_text(b""))
+
+
+class MisuseTests(unittest.TestCase):
+    def test_pcap_passed_as_transcript_is_caught(self):
+        """Wrong flag under time pressure must not print a thousand parse
+        warnings; it must say what happened."""
+        handle = tempfile.NamedTemporaryFile(suffix=".pcap", delete=False)
+        handle.write(pcap_file([eth(ip_packet("10.0.0.9", "10.0.0.5", 17,
+                                              udp(1, 2, b"x")))]))
+        handle.close()
+        try:
+            self.assertEqual(recon_cli.main(["classify", "--transcript", handle.name]), 2)
+        finally:
+            os.unlink(handle.name)
+
+    def test_negative_max_is_rejected(self):
+        with self.assertRaises(SystemExit):
+            recon_cli.build_parser().parse_args(["pcap", "x.pcap", "--max", "-1"])
+
+    def test_greet_hex_is_parsed(self):
+        args = recon_cli.build_parser().parse_args(
+            ["sink", "--tcp", "80", "--greet-hex", "5c6c635c"])
+        self.assertEqual(args.greet_hex, b"\\lc\\")
 
 
 if __name__ == "__main__":

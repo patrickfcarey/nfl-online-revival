@@ -13,6 +13,7 @@ redirect works too -- see docs/emulator-capture.md.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 import socket
 import struct
 import time
@@ -134,9 +135,15 @@ def _resolve(qname: str, default_ip: Optional[str],
 def serve(bind: str = "0.0.0.0", port: int = 53,
           default_ip: Optional[str] = None,
           hostmap: Optional[Dict[str, str]] = None,
-          on_query: Optional[Callable[[str, str, Optional[str]], None]] = None
-          ) -> None:
-    """Run until interrupted, logging and answering queries."""
+          on_query: Optional[Callable[[str, str, Optional[str]], None]] = None,
+          log_path: Optional[str] = None) -> None:
+    """Run until interrupted, logging and answering queries.
+
+    The **hostname is the deliverable** of this whole step, so it is logged on
+    every line, persisted to ``log_path`` when given, and summarised as a
+    deduplicated list on exit -- a title retries the same names constantly, and
+    hand-deduplicating a scrolled-past terminal is how a capture gets wasted.
+    """
     hostmap = {k.lower().rstrip("."): v for k, v in (hostmap or {}).items()}
     if default_ip is not None:
         validate_ip(default_ip, "--ip")
@@ -151,25 +158,65 @@ def serve(bind: str = "0.0.0.0", port: int = 53,
         hint = (" Port %d needs root: rerun with sudo, or use a high port plus a "
                 "firewall redirect." % port) if port < 1024 else ""
         raise OSError("cannot bind %s:%d: %s.%s" % (bind, port, exc, hint))
+
+    log = open(log_path, "a", encoding="utf-8") if log_path else None
     where = "everything -> %s" % default_ip if default_ip else "map-only"
     print("[dns] listening on %s:%d (%s), %d mapped host(s)"
           % (bind, port, where, len(hostmap)), flush=True)
+    if log_path:
+        print("[dns] log -> %s" % log_path, flush=True)
 
-    while True:
-        data, peer = sock.recvfrom(4096)
-        try:
-            qname, qtype, _qclass, _end = _parse_question(data)
-        except ValueError as exc:
-            print("[dns] %s malformed query: %s" % (peer[0], exc), flush=True)
-            continue
-        answer_ip = _resolve(qname, default_ip, hostmap)
-        tname = _QTYPE_NAMES.get(qtype, str(qtype))
-        stamp = time.strftime("%H:%M:%S")
-        print("[dns] %s  %s  %-5s -> %s"
-              % (stamp, peer[0], tname, answer_ip or "NXDOMAIN"), flush=True)
-        if on_query is not None:
-            on_query(qname, tname, answer_ip)
-        try:
-            sock.sendto(build_response(data, answer_ip), peer)
-        except OSError as exc:
-            print("[dns] send failed: %s" % exc, flush=True)
+    # qname -> [count, answer, first qtype seen]; insertion order is first-seen.
+    seen: "OrderedDict[str, list]" = OrderedDict()
+    try:
+        while True:
+            data, peer = sock.recvfrom(4096)
+            try:
+                qname, qtype, _qclass, _end = _parse_question(data)
+            except ValueError as exc:
+                print("[dns] %s malformed query: %s" % (peer[0], exc), flush=True)
+                continue
+            answer_ip = _resolve(qname, default_ip, hostmap)
+            tname = _QTYPE_NAMES.get(qtype, str(qtype))
+            stamp = time.strftime("%H:%M:%S")
+            answer = answer_ip or "NXDOMAIN"
+            line = "[dns] %s  %-15s %-5s %-45s -> %s" % (
+                stamp, peer[0], tname, qname, answer)
+            print(line, flush=True)
+            if log is not None:
+                log.write(line[6:] + "\n")
+                log.flush()
+            entry = seen.get(qname)
+            if entry is None:
+                seen[qname] = [1, answer, tname]
+            else:
+                entry[0] += 1
+            if on_query is not None:
+                on_query(qname, tname, answer_ip)
+            try:
+                sock.sendto(build_response(data, answer_ip), peer)
+            except OSError as exc:
+                print("[dns] send failed: %s" % exc, flush=True)
+    except KeyboardInterrupt:
+        print("\n[dns] stopping", flush=True)
+    finally:
+        summary = format_summary(seen)
+        print(summary, flush=True)
+        if log is not None:
+            log.write("\n" + summary + "\n")
+            log.close()
+        sock.close()
+
+
+def format_summary(seen: Dict[str, list]) -> str:
+    """Render the deduplicated hostname list -- the point of the exercise."""
+    if not seen:
+        return ("[dns] no queries seen. The console never asked this server to "
+                "resolve anything: check its DNS setting and that its NIC is on.")
+    lines = ["", "=" * 72,
+             "HOSTNAMES THIS TITLE RESOLVED (%d unique, first-seen order)" % len(seen),
+             "=" * 72]
+    for qname, (count, answer, tname) in seen.items():
+        lines.append("  %-45s %-5s x%-4d -> %s" % (qname, tname, count, answer))
+    lines.append("=" * 72)
+    return "\n".join(lines)
