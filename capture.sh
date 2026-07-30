@@ -63,7 +63,13 @@ PROBE
     fi
 fi
 
+# `host RIG_IP` alone also catches everything the rig itself does -- browser
+# traffic, package updates, the SSH session you are typing in, and the VR
+# headset stream. The first real capture was ~99% noise. Excluded by default;
+# override with EXCLUDE="" if a title ever turns out to use one of these.
+EXCLUDE="${EXCLUDE-not port 22 and not port 9757 and not port 5353 and not port 137 and not port 138}"
 FILTER="host $RIG_IP"
+[ -n "$EXCLUDE" ] && FILTER="$FILTER and ($EXCLUDE)"
 [ -n "$EXTRA_FILTER" ] && FILTER="$FILTER and ($EXTRA_FILTER)"
 
 echo "=============================================================="
