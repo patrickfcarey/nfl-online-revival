@@ -63,6 +63,58 @@ Then set the emulated console's DNS to `RIG_IP`:
 Boot the game and enter its online menu. Even before any sinkhole, the `dns`
 log now lists every hostname the title resolves — the first half of the map.
 
+## PCSX2 network settings (PS2 titles)
+
+Two layers get conflated here, and both must agree:
+
+1. **PCSX2's emulated NIC (DEV9)** — how the virtual PS2 reaches the network.
+2. **The game's own network configuration** — PS2 titles store IP/DNS settings
+   on the memory card via their in-game network setup. This is what the game
+   actually uses.
+
+### DEV9: use Sockets mode
+
+`Settings -> Network & HDD` (values as stored in `inis/PCSX2.ini`, `[DEV9/Eth]`):
+
+| Setting | Value | Why |
+|---|---|---|
+| `EthEnable` | `true` | the adapter must exist at all |
+| `EthApi` | `Sockets` | translates PS2 socket calls to host sockets |
+| `InterceptDHCP` | `true` | PCSX2 hands the PS2 its address *and our DNS* |
+| `PS2IP` | e.g. `192.168.68.200` | virtual in Sockets mode; a LAN clash is harmless |
+| `ModeDNS1` / `ModeDNS2` | `Manual` | otherwise the host resolver is used and we see nothing |
+| `DNS1` / `DNS2` | the rig's IP | **both**, so no fallback bypasses the responder |
+| `EthLogDNS` / `EthLogDHCP` | `true` | PCSX2's own log, an independent check on ours |
+
+**Why Sockets and not PCAP Bridged.** The PCAP modes put real frames on the
+wire, which is more faithful, but they need `cap_net_raw` on the emulator
+binary — and capabilities do not survive an AppImage's FUSE mount, which is how
+PenguinBox/PCSX2 is installed on this rig. Sockets mode needs no privileges.
+The tradeoff: traffic originates from the host's own stack, so capture with
+`-i any` (it crosses loopback when the sinkhole is on the same box).
+
+`EthDevice` is only meaningful for the PCAP/TAP modes; leave it empty.
+
+### The game side
+
+In the title's own network setup, choose **automatic / DHCP** so it takes the
+address and DNS that `InterceptDHCP` hands out. If a title insists on manual
+entry, set its DNS to the rig's IP by hand. The setting is saved to the memory
+card, so it only has to be done once per title.
+
+### Confirming it works
+
+The DNS responder's log is the immediate test. Reach the title's online menu and
+watch for query lines; PCSX2's own `EthLogDNS` output is the cross-check. If
+PCSX2 logs DNS queries but the responder logs nothing, DNS is being resolved
+internally rather than forwarded — set `ModeDNS1` to `Manual` (not `Auto` or
+`Internal`) and confirm `DNS1` is the rig. If neither logs anything, the game
+never got a network configuration: redo its in-game network setup.
+
+Once hostnames are known, `[DEV9/Eth/Hosts]` can pin them to the sinkhole
+inside PCSX2, which removes the DNS server from the loop entirely. That is an
+optimisation for later runs, not a substitute for discovery.
+
 ## Step 2 — capture at the NIC (hosts, ports, and PS2/system-link payloads)
 
 On the rig, capture the emulator's traffic with tcpdump. Write **classic pcap**
