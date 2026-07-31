@@ -54,6 +54,14 @@ def build_parser() -> argparse.ArgumentParser:
                         help="path to DB_TEAMS.DAT; the announced checksum is "
                              "computed from it, so the console agrees its "
                              "roster is current. Overridden by --roster-csum.")
+    parser.add_argument("--roster-payload",
+                        help="league database to SERVE as an update. Published "
+                             "over HTTP and named in the `new2` manifest; the "
+                             "console downloads it and installs it as LEAG. "
+                             "Its length must equal the console's own league "
+                             "file or the client refuses it.")
+    parser.add_argument("--http-port", type=int, default=10080,
+                        help="port for the roster download (default 10080)")
     parser.add_argument("--quiet", action="store_true")
     return parser
 
@@ -114,6 +122,29 @@ def main(argv: Optional[List[str]] = None) -> int:
                   % (len(rows), args.roster_db, value, value))
     if args.roster_csum:
         config["roster_csum"] = args.roster_csum
+
+    roster_server = None
+    if args.roster_payload:
+        from .rosterfile import RosterFileError, RosterServer, load, manifest_url
+        try:
+            payload, crc = load(args.roster_payload)
+            roster_server = RosterServer(
+                payload, on_event=None if args.quiet else print)
+            bound = roster_server.start("0.0.0.0", args.http_port)
+        except RosterFileError as exc:
+            print("error: %s" % exc, file=sys.stderr)
+            return 2
+        config["roster_url"] = manifest_url(args.advertise_host, bound)
+        config["roster_file_crc"] = crc
+        if not args.quiet:
+            print("roster payload: %d bytes, CRC %d (0x%08x)"
+                  % (len(payload), crc, crc))
+            print("roster URL: %s" % config["roster_url"])
+            # The client checks the download against its OWN league file's
+            # length, so a mismatch here fails the same way a corrupt transfer
+            # does. Worth saying out loud rather than debugging on hardware.
+            print("            (the console will reject this unless its own "
+                  "league database is exactly %d bytes)" % len(payload))
     transcript = Transcript(args.transcript)
     buddy_service = None
     if args.buddy_port:
@@ -138,6 +169,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     finally:
         if buddy_service is not None:
             buddy_service.stop()
+        if roster_server is not None:
+            roster_server.stop()
         store.close()
     return 0
 

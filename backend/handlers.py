@@ -24,7 +24,7 @@ import time
 from typing import Callable, Dict, List, Optional
 
 from . import lobby, protocol
-from .protocol import Message
+from .protocol import Message, ProtocolError
 from .store import MAX_PERSONA_LEN, MAX_PERSONAS, Store
 
 # --- error tags the client understands -------------------------------------
@@ -665,28 +665,64 @@ def start_match(hub, host_conn, guest_conn, seed: Optional[int] = None) -> bool:
 # service news -- the message that also carries the buddy address
 # --------------------------------------------------------------------------
 
+#: ``news`` is parameterised by ``NAME``, and **the reply is not tagged
+#: ``news``**. The client builds the tag it will accept as ``'new0' + NAME``
+#: (0x0034f4e0-0x0034f504), then keeps the body only if the reply's type word
+#: equals it -- via a ``movz``, so a mismatch silently yields NULL rather than
+#: an error.
+#:
+#: We answered ``news`` for a long time, so every reply was discarded. That is
+#: invisible from the server: the request looks answered, the client neither
+#: complains nor retries. Two symptoms were downstream of it, and both were
+#: misread at the time -- ``CSUM`` never landed, so the console always believed
+#: its rosters were stale; and ``BUDDY_URL``/``BUDDY_PORT`` never landed, which
+#: is why no console ever connected to the buddy port we were advertising.
+NEWS_REPLY_BASE = "new0"
+
+#: The categories the client asks for.
+NEWS_CONFIG = 0      # service config: buddy address, roster DATE/CSUM
+NEWS_HEADLINES = 1   # the news list it displays
+NEWS_ROSTERS = 2     # the roster update manifest
+
+
+def _news_reply_type(kind: int) -> str:
+    """``new0``, ``new1``, ``new2`` -- the tag for this category."""
+    if not 0 <= kind <= 9:
+        # The client forms the tag by integer addition on the last byte, so
+        # anything outside one digit would produce a type we cannot name.
+        raise ProtocolError("news category %d is out of range" % kind)
+    return NEWS_REPLY_BASE[:3] + str(kind)
+
+
 @handles("news")
 def service_news(ctx: Context) -> List[bytes]:
-    """Answer the client's news fetch, and hand it the service configuration.
+    """Answer the client's news fetch.
 
-    This reply is doing two jobs. The visible one is news, which the client
-    shows while saying "checking for news...". The load-bearing one is that its
-    parser (0x0034ef10) reads the whole service config out of the same message:
-    ``BUDDY_URL`` and ``BUDDY_PORT`` at 0x0034ef44/0x0034ef6c, which it hands
-    straight to the buddy manager, and then ``DATE`` and ``CSUM``.
+    Three categories, selected by ``NAME``, each with its own reply tag:
+
+    * ``NAME=0`` -> ``new0``: the service configuration. ``BUDDY_URL`` and
+      ``BUDDY_PORT`` (read at 0x0034ef44/0x0034ef6c) go straight to the buddy
+      manager, then ``DATE`` and ``CSUM``, the roster version.
+    * ``NAME=1`` -> ``new1``: the headline list the client displays.
+    * ``NAME=2`` -> ``new2``: the roster update manifest -- see
+      :func:`_roster_manifest`.
 
     Leaving this unanswered is what made the client sit on "logging into
     server": it had asked and was waiting.
-
-    ``DATE`` and ``CSUM`` are the roster version. Their consumers
-    (0x00350970 and 0x0012a988) are plain setters -- they only record what we
-    say -- so the comparison against the console's own roster happens
-    elsewhere, and we cannot know the right values from here. They are
-    therefore configurable and omitted by default, which leaves the client's
-    stored values at zero.
     """
+    try:
+        kind = int(ctx.message.get("NAME", "0"))
+    except ValueError:
+        kind = NEWS_CONFIG
+
+    if kind == NEWS_ROSTERS:
+        return _roster_manifest(ctx)
+    if kind == NEWS_HEADLINES:
+        return [protocol.encode(_news_reply_type(kind), protocol.OK,
+                                {"NAME": str(kind)})]
+
     fields = {
-        "NAME": ctx.message.get("NAME", "0"),
+        "NAME": str(kind),
         "BUDDY_URL": ctx.config.get("buddy_host", ctx.config["advertise_host"]),
         "BUDDY_PORT": str(ctx.config.get("buddy_port", 0)),
         # The parser reads these four unconditionally after DATE/CSUM. Sending
@@ -702,7 +738,46 @@ def service_news(ctx: Context) -> List[bytes]:
     # see the note above PLACEHOLDER_ROSTER_CSUM.
     fields["DATE"] = str(ctx.config.get("roster_date", PLACEHOLDER_ROSTER_DATE))
     fields["CSUM"] = str(ctx.config.get("roster_csum", PLACEHOLDER_ROSTER_CSUM))
-    return [protocol.encode("news", protocol.OK, fields)]
+    return [protocol.encode(_news_reply_type(NEWS_CONFIG), protocol.OK, fields)]
+
+
+def _roster_manifest(ctx: Context) -> List[bytes]:
+    """``new2`` -- where to fetch a roster, and what it should hash to.
+
+    This is how a roster is actually delivered, and it is not a message on this
+    connection at all. Each record carries:
+
+    * ``URL``  -- an absolute HTTP URL. Read at 0x003525b0 into a 256-byte
+      buffer, whose default (0x00606158) is the empty string. An absent or
+      empty ``URL`` is exactly the failure seen on hardware: the client's HTTP
+      component ('http'/'get ', 0x004468f4) rejects it *before resolving
+      anything*, which is why no new connection and no DNS lookup were
+      observed.
+    * ``CRC``  -- decimal CRC-32 of the body. Checked at 0x003527c0 with
+      ``0x0039d7e8(buf, size, 0)``. Note the seed is **0** here, unlike the
+      roster checksum in ``CSUM``, which seeds from the row count.
+    * ``NAME`` -- the label shown in the update list.
+
+    On a CRC match the payload is handed to 0x003b6e38, which loads it into the
+    record store as database ``GAEL`` -- ``LEAG`` reversed. That call site is
+    the only one, so an HTTP download is the sole route by which a league
+    database is ever replaced.
+
+    With no roster configured we return an empty manifest rather than a bad
+    record: zero entries leaves the client with nothing to fetch, which is
+    honest, where a record with an unreachable URL would look like a broken
+    download.
+    """
+    url = ctx.config.get("roster_url")
+    crc = ctx.config.get("roster_file_crc")
+    if not url or crc is None:
+        return [protocol.encode(_news_reply_type(NEWS_ROSTERS), protocol.OK,
+                                {"NAME": str(NEWS_ROSTERS)})]
+    return [protocol.encode(_news_reply_type(NEWS_ROSTERS), protocol.OK, {
+        "NAME": str(NEWS_ROSTERS),
+        "URL": str(url),
+        "CRC": str(crc),
+    })]
 
 
 @handles("cusr")

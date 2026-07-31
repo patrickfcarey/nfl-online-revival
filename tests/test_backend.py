@@ -1093,7 +1093,11 @@ class NewsTests(unittest.TestCase):
     def test_news_is_answered_at_all(self):
         replies = self._news()
         self.assertEqual(len(replies), 1)
-        self.assertEqual(replies[0].type, "news")
+        # NOT "news". The client accepts only 'new0' + NAME and drops anything
+        # else on the floor. This assertion used to require the request type,
+        # which is exactly the bug it should have caught -- see
+        # tests/test_roster_delivery.py.
+        self.assertEqual(replies[0].type, "new0")
         self.assertTrue(replies[0].ok)
 
     def test_it_carries_the_buddy_address(self):

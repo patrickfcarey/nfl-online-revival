@@ -41,6 +41,10 @@ fi
 DB="${BACKEND_DB:-madden.db}"
 BUDDY_PORT="${BUDDY_PORT:-10002}"
 ROSTER_DB="${ROSTER_DB:-extract/madden_data/DB_TEAMS.DAT}"
+# A league database to SERVE as an update, if you have one. Its length must
+# equal the console's own league file or the client refuses the download.
+ROSTER_PAYLOAD="${ROSTER_PAYLOAD:-}"
+HTTP_PORT="${HTTP_PORT:-10080}"
 TRANSCRIPT="${TRANSCRIPT:-captures/madden-$(date +%Y%m%d-%H%M%S).jsonl}"
 
 if [ ! -f "$DB" ]; then
@@ -56,6 +60,11 @@ else
     echo "      placeholder, so the console will consider its rosters stale."
 fi
 
+payload_args=()
+if [ -n "$ROSTER_PAYLOAD" ] && [ -f "$ROSTER_PAYLOAD" ]; then
+    payload_args=(--roster-payload "$ROSTER_PAYLOAD" --http-port "$HTTP_PORT")
+fi
+
 echo "backend: db=$DB  advertise=$HOST  buddy=$BUDDY_PORT"
 echo "transcript: $TRANSCRIPT"
 exec python3 -m backend \
@@ -64,4 +73,5 @@ exec python3 -m backend \
     --buddy-port "$BUDDY_PORT" \
     --transcript "$TRANSCRIPT" \
     "${roster_args[@]}" \
+    "${payload_args[@]}" \
     "$@"
