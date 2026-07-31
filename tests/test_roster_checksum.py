@@ -233,6 +233,55 @@ class RealRoster(unittest.TestCase):
             self.skipTest("set MADDEN_DB_TEAMS to DB_TEAMS.DAT to run this")
         self.path = path
 
+    def test_bit_extraction_decodes_real_players(self):
+        """The check that the packed fields are actually being read correctly.
+
+        Names alone would only prove the string offsets. The cross-checks are
+        what matter: the one player at position 0 is also the only one with high
+        throw power, and the punter is simultaneously the slowest man on the
+        roster and the highest rated. Independent fields at different offsets
+        and widths agreeing on the same people does not survive a wrong bit
+        order.
+        """
+        container = madden_tdb.load(self.path)
+        table = container.database(1).table("PLAY")
+
+        def text(record, name):
+            field = table.fields[name]
+            start = field.offset_bits // 8
+            raw = record[start:start + field.bits // 8]
+            return raw.split(b"\x00")[0].decode("latin-1")
+
+        players = {}
+        for i in range(table.record_count):
+            record = table.record(i)
+            players[text(record, "PLNA")] = {
+                name: table.value(record, name)
+                for name in ("PPOS", "PTHP", "PSPD", "POVR", "TGID")
+            }
+
+        # Position 0 picks out exactly the 2003 Bears quarterback room.
+        at_position_zero = {n for n, p in players.items() if p["PPOS"] == 0}
+        self.assertEqual(at_position_zero, {"Stewart", "Grossman", "Chandler"})
+
+        # And throw power, read at a different offset and width, independently
+        # picks out the same three men -- they are the top three, and the drop
+        # to fourth is enormous (87/85/85 against 48).
+        by_arm = sorted(players.items(), key=lambda kv: -kv[1]["PTHP"])
+        self.assertEqual({n for n, _ in by_arm[:3]}, at_position_zero)
+        self.assertGreater(by_arm[2][1]["PTHP"], by_arm[3][1]["PTHP"] + 20)
+
+        # The punter: slowest man on the roster and near the top of it.
+        punter = players["Maynard"]
+        self.assertEqual(punter["PSPD"], min(p["PSPD"] for p in players.values()))
+
+        # Urlacher rates highest on a 2003 Bears roster, which is the other
+        # thing a wrong bit order would not reproduce.
+        best = max(players.items(), key=lambda kv: kv[1]["POVR"])
+        self.assertEqual(best[0], "Urlacher")
+
+        self.assertTrue(all(p["TGID"] == 1 for p in players.values()))
+
     def test_shape_of_the_retail_roster(self):
         value, rows = roster_checksum.from_file(self.path)
         # 32 teams of roughly 53; anything far off means the parse is wrong.

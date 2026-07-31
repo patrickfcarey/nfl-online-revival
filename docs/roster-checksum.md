@@ -135,19 +135,45 @@ have, and no duplicate `PGID` means `order by PGID` is unambiguous.
 
 Serve it with `python -m backend --roster-db /path/to/DB_TEAMS.DAT`.
 
+## Checking the extraction
+
+The algorithm can be verified against the executable, but the *extraction* — do
+we hand the CRC the same bytes the query VM would? — cannot be. It has to be
+checked against reality instead, and it decodes cleanly:
+
+```
+FIRST        LAST           TGID POVR PSPD PAWR PTHP PPOS
+Joe          Tafoya         1    58   55   48   10   10
+Brad         Maynard        1    95   18   86   24   20
+Alex         Brown          1    77   77   64   17   11
+...
+Kordell      Stewart        1    79   79   72   85   0
+```
+
+That is the 2003 Chicago Bears, and the useful part is the cross-checks rather
+than the names.
+
+Exactly three players decode to `PPOS` 0: Stewart, Grossman and Chandler — the
+actual quarterback room that season, all of it and nobody else. Sort the same
+roster by `PTHP` instead, a different field at a different offset and width, and
+the top three are those same three men (87, 85, 85), with the fourth-best arm on
+the team down at 48. Two independent fields agree on the same three people.
+
+The rest lines up too. Brad Maynard is the slowest man on the roster at `PSPD`
+18 and rated 95 — a punter. Patrick Mannelly, the long snapper, is second
+slowest. Brian Urlacher tops the roster at `POVR` 98, with Olin Kreutz behind
+him at 96.
+
+None of that survives a wrong bit order or wrong offsets; the fields would
+scatter. The extraction is sound.
+
 ## What is still unproven
 
-**No console has confirmed this value.** The algorithm is verified line by line
-against the executable, but the checksum also depends on the roster extraction
-producing byte-identical rows to what the query VM produces, and that has only
-been checked for plausibility.
-
-Two things could still be wrong without any of the above being wrong:
-
-- the bit-extraction convention, inherited from a Madden 08 reader and assumed
-  unchanged for 2004;
-- the assumption that a freshly booted console's `LEAG` holds exactly these 1743
-  rows, rather than something the save or an earlier update has altered.
+**No console has confirmed this value.** What remains is not the parse but the
+assumption that a freshly booted console's `LEAG` holds exactly these 1743 rows
+— rather than something a save, or an earlier roster update, has altered. The
+disc is the right source for a default boot; it need not be the right source for
+*this* console.
 
 The test is direct: run the server with `--roster-db`, leave the pnach's roster
 line disabled, and see whether the console still claims its rosters are out of

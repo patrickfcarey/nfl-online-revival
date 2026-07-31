@@ -22,31 +22,52 @@ persistence) that only ever existed on machines that are gone.
 
 | Phase | Goal | Deliverable | Main risk |
 |---|---|---|---|
-| **1. Recon** | learn what each title sends | per-title protocol map + connection state machine | low — this is where guesses become facts |
-| **2. Front door** | get past platform auth | client reaches the game's own login layer | **highest** — PS2 DNAS may be a wall; Xbox leans on Insignia |
-| **3. Matchmaking** | reimplement the master server | two clients see each other's game | medium (low if GameSpy) |
+| **1. Recon** | learn what each title sends | per-title protocol map + connection state machine | **done** — both PS2 titles captured |
+| **2. Front door** | get past platform auth | client reaches the game's own login layer | ~~highest~~ **done for Madden** — DNAS was one word, not a wall |
+| **3. Matchmaking** | reimplement the master server | two clients see each other's game | medium — no GameSpy reuse; written from scratch |
 | **4. Peer connect** | a game completes | one full online head-to-head, server-brokered | medium (NAT traversal) |
 | **5. Crown jewels** | leagues, VIP/crib, rosters, leaderboards | incremental, stateful features | high — the months-long slog |
 
-## Strategy
+## Where this actually stands
 
-**Vertical-slice one title, one platform all the way to Phase 4 before
-breadth.** That single slice teaches the whole pipeline — auth → match → peer →
-gameplay — cheaply; everything after is repetition and reconstruction.
+Recon is done, and it overturned the plan this file used to describe. Keeping
+the old bets around would send the next reader after the wrong things, so:
 
-Working bet: **Madden 2004 is the cheaper first slice** — if it rides GameSpy,
-[OpenSpy](https://github.com/nitrogenlabs/openspy-core)-style reuse hands you
-Phase 3 nearly for free. Prove the pipeline there, then bring it to ESPN 2K5,
-which is the flagship but almost certainly a proprietary, stateful stack (the
-hard one you want to attack *after* you know the moves). Recon (Phase 1)
-confirms or overturns this before anyone commits.
+**Confirmed on hardware** (Madden 2004, PS2 — every item below appears in a
+capture transcript, not just in tests):
 
-**Leverage — don't reinvent:**
-- **Xbox Live auth/IPsec** → adopt the [Insignia](https://insignia.live) stack.
-  Reimplementing the Kerberos/IPsec plumbing from scratch is months of wasted
-  effort.
-- **GameSpy matchmaking** → OpenSpy / RetroSpy reimplementations.
-- **PS2 DNAS** → the one that might genuinely block; treat it as an early spike.
+- the DNAS gate is passed, by a one-word patch;
+- the login chain runs end to end: `@dir` → `skey` → `addr` → `auth` → `acct` →
+  `cper` → `pers` → `sele` → `cusr` → `news`, plus `~png` keepalives;
+- an EA account and a persona were created and are reloaded on reconnect.
+
+**Built and unit-tested, but never yet exercised by a console:** rooms, the user
+list, chat, matchmaking, the buddy stub, and the roster checksum. No transcript
+contains a single `room`, `chat`, `mesg` or `move` message, because the console
+has so far always stalled earlier. Treat these as unproven.
+
+**No game has ever been played online.** Phase 4 has not been attempted.
+
+**Dead ends, so nobody re-walks them:**
+
+- **GameSpy is not involved in either title.** The original bet was that Madden
+  rode GameSpy and that OpenSpy/RetroSpy would hand over matchmaking nearly for
+  free. Capture showed no GameSpy traffic anywhere; Madden is EA **DirtySDK**
+  (FESL-family framing), so that reuse never materialised. Madden still made the
+  right first slice, but for unrelated reasons — intact symbols, a literal
+  hostname, a documented SDK.
+- **DNAS was not the wall it was billed as.** We write the server, so it only
+  ever had to satisfy the *client's own* check. One word.
+
+**ESPN 2K5 is a separate protocol problem.** Its service is
+`nfl2k5.games.espnvideogames.com`, which earlier string scans missed because the
+game stores its strings **UTF-16LE**. Its DNAS gate is located but untested on
+hardware, and its wire format is binary under numeric message ids — none of
+Madden's text framing transfers.
+
+**Still worth reusing:** the [Insignia](https://insignia.live) stack, if the
+Xbox versions are ever attempted — reimplementing Kerberos/IPsec is months of
+wasted effort. That one still holds.
 
 ## Phase 1 harness (`recon/`)
 
