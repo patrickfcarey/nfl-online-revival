@@ -977,8 +977,33 @@ def service_news(ctx: Context) -> List[bytes]:
     # default checksum is a placeholder and will not match the console's --
     # see the note above PLACEHOLDER_ROSTER_CSUM.
     fields["DATE"] = str(ctx.config.get("roster_date", PLACEHOLDER_ROSTER_DATE))
-    fields["CSUM"] = str(ctx.config.get("roster_csum", PLACEHOLDER_ROSTER_CSUM))
+    fields["CSUM"] = _pick_csum(ctx)
     return [protocol.encode(_news_reply_type(NEWS_CONFIG), protocol.OK, fields)]
+
+
+def _pick_csum(ctx: Context) -> str:
+    """The checksum to announce, honouring a sweep if one is configured.
+
+    Testing a candidate checksum normally costs a whole boot, because the
+    console asks for its roster version once per login. A sweep serves the next
+    candidate on each successive request instead, so backing out to the menu and
+    going online again tests the next one -- turning a morning of reboots into a
+    few minutes of menu navigation.
+
+    Which candidate was served is printed, because the console cannot tell us:
+    the only signal is whether the "rosters are out of date" prompt appears.
+    """
+    sweep = ctx.config.get("roster_csum_sweep")
+    if not sweep:
+        return str(ctx.config.get("roster_csum", PLACEHOLDER_ROSTER_CSUM))
+    index = int(ctx.config.get("_sweep_index", 0))
+    value = sweep[index % len(sweep)]
+    ctx.config["_sweep_index"] = index + 1
+    label = ctx.config.get("roster_csum_labels", {}).get(value, "")
+    print("[roster] serving CSUM candidate %d/%d: %s%s"
+          % (index % len(sweep) + 1, len(sweep), value,
+             "  (%s)" % label if label else ""), flush=True)
+    return value
 
 
 def _roster_manifest(ctx: Context) -> List[bytes]:

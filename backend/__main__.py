@@ -54,6 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="path to DB_TEAMS.DAT; the announced checksum is "
                              "computed from it, so the console agrees its "
                              "roster is current. Overridden by --roster-csum.")
+    parser.add_argument("--roster-csum-sweep",
+                        help="comma-separated candidate checksums; a different "
+                             "one is announced on each login, so several can be "
+                             "tested in one session instead of one per boot")
     parser.add_argument("--roster-payload",
                         help="league database to SERVE as an update. Published "
                              "over HTTP and named in the `new2` manifest; the "
@@ -122,6 +126,20 @@ def main(argv: Optional[List[str]] = None) -> int:
                   % (len(rows), args.roster_db, value, value))
     if args.roster_csum:
         config["roster_csum"] = args.roster_csum
+    if args.roster_csum_sweep:
+        candidates = [c.strip() for c in args.roster_csum_sweep.split(",")
+                      if c.strip()]
+        if not candidates:
+            print("error: --roster-csum-sweep listed no candidates",
+                  file=sys.stderr)
+            return 2
+        config["roster_csum_sweep"] = candidates
+        config["_sweep_index"] = 0
+        if not args.quiet:
+            print("roster: sweeping %d checksum candidates, one per login:"
+                  % len(candidates))
+            for i, c in enumerate(candidates, 1):
+                print("   %d. %s" % (i, c))
 
     roster_server = None
     if args.roster_payload:
