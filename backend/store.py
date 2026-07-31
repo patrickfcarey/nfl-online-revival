@@ -107,6 +107,15 @@ CREATE TABLE IF NOT EXISTS room(
   NAME TEXT PRIMARY KEY, DESC TEXT, PASS TEXT, MAX INTEGER, CHAN TEXT);
 """
 
+#: Columns a caller may set. Column names cannot be parameterised in SQL, so
+#: they are interpolated into the statement text -- which is safe only while the
+#: set is fixed and known. Checking against this list keeps it that way even if
+#: a future handler passes something it read off the wire.
+ACCOUNT_COLUMNS = frozenset((
+    "PASS", "MAIL", "PMAIL", "BORN", "GEND", "SPAM", "TOS", "CPAT",
+    "ALTS", "OPTS", "CDEV", "AGE", "CHNG"))
+
+
 #: The client shows a persona picker with four slots.
 MAX_PERSONAS = 4
 #: Persona names are read through a 13-byte buffer, so twelve characters fit.
@@ -115,6 +124,12 @@ MAX_PERSONA_LEN = 12
 
 class StoreError(RuntimeError):
     """The store could not be opened or migrated."""
+
+
+def _check_columns(fields) -> None:
+    unknown = sorted(set(fields) - ACCOUNT_COLUMNS)
+    if unknown:
+        raise StoreError("not account columns: %s" % ", ".join(unknown))
 
 
 class Store:
@@ -166,6 +181,7 @@ class Store:
         itself is the database's job so two simultaneous registrations cannot
         both succeed.
         """
+        _check_columns(fields)
         columns = ["NAME", "created"]
         values: List[object] = [name, int(time.time())]
         for key, value in fields.items():
@@ -182,6 +198,7 @@ class Store:
     def update_account(self, name: str, **fields) -> None:
         if not fields:
             return
+        _check_columns(fields)
         assignments = ", ".join("%s = ?" % key for key in fields)
         with self._lock:
             self._db.execute("UPDATE account SET %s WHERE NAME = ?" % assignments,

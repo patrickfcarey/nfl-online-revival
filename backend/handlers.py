@@ -250,8 +250,11 @@ def login(ctx: Context) -> List[bytes]:
     row = ctx.store.account(name) if name else None
     if row is None:
         return ctx.fail(ERR_MISSING)
+    # Compare unconditionally. Skipping the check when the stored value is
+    # empty would let an account created without a password accept any password
+    # at all, which is the opposite of what an empty password means.
     presented = ctx.message.get("PASS")
-    if row["PASS"] and presented != row["PASS"]:
+    if presented != (row["PASS"] or ""):
         return ctx.fail(ERR_BAD_PASS)
 
     ctx.session.account = name

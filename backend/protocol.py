@@ -27,6 +27,13 @@ HEADER_SIZE = 12
 #: Success. Any other status is a four-character tag.
 OK = 0
 
+#: Refuse to buffer more than this for one message. A desynchronised stream
+#: yields a nonsense length -- 4 GB is representable in the header -- and
+#: without a cap the reader waits for bytes that will never come while the
+#: buffer grows. Real messages are a few hundred bytes; the largest field the
+#: client reads is 4097.
+MAX_MESSAGE_SIZE = 65536
+
 Status = Union[int, str]
 
 
@@ -42,6 +49,9 @@ def encode_status(status: Status) -> int:
     the client as the wrong error screen, which is very hard to trace back.
     """
     if isinstance(status, int):
+        if not 0 <= status <= 0xFFFFFFFF:
+            raise ProtocolError(
+                "status %d does not fit in 32 bits" % status)
         return status
     if status == "":
         return OK
@@ -62,12 +72,19 @@ def decode_status(value: int) -> str:
 
 
 class Message(NamedTuple):
-    """One decoded message."""
+    """One decoded message.
+
+    ``raw`` is the exact bytes this was decoded from. Keeping them means a
+    transcript records what actually arrived rather than what we made of it --
+    the two differ precisely when our parsing is wrong, which is the case worth
+    being able to see.
+    """
 
     type: str
     status: int
     fields: Dict[str, str]
     raw_payload: bytes = b""
+    raw: bytes = b""
 
     @property
     def ok(self) -> bool:
@@ -126,8 +143,12 @@ def decode(data: bytes) -> Message:
     if length > len(data):
         raise ProtocolError("declared length %d exceeds the %d bytes present"
                             % (length, len(data)))
+    if length > MAX_MESSAGE_SIZE:
+        raise ProtocolError("declared length %d exceeds the %d-byte limit"
+                            % (length, MAX_MESSAGE_SIZE))
     payload = data[HEADER_SIZE:length]
-    return Message(msg_type, status, parse_fields(payload), payload)
+    return Message(msg_type, status, parse_fields(payload), payload,
+                   bytes(data[:length]))
 
 
 def encode(msg_type: str, status: Status = OK,
@@ -161,6 +182,10 @@ def split_stream(buffer: bytes) -> Tuple[List[Message], bytes]:
         if length < HEADER_SIZE:
             raise ProtocolError("declared length %d is shorter than the header"
                                 % length)
+        if length > MAX_MESSAGE_SIZE:
+            raise ProtocolError("declared length %d exceeds the %d-byte limit; "
+                                "the stream is out of step"
+                                % (length, MAX_MESSAGE_SIZE))
         if len(buffer) < length:
             break
         messages.append(decode(buffer[:length]))

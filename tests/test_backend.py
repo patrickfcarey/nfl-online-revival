@@ -382,6 +382,58 @@ class HandlerRegistryTests(unittest.TestCase):
             handlers.handles("toolong")(lambda ctx: [])
 
 
+class ReviewRegressionTests(unittest.TestCase):
+    """Each of these is a defect found by reviewing the first cut."""
+
+    def setUp(self):
+        self.store, self.path = make_store()
+
+    def tearDown(self):
+        self.store.close(); os.unlink(self.path)
+
+    def test_a_message_keeps_the_bytes_it_was_decoded_from(self):
+        """The transcript must record the wire, not our re-encode of it: the
+        two differ exactly when the parsing is wrong."""
+        msg = protocol.decode(MADDEN_DIR)
+        self.assertEqual(msg.raw, MADDEN_DIR)
+
+    def test_raw_survives_stream_splitting(self):
+        msgs, _rest = protocol.split_stream(MADDEN_DIR + MADDEN_DIR)
+        self.assertTrue(all(m.raw == MADDEN_DIR for m in msgs))
+
+    def test_an_absurd_declared_length_is_refused_not_buffered(self):
+        """A desynced stream can claim 4 GB; without a cap the reader waits for
+        bytes that never arrive while the buffer grows."""
+        huge = b"@dir" + struct.pack(">II", 0, 0xFFFFFFFF)
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.split_stream(huge)
+
+    def test_an_out_of_range_int_status_is_a_protocol_error(self):
+        for bad in (-1, 2 ** 32):
+            with self.assertRaises(protocol.ProtocolError):
+                protocol.encode("acct", bad, {})
+
+    def test_only_known_account_columns_may_be_written(self):
+        """Column names cannot be parameterised, so they are interpolated --
+        safe only while the set stays fixed and checked."""
+        from backend.store import StoreError
+        self.store.create_account("alice")
+        with self.assertRaises(StoreError):
+            self.store.update_account("alice", **{"MAIL = 'x' WHERE 1=1 --": "v"})
+        with self.assertRaises(StoreError):
+            self.store.create_account("bob", NOTACOLUMN="v")
+
+    def test_an_account_with_no_password_does_not_accept_any_password(self):
+        """Skipping the comparison when the stored value is empty is the
+        opposite of what an empty password means."""
+        self.store.create_account("nopass")
+        _s, replies = run(self.store, "auth",
+                          {"NAME": "nopass", "PASS": "anything"})
+        self.assertEqual(replies[0].status_tag, handlers.ERR_BAD_PASS)
+        _s, replies = run(self.store, "auth", {"NAME": "nopass", "PASS": ""})
+        self.assertTrue(replies[0].ok)
+
+
 # --------------------------------------------------------------------------
 # end to end, over a real socket
 # --------------------------------------------------------------------------

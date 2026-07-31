@@ -122,7 +122,10 @@ class Service:
 
     def _handle(self, conn: socket.socket, label: str, session: Session,
                 message: protocol.Message) -> None:
-        raw = protocol.encode(message.type, message.status, message.fields)
+        # The bytes as they arrived, not a re-encode: the two differ exactly
+        # when our parsing is wrong, which is the case worth being able to see.
+        raw = message.raw or protocol.encode(message.type, message.status,
+                                             message.fields)
         self._say("[ea] <- %s  %s" % (label, message.type))
         self._say(message.describe())
         self.transcript.message("recv", label, message, raw)
