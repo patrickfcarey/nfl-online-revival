@@ -75,6 +75,8 @@ class FakeConsole:
         self.verbose = verbose
         self.sock: Optional[socket.socket] = None
         self.buffer = b""
+        #: Decoded but not yet consumed, in arrival order.
+        self.inbox: List[protocol.Message] = []
         self.persona = ""
         #: Everything the server pushed at us but we did not ask for.
         self.pushes: List[protocol.Message] = []
@@ -98,19 +100,29 @@ class FakeConsole:
         self.sock = socket.create_connection((host, port), TIMEOUT)
         self.sock.settimeout(TIMEOUT)
         self.buffer = b""
+        self.inbox = []
 
     def send(self, msg_type: str, **fields) -> None:
         assert self.sock is not None
         self.sock.sendall(protocol.encode(msg_type, protocol.OK, fields))
 
     def _read_one(self, deadline: float) -> Optional[protocol.Message]:
+        """Next message, in arrival order.
+
+        Everything decoded goes through ``self.inbox``. An earlier version
+        returned the first message of a batch and filed the rest straight into
+        ``pushes``, where the caller waiting for a reply never looked -- so a
+        reply that happened to share a TCP segment with a push was lost and the
+        wait timed out. Whether that happened depended on how the kernel
+        chunked the stream, which made it look random.
+        """
         while True:
+            if self.inbox:
+                return self.inbox.pop(0)
             messages, self.buffer = protocol.split_stream(self.buffer)
             if messages:
-                # Keep the rest for later rather than dropping it.
-                for extra in messages[1:]:
-                    self.pushes.append(extra)
-                return messages[0]
+                self.inbox.extend(messages)
+                continue
             remaining = deadline - time.time()
             if remaining <= 0:
                 return None
