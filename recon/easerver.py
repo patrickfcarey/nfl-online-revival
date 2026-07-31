@@ -35,7 +35,36 @@ class EaServerError(RuntimeError):
     """The server could not be started."""
 
 
-def load_replies(path: Optional[str]) -> Dict[str, Dict[str, str]]:
+def _normalise(key: str, value) -> list:
+    """Accept either a single reply or a sequence of them.
+
+    A dict is the common case -- answer with the same type. A list allows a
+    follow-up push, which this protocol needs: the server both answers and
+    volunteers messages (+ses, +msg, sele config), and a client can be waiting
+    on the second one.
+    """
+    if isinstance(value, dict):
+        return [(key, {str(k): str(v) for k, v in value.items()})]
+    if not isinstance(value, list):
+        raise EaServerError(
+            "reply for %s must be an object, or a list of {type, fields}" % key)
+    out = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise EaServerError("reply %s[%d] must be an object" % (key, index))
+        msg_type = item.get("type", key)
+        if len(msg_type) != 4:
+            raise EaServerError(
+                "reply %s[%d] has type %r, which is not 4 characters"
+                % (key, index, msg_type))
+        fields = item.get("fields", {})
+        if not isinstance(fields, dict):
+            raise EaServerError("reply %s[%d] fields must be an object" % (key, index))
+        out.append((msg_type, {str(k): str(v) for k, v in fields.items()}))
+    return out
+
+
+def load_replies(path: Optional[str]) -> Dict[str, list]:
     """Read the reply table, or return the built-in starting point."""
     if not path:
         return {}
@@ -48,14 +77,12 @@ def load_replies(path: Optional[str]) -> Dict[str, Dict[str, str]]:
         raise EaServerError("reply file %s is not valid JSON: %s" % (path, exc))
     if not isinstance(data, dict):
         raise EaServerError("reply file must be a JSON object keyed by message type")
-    table: Dict[str, Dict[str, str]] = {}
+    table: Dict[str, list] = {}
     for key, value in data.items():
         if len(key) != 4:
             raise EaServerError(
                 "reply key %r is not a 4-character message type" % key)
-        if not isinstance(value, dict):
-            raise EaServerError("reply for %s must be an object of KEY=VALUE" % key)
-        table[key] = {str(k): str(v) for k, v in value.items()}
+        table[key] = _normalise(key, value)
     return table
 
 
@@ -88,16 +115,17 @@ class _Transcript:
                 print("[ea] transcript write failed: %s" % exc, flush=True)
 
 
-def _reply_for(message: eaproto.EaMessage, replies: Dict[str, Dict[str, str]],
-               host: str, port: int) -> Optional[bytes]:
-    """Build the configured reply, or the built-in @dir guess."""
-    fields = replies.get(message.type)
-    if fields is not None:
-        # A reply echoes the transaction it answers; the client matches on it.
-        return eaproto.encode(message.type, message.txn, fields)
+def _replies_for(message: eaproto.EaMessage, replies: Dict[str, list],
+                 host: str, port: int) -> list:
+    """Every message to send in answer, in order. Empty means stay silent."""
+    configured = replies.get(message.type)
+    if configured is not None:
+        # Each reply echoes the transaction it answers; the client matches on
+        # it, and requires zero in the status position on some arms.
+        return [eaproto.encode(t, message.txn, f) for t, f in configured]
     if message.type == "@dir":
-        return eaproto.directory_reply(message, host, port)
-    return None
+        return [eaproto.directory_reply(message, host, port)]
+    return []
 
 
 def _serve_connection(conn: socket.socket, addr, replies, transcript,

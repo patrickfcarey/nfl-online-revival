@@ -859,6 +859,44 @@ class EaFramingTests(unittest.TestCase):
         self.assertEqual(eaproto.decode(blob).fields["VERS"], "PS2/MS5-Jun 17 2003")
 
 
+class EaMultiReplyTests(unittest.TestCase):
+    """The protocol has server pushes, so one request may need several answers."""
+
+    def _f(self, obj):
+        h = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump(obj, h); h.close(); return h.name
+
+    def test_a_list_sends_several_messages_in_order(self):
+        path = self._f({"skey": [
+            {"type": "skey", "fields": {"SKEY": "$00"}},
+            {"type": "sele", "fields": {"LKEY": "1"}},
+        ]})
+        try:
+            table = easerver.load_replies(path)
+            req = eaproto.decode(eaproto.encode("skey", 3, {"SKEY": "$11"}))
+            blobs = easerver._replies_for(req, table, "x", 0)
+            self.assertEqual([eaproto.decode(b).type for b in blobs], ["skey", "sele"])
+            self.assertTrue(all(eaproto.decode(b).txn == 3 for b in blobs))
+        finally:
+            os.unlink(path)
+
+    def test_a_bad_type_inside_a_list_is_caught_at_load(self):
+        path = self._f({"skey": [{"type": "toolong", "fields": {}}]})
+        try:
+            with self.assertRaises(easerver.EaServerError):
+                easerver.load_replies(path)
+        finally:
+            os.unlink(path)
+
+    def test_plain_dict_still_works(self):
+        path = self._f({"@dir": {"ADDR": "1.2.3.4"}})
+        try:
+            table = easerver.load_replies(path)
+            self.assertEqual(table["@dir"][0][0], "@dir")
+        finally:
+            os.unlink(path)
+
+
 class EaServerTests(unittest.TestCase):
     def _reply_file(self, obj):
         handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
@@ -870,7 +908,7 @@ class EaServerTests(unittest.TestCase):
         path = self._reply_file({"@dir": {"ADDR": "10.0.0.5", "PORT": "10001"}})
         try:
             table = easerver.load_replies(path)
-            self.assertEqual(table["@dir"]["ADDR"], "10.0.0.5")
+            self.assertEqual(table["@dir"][0][1]["ADDR"], "10.0.0.5")
         finally:
             os.unlink(path)
 
@@ -898,9 +936,15 @@ class EaServerTests(unittest.TestCase):
         self.assertEqual(easerver.load_replies(None), {})
 
     def test_configured_reply_wins_and_echoes_the_txn(self):
+        # Build the table through the real loader, so the test exercises the
+        # same normalisation the server uses rather than a hand-built shape.
+        path = self._reply_file({"@dir": {"ADDR": "1.2.3.4", "PORT": "999"}})
+        try:
+            table = easerver.load_replies(path)
+        finally:
+            os.unlink(path)
         request = eaproto.decode(MADDEN_DIR_REQUEST)._replace(txn=42)
-        table = {"@dir": {"ADDR": "1.2.3.4", "PORT": "999"}}
-        blob = easerver._reply_for(request, table, "unused", 0)
+        blob = easerver._replies_for(request, table, "unused", 0)[0]
         decoded = eaproto.decode(blob)
         self.assertEqual(decoded.txn, 42)
         self.assertEqual(decoded.fields["ADDR"], "1.2.3.4")
@@ -909,13 +953,13 @@ class EaServerTests(unittest.TestCase):
         """Silence is data: it distinguishes a message that needs an answer
         from one the client moves past regardless."""
         msg = eaproto.decode(eaproto.encode("@zzz", 1, {"X": "y"}))
-        self.assertIsNone(easerver._reply_for(msg, {}, "1.2.3.4", 10001))
+        self.assertEqual(easerver._replies_for(msg, {}, "1.2.3.4", 10001), [])
 
     def test_dir_falls_back_to_the_builtin_guess(self):
         request = eaproto.decode(MADDEN_DIR_REQUEST)
-        blob = easerver._reply_for(request, {}, "9.9.9.9", 10001)
-        self.assertIsNotNone(blob)
-        self.assertEqual(eaproto.decode(blob).fields["ADDR"], "9.9.9.9")
+        blobs = easerver._replies_for(request, {}, "9.9.9.9", 10001)
+        self.assertEqual(len(blobs), 1)
+        self.assertEqual(eaproto.decode(blobs[0]).fields["ADDR"], "9.9.9.9")
 
 
 if __name__ == "__main__":
