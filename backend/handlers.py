@@ -948,12 +948,33 @@ NEWS_HEADLINES = 1   # the news list it displays
 NEWS_ROSTERS = 2     # the roster update manifest
 
 
-def _news_reply_type(kind: int) -> str:
-    """``new0``, ``new1``, ``new2`` -- the tag for this category."""
+def news_reply_type(ctx: Context, kind: int) -> str:
+    """The type to answer a ``news`` request with.
+
+    Two readings of the client are in play and only hardware can separate them.
+
+    0x0034f4f0-0x0034f504 compares a word at ``sp+8`` in the reply out-struct
+    against ``'new0' + kind`` and keeps the body only on a match, which is why
+    we tag replies ``new0``/``new1``/``new2``. But that offset was never
+    confirmed to be the reply's *type* -- the header's second word turned out to
+    be a status tag rather than the transaction id it was once assumed to be, so
+    the struct's layout is not as obvious as it looked.
+
+    Meanwhile the console demonstrably never stores the ``CSUM`` we announce:
+    the value is absent from all 32 MB of EE RAM in a savestate, and the slot at
+    gp-19396 stays zero, so the comparison runs against 0 and always reports the
+    rosters stale. Something is stopping the reply being consumed.
+
+    ``--news-reply-type news`` echoes the request type instead, as every other
+    reply in this protocol does. Whichever setting makes the checksum land in
+    memory is the right one.
+    """
     if not 0 <= kind <= 9:
         # The client forms the tag by integer addition on the last byte, so
         # anything outside one digit would produce a type we cannot name.
         raise ProtocolError("news category %d is out of range" % kind)
+    if ctx.config.get("news_reply_type") == "news":
+        return "news"
     return NEWS_REPLY_BASE[:3] + str(kind)
 
 
@@ -981,7 +1002,7 @@ def service_news(ctx: Context) -> List[bytes]:
     if kind == NEWS_ROSTERS:
         return _roster_manifest(ctx)
     if kind == NEWS_HEADLINES:
-        return [protocol.encode(_news_reply_type(kind), protocol.OK,
+        return [protocol.encode(news_reply_type(ctx, kind), protocol.OK,
                                 {"NAME": str(kind)})]
 
     fields = {
@@ -1001,7 +1022,7 @@ def service_news(ctx: Context) -> List[bytes]:
     # see the note above PLACEHOLDER_ROSTER_CSUM.
     fields["DATE"] = str(ctx.config.get("roster_date", DEFAULT_ROSTER_DATE))
     fields["CSUM"] = _pick_csum(ctx)
-    return [protocol.encode(_news_reply_type(NEWS_CONFIG), protocol.OK, fields)]
+    return [protocol.encode(news_reply_type(ctx, NEWS_CONFIG), protocol.OK, fields)]
 
 
 def _pick_csum(ctx: Context) -> str:
@@ -1059,9 +1080,9 @@ def _roster_manifest(ctx: Context) -> List[bytes]:
     url = ctx.config.get("roster_url")
     crc = ctx.config.get("roster_file_crc")
     if not url or crc is None:
-        return [protocol.encode(_news_reply_type(NEWS_ROSTERS), protocol.OK,
+        return [protocol.encode(news_reply_type(ctx, NEWS_ROSTERS), protocol.OK,
                                 {"NAME": str(NEWS_ROSTERS)})]
-    return [protocol.encode(_news_reply_type(NEWS_ROSTERS), protocol.OK, {
+    return [protocol.encode(news_reply_type(ctx, NEWS_ROSTERS), protocol.OK, {
         "NAME": str(NEWS_ROSTERS),
         "URL": str(url),
         "CRC": str(crc),

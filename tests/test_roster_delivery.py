@@ -99,8 +99,17 @@ class NewsReplyTag(unittest.TestCase):
         self.assertIn("CSUM", reply.fields)
 
     def test_reply_type_helper_rejects_an_unnameable_category(self):
+        ctx = Context(protocol.decode(protocol.encode("news", 0, {})),
+                      open_session(), self.store, self.config)
         with self.assertRaises(protocol.ProtocolError):
-            handlers._news_reply_type(10)
+            handlers.news_reply_type(ctx, 10)
+
+    def test_the_legacy_type_can_be_selected_for_diagnosis(self):
+        # The console is not storing the CSUM we announce, and whether the
+        # reply must be tagged new<n> or echo `news` is the open question.
+        self.config["news_reply_type"] = "news"
+        for name in (0, 1, 2):
+            self.assertEqual(self._news(name)[0].type, "news")
 
 
 class RosterManifest(unittest.TestCase):

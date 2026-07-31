@@ -1146,7 +1146,7 @@ class NewsTests(unittest.TestCase):
         self.assertIn("Not derived from any roster", source)
         # And the other half of the staleness test, which cost a session to
         # find: DATE is compared, not merely recorded.
-        self.assertIn("local_date < server_DATE", source)
+        self.assertIn("local_date < server_DATE", source)  # noqa
 
     def test_all_eight_fields_the_parser_reads_are_present(self):
         """The parser reads these unconditionally; leaving one out means
