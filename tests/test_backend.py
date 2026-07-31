@@ -1103,6 +1103,18 @@ class NewsTests(unittest.TestCase):
         self.assertNotIn("DATE", fields)
         self.assertNotIn("CSUM", fields)
 
+    def test_all_eight_fields_the_parser_reads_are_present(self):
+        """The parser reads these unconditionally; leaving one out means
+        falling back to a default nobody has reasoned about."""
+        fields = self._news()[0].fields
+        for key in ("BUDDY_URL", "BUDDY_PORT", "FPLY", "BGNR", "ELIT", "TWRP"):
+            self.assertIn(key, fields, key)
+
+    def test_twrp_matches_the_clients_own_default(self):
+        # 240 at 0x0034f078 -- so sending it changes nothing unless we mean it.
+        self.assertEqual(self._news()[0].fields["TWRP"], "240")
+        self.assertEqual(handlers.TWRP_DEFAULT, 240)
+
     def test_the_roster_version_is_sent_when_configured(self):
         fields = self._news(roster_date="20040817", roster_csum="12345")[0].fields
         self.assertEqual(fields["DATE"], "20040817")

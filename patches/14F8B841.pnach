@@ -1,5 +1,5 @@
 gametitle=Madden NFL 2004 (SLUS-20752, CRC 14F8B841)
-comment=DNAS bypass - VARIANT A (force the poll off its "still working" path)
+comment=DNAS bypass, plus the roster-version check
 
 // ---------------------------------------------------------------------------
 // WHY
@@ -63,3 +63,31 @@ patch=1,EE,00305258,word,10000003
 // SCOPE: any of these gets the title past its own DNAS gate. None obtains a
 // DNAS ticket. If the game server later validates one, that is handled
 // server-side -- which is fine, because we are writing that server.
+
+// ---------------------------------------------------------------------------
+// ROSTER VERSION CHECK
+//
+// The title asks the server for a roster DATE and CSUM in its `news` reply and
+// compares the checksum against one it computes from its own roster:
+//
+//   0012a968  jal   0x0012a888        ; local checksum
+//   0012a970  lw    v1, -19396(gp)    ; the CSUM the server sent
+//   0012a978  xor   v0, v0, v1
+//   0012a97c  sltiu v0, v0, 1         ; 1 when identical
+//
+// The local value is computed at runtime from the console's own roster data,
+// so a server cannot know it and cannot echo it back. Any CSUM we invent is
+// therefore a mismatch, the title offers to update, and the download it then
+// attempts is not something this server implements -- which is the "error
+// updating roster" seen on hardware.
+//
+// Zeroing the comparison makes sltiu see 0 and report a match, so the title
+// treats its own roster as current and never offers the update.
+//
+//   before  0x00431026  xor   v0, v0, v1
+//   after   0x0000102d  daddu v0, zero, zero
+//
+// Remove this line once real rosters are served: with a genuine CSUM in the
+// `news` reply the check works as designed, and leaving the patch in would
+// then suppress a legitimate update.
+patch=1,EE,0012A978,word,0000102D

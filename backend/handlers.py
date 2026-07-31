@@ -412,6 +412,11 @@ ERR_FULL = "full"            # room at capacity
 #: (0x004e2c1c). The server only introduces the two players.
 PEER_PORT = 3658
 
+#: TWRP is the one `news` field whose converter carries a non-zero default
+#: (240, at 0x0034f078). Matching it means sending the field changes nothing
+#: unless we mean it to.
+TWRP_DEFAULT = 240
+
 
 def _occupancy(ctx: Context, room_name: str) -> int:
     return len(ctx.hub.in_room(room_name)) if ctx.hub else 0
@@ -665,6 +670,13 @@ def service_news(ctx: Context) -> List[bytes]:
         "NAME": ctx.message.get("NAME", "0"),
         "BUDDY_URL": ctx.config.get("buddy_host", ctx.config["advertise_host"]),
         "BUDDY_PORT": str(ctx.config.get("buddy_port", 0)),
+        # The parser reads these four unconditionally after DATE/CSUM. Sending
+        # them explicitly beats letting each fall back to a default we have not
+        # reasoned about -- TWRP's is 240, and the others are zero.
+        "FPLY": str(ctx.config.get("fply", 0)),
+        "BGNR": str(ctx.config.get("bgnr", 0)),
+        "ELIT": str(ctx.config.get("elit", 0)),
+        "TWRP": str(ctx.config.get("twrp", TWRP_DEFAULT)),
     }
     roster_date = ctx.config.get("roster_date")
     roster_csum = ctx.config.get("roster_csum")
