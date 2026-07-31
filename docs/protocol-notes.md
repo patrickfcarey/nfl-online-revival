@@ -187,6 +187,61 @@ now decodes `movz`/`movn`, the 64-bit forms and `ld`/`sd`.
 
 ---
 
+## BREAKTHROUGH — Madden past DNAS, EA game service found (2026-07-30)
+
+The pnach Variant A works. With `patch=1,EE,00305258,word,10000003` applied at
+ELF load, Madden NFL 2004 no longer touches DNAS at all:
+
+| | before the patch | after |
+|---|---|---|
+| `gate1.us.dnas.playstation.org` | resolved, repeatedly | **never looked up** |
+| TCP/443 (DNAS over TLS) | 5 attempts, all refused | **none** |
+| `ps2madden04.ea.com` | resolved but never dialled | resolved |
+| EA game service | never reached | **TCP port 10000** |
+
+```
+DEV9: DNS: Q0 Name ps2madden04.ea.com
+DEV9: Socket: Creating New TCP Connection to 10000
+DEV9: TCP: Recv error: 111          <- ECONNREFUSED, nothing listening yet
+```
+
+**EA's game service for this title is TCP/10000 on `ps2madden04.ea.com`.** That
+is the endpoint a revival has to implement, and its protocol is the next thing
+to capture -- `game_probe.sh` sinkholes it.
+
+Note the patch removes the DNAS *lookup*, not merely its result: the title
+skips the gateway entirely rather than trying and being satisfied. No DNAS
+ticket is obtained, so if TCP/10000 validates one, that is handled server-side.
+
+### Getting here required a restart, and that hid the result once
+
+PCSX2 applies patches at **ELF load**. The pnach was written 20 minutes after
+the last boot, so the first "patched" run tested unpatched code and looked like
+a failure. Confirm a patch is live by finding `Patch: Disabling any bundled
+'patches.zip' patches` at a timestamp *after* the ELF load line, in the current
+session's emulog.
+
+### The DNAS handshake, for the record
+
+Captured before the patch made it moot, and worth keeping if the 2K5 route ever
+needs a served DNAS endpoint:
+
+```
+80 64 01 03 01 00 4b 00 00 00 10 ...
+^^^^^ SSLv2 record framing      ^^ 16-byte challenge
+      ^^ CLIENT-HELLO
+         ^^^^^ version 0x0301 = TLS 1.0
+```
+
+25 cipher specs including `0x000a` (3DES-SHA), `0x0005`/`0x0004` (RC4),
+`0x0009` (DES) and the `0x0062`-`0x0066` export set -- that range is OpenSSL's
+`export1024` group, so the client is an **OpenSSL 0.9.x** stack asking for
+TLS 1.0 behind a legacy hello. Ordinary TLS above the framing, which is why
+translating the hello and relaying through stdlib `ssl` would be viable if
+serving DNAS ever becomes necessary.
+
+---
+
 ## Slice decision log
 
 Record here, once recon is in, which title+platform becomes the first
