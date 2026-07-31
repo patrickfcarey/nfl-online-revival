@@ -69,6 +69,8 @@ class Service:
         self.transcript = transcript or Transcript(None)
         self.verbose = verbose
         self.hub = Hub(on_event=self._say)
+        self._next_user_id = 0
+        self._id_lock = threading.Lock()
         self._listeners: List[socket.socket] = []
         self._stopping = threading.Event()
 
@@ -84,6 +86,11 @@ class Service:
         peer = "%s:%d" % addr
         label = "%s->:%d" % (peer, listen_port)
         session = Session(peer, listen_port)
+        with self._id_lock:
+            self._next_user_id += 1
+            # Positive only: the client silently discards a record with a
+            # negative id, so an occupant with id 0 would simply not appear.
+            session.user_id = self._next_user_id
         connection = Connection(conn, label, session, listen_port)
         self.hub.register(connection)
         buffer = b""
@@ -162,6 +169,20 @@ class Service:
                          "" if decoded.ok else "[%s]" % decoded.status_tag,
                          detail))
             self.transcript.message("send", label, decoded, blob)
+
+        # Some handlers have work that must run *after* their reply lands. A
+        # room change is the case that matters: the reply carries the new room
+        # id, and the user records that follow are only meaningful once the
+        # client has it. Sending them first would have them discarded.
+        follow_up = handlers.AFTER_REPLY.get(message.type)
+        if follow_up is not None:
+            try:
+                follow_up(context)
+            except Exception as exc:
+                self._say("[ea] follow-up for %s raised: %s"
+                          % (message.type, exc))
+                self.transcript.raw(label, "follow-up-error", b"",
+                                    "%s: %s" % (message.type, exc))
 
     # -- lifecycle -----------------------------------------------------
 

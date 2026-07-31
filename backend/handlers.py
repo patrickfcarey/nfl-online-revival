@@ -23,7 +23,7 @@ import sqlite3
 import time
 from typing import Callable, Dict, List, Optional
 
-from . import protocol
+from . import lobby, protocol
 from .protocol import Message
 from .store import MAX_PERSONA_LEN, MAX_PERSONAS, Store
 
@@ -85,6 +85,9 @@ class Session:
         self.room: Optional[str] = None
         #: Numeric room id the client believes it is in (its conn+440).
         self.room_id: int = 0
+        #: Stable id for this occupant in other clients' user lists. Assigned
+        #: on connect; ids must be positive or the client discards the record.
+        self.user_id: int = 0
 
     @property
     def authenticated(self) -> bool:
@@ -360,6 +363,16 @@ def subscribe(ctx: Context) -> List[bytes]:
     return ctx.reply(MORE="0", SLOTS=str(MAX_PERSONAS))
 
 
+def after_subscribe(ctx: Context) -> None:
+    """Send the room list, now that the slots to hold it exist.
+
+    Before the `sele` reply the client has no subscription slots and drops
+    +rom/+usr/+pop silently, so this cannot be done any earlier.
+    """
+    if ctx.session.subscriptions.get("ROOMS", True):
+        _push_room_list(ctx)
+
+
 @handles("~png")
 def ping(ctx: Context) -> List[bytes]:
     """A keepalive coming back to us -- acknowledge it by staying quiet.
@@ -384,3 +397,239 @@ def dispatch(ctx: Context) -> List[bytes]:
     if handler is None:
         return []
     return handler(ctx)
+
+
+# --------------------------------------------------------------------------
+# lobby
+# --------------------------------------------------------------------------
+
+ERR_BAD_PASSWORD = "pass"    # wrong room password
+ERR_FULL = "full"            # room at capacity
+
+#: The peer port both consoles connect on is hardcoded in the client
+#: (0x004e2c1c). The server only introduces the two players.
+PEER_PORT = 3658
+
+
+def _occupancy(ctx: Context, room_name: str) -> int:
+    return len(ctx.hub.in_room(room_name)) if ctx.hub else 0
+
+
+def _push_room_list(ctx: Context) -> None:
+    """Send the whole room list to this client."""
+    if ctx.hub is None or ctx.connection is None:
+        return
+    for blob in lobby.room_listing(ctx.store.rooms(),
+                                   lambda name: _occupancy(ctx, name)):
+        ctx.hub.push(ctx.connection, blob)
+
+
+def _push_occupants(ctx: Context, room_name: str) -> None:
+    """Re-send every occupant of *room_name* to this client.
+
+    Required after any room change: the client drains and frees its entire user
+    list when the room id changes, so anyone not re-sent simply vanishes.
+    """
+    if ctx.hub is None or ctx.connection is None:
+        return
+    count = _occupancy(ctx, room_name)
+    for other in ctx.hub.in_room(room_name):
+        ctx.hub.push(ctx.connection, lobby.user_record(
+            other.session.user_id,
+            other.session.persona or other.session.account or "player",
+            addr=other.session.client_addr or "0.0.0.0",
+            room_occupants=count,
+            is_self=other is ctx.connection))
+
+
+def _announce(ctx: Context, room_name: str, blob: bytes) -> None:
+    """Tell everyone else in a room about a change."""
+    if ctx.hub is None or not room_name:
+        return
+    ctx.hub.broadcast([blob], room=room_name, exclude=ctx.connection)
+
+
+@handles("move")
+def move_room(ctx: Context) -> List[bytes]:
+    """Join a room, or leave with an empty NAME.
+
+    Rooms are joined by NAME, not by id -- the id only appears in the reply and
+    in pushes. The reply carries both halves: LIDENT/LCOUNT describe the room
+    being left, IDENT/COUNT/NAME the one being entered.
+    """
+    session = ctx.session
+    if not session.authenticated:
+        return ctx.fail(ERR_MISSING)
+
+    target = ctx.message.get("NAME").strip()
+    previous = session.room
+    previous_id = session.room_id
+    previous_count = max(0, _occupancy(ctx, previous) - 1) if previous else 0
+
+    if not target:                                   # leaving
+        session.room, session.room_id = None, 0
+        if previous:
+            _announce(ctx, previous, lobby.user_removal(session.user_id))
+        return [protocol.encode("move", protocol.OK, {
+            "LIDENT": str(previous_id or -1),
+            "LCOUNT": str(previous_count),
+            "IDENT": "-1",
+            "COUNT": "0",
+            "NAME": "",
+            "FLAGS": "",
+        })]
+
+    row = ctx.store.room(target)
+    if row is None:
+        return ctx.fail(ERR_MISSING)
+    if row["PASS"] and ctx.message.get("PASS") != row["PASS"]:
+        return ctx.fail(ERR_BAD_PASSWORD)
+    limit = row["MAX"] or 0
+    if limit and _occupancy(ctx, target) >= limit:
+        return ctx.fail(ERR_FULL)
+
+    if previous and previous != target:
+        _announce(ctx, previous, lobby.user_removal(session.user_id))
+    session.room, session.room_id = target, row["ID"]
+
+    reply = protocol.encode("move", protocol.OK, {
+        "LIDENT": str(previous_id or -1),
+        "LCOUNT": str(previous_count),
+        "IDENT": str(row["ID"]),
+        "COUNT": str(_occupancy(ctx, target)),
+        "NAME": target,
+        "FLAGS": "",
+    })
+    return [reply]
+
+
+def after_move(ctx: Context) -> None:
+    """Re-populate the client's lists once the move reply has gone.
+
+    Kept separate from the handler because ordering matters: the reply must
+    reach the client first, since it is what sets the room id that makes the
+    following pushes meaningful.
+    """
+    if not ctx.session.room:
+        return
+    _push_occupants(ctx, ctx.session.room)
+    _announce(ctx, ctx.session.room, lobby.user_record(
+        ctx.session.user_id,
+        ctx.session.persona or ctx.session.account or "player",
+        addr=ctx.session.client_addr or "0.0.0.0",
+        room_occupants=_occupancy(ctx, ctx.session.room)))
+
+
+#: Work that has to run once a reply has been written, keyed by message type.
+#: Ordering is the whole point: these pushes are meaningless until the reply
+#: that establishes the client's new state has arrived.
+AFTER_REPLY = {"move": after_move, "sele": after_subscribe}
+
+
+@handles("room")
+def room_status(ctx: Context) -> List[bytes]:
+    """The client asking about the room it is leaving; only the L-half matters."""
+    return [protocol.encode("room", protocol.OK, {
+        "LIDENT": str(ctx.session.room_id or -1),
+        "LCOUNT": str(_occupancy(ctx, ctx.session.room) if ctx.session.room else 0),
+    })]
+
+
+# --------------------------------------------------------------------------
+# chat
+# --------------------------------------------------------------------------
+
+#: Which type the client sends to speak has NOT been confirmed by disassembly.
+#: Both candidates are registered; an unhandled type is logged by the service,
+#: so the first real session will say which one is right -- and a wrong guess
+#: here costs nothing, because an unregistered type simply gets no reply.
+CHAT_REQUEST_TYPES = ("mesg", "chat")
+
+
+def _say(ctx: Context) -> List[bytes]:
+    """Relay a line of chat to the speaker's room."""
+    if not ctx.session.authenticated or not ctx.session.room:
+        return ctx.fail(ERR_MISSING)
+    body = ctx.message.get("BODY") or ctx.message.get("TEXT")
+    if not body:
+        return ctx.reply()
+    speaker = ctx.session.persona or ctx.session.account or "player"
+    private_to = ctx.message.get("USER").strip()
+    push = protocol.encode("+msg", protocol.OK, {
+        "PERS": speaker,
+        "USER": speaker,
+        "BODY": body[:400],
+        "TYPE": "priv" if private_to else "chat",
+        "TIME": str(int(time.time())),
+    })
+    if ctx.hub is not None:
+        if private_to:
+            target = ctx.hub.by_persona(private_to)
+            if target is None:
+                return ctx.fail(ERR_MISSING)
+            ctx.hub.push(target, push)
+        else:
+            ctx.hub.broadcast([push], room=ctx.session.room)
+    return ctx.reply()
+
+
+for _chat_type in CHAT_REQUEST_TYPES:
+    handles(_chat_type)(_say)
+
+
+# --------------------------------------------------------------------------
+# matchmaking
+# --------------------------------------------------------------------------
+
+def session_invite(recipient, host_persona: str, guest_persona: str,
+                   host_addr: str, guest_addr: str, seed: int,
+                   when: int, name: str = "Quickmatch") -> bytes:
+    """Build the ``+ses`` that starts a match for one of the two players.
+
+    The client decides its own role by comparing SELF against HOST: the host
+    dials OPPO at ADDR, the guest dials HOST at FROM, both on a port hardcoded
+    in the client. The server introduces and then has nothing further to do --
+    gameplay never comes back through here.
+
+    WHEN must be non-zero: the record is only delivered while it is set, and is
+    cleared once consumed.
+    """
+    if not when:
+        raise ValueError("WHEN must be non-zero or the client discards the "
+                         "invite without acting on it")
+    return protocol.encode("+ses", protocol.OK, {
+        "NAME": name,
+        "SELF": recipient,
+        "HOST": host_persona,
+        "OPPO": guest_persona,
+        "P1": host_persona,
+        "P2": guest_persona,
+        "P3": "",
+        "P4": "",
+        "AUTH": "1",
+        "ADDR": guest_addr,
+        "FROM": host_addr,
+        "SEED": str(seed),
+        "WHEN": str(when),
+    })
+
+
+def start_match(hub, host_conn, guest_conn, seed: Optional[int] = None) -> bool:
+    """Introduce two players to each other. Returns False if either has gone.
+
+    Both sides are told the same story from their own point of view, which is
+    what lets each work out whether to dial or be dialled.
+    """
+    host = host_conn.session.persona or host_conn.session.account or "host"
+    guest = guest_conn.session.persona or guest_conn.session.account or "guest"
+    host_addr = host_conn.session.client_addr or "0.0.0.0"
+    guest_addr = guest_conn.session.client_addr or "0.0.0.0"
+    when = int(time.time())
+    seed = when & 0x7FFFFFFF if seed is None else seed
+
+    for conn, who in ((host_conn, host), (guest_conn, guest)):
+        blob = session_invite(who, host, guest, host_addr, guest_addr,
+                              seed, when)
+        if not hub.push(conn, blob):
+            return False
+    return True

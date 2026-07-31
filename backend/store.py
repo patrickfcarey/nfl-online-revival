@@ -25,7 +25,7 @@ import threading
 import time
 from typing import Iterable, List, Optional, Sequence
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta(
@@ -104,7 +104,9 @@ CREATE TABLE IF NOT EXISTS message(
 CREATE INDEX IF NOT EXISTS message_by_user ON message(USER);
 
 CREATE TABLE IF NOT EXISTS room(
-  NAME TEXT PRIMARY KEY, DESC TEXT, PASS TEXT, MAX INTEGER, CHAN TEXT);
+  ID   INTEGER PRIMARY KEY AUTOINCREMENT,
+  NAME TEXT NOT NULL UNIQUE,
+  DESC TEXT, PASS TEXT, MAX INTEGER, CHAN TEXT);
 """
 
 #: Columns a caller may set. Column names cannot be parameterised in SQL, so
@@ -155,10 +157,31 @@ class Store:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.execute("PRAGMA foreign_keys=ON")
             self._db.executescript(SCHEMA)
+            self._migrate()
             self._db.execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES('schema', ?)",
                 (str(SCHEMA_VERSION),))
             self._db.commit()
+
+    def _migrate(self) -> None:
+        """Bring an older file up to the current shape.
+
+        The room table originally keyed on NAME alone. The client refers to
+        rooms by a numeric id in every message except the join, so an id column
+        is required; adding it is non-destructive, unlike recreating the table.
+        """
+        columns = {row["name"] for row in
+                   self._db.execute("PRAGMA table_info(room)")}
+        if columns and "ID" not in columns:
+            self._db.execute("ALTER TABLE room ADD COLUMN ID INTEGER")
+            for index, row in enumerate(
+                    self._db.execute("SELECT NAME FROM room ORDER BY NAME"), 1):
+                self._db.execute("UPDATE room SET ID = ? WHERE NAME = ?",
+                                 (index, row["NAME"]))
+        self._db.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES('schema', ?)",
+            (str(SCHEMA_VERSION),))
+        self._db.commit()
 
     def close(self) -> None:
         with self._lock:
@@ -240,15 +263,25 @@ class Store:
     def rooms(self) -> List[sqlite3.Row]:
         with self._lock:
             return self._db.execute(
-                "SELECT * FROM room ORDER BY NAME").fetchall()
+                "SELECT * FROM room ORDER BY ID").fetchall()
 
     def ensure_room(self, name: str, desc: str = "", max_users: int = 32,
-                    chan: str = "") -> None:
+                    chan: str = "", password: str = "") -> None:
         with self._lock:
             self._db.execute(
                 "INSERT OR IGNORE INTO room(NAME, DESC, PASS, MAX, CHAN) "
-                "VALUES(?, ?, '', ?, ?)", (name, desc, max_users, chan))
+                "VALUES(?, ?, ?, ?, ?)", (name, desc, password, max_users, chan))
             self._db.commit()
+
+    def room(self, name: str):
+        with self._lock:
+            return self._db.execute(
+                "SELECT * FROM room WHERE NAME = ?", (name,)).fetchone()
+
+    def room_by_id(self, room_id: int):
+        with self._lock:
+            return self._db.execute(
+                "SELECT * FROM room WHERE ID = ?", (room_id,)).fetchone()
 
     def seed_defaults(self) -> None:
         """Create the starting lobbies.

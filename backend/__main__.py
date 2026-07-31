@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
 from typing import List, Optional
 
 from . import handlers  # noqa: F401  -- importing registers the handlers
@@ -42,6 +43,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--advertise-port", type=int, default=10001)
     parser.add_argument("--db", default="backend.db")
     parser.add_argument("--transcript", help="JSONL of every exchange")
+    parser.add_argument("--buddy-port", type=int,
+                        help="also run the buddy/presence stub on this port")
     parser.add_argument("--quiet", action="store_true")
     return parser
 
@@ -74,8 +77,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         "advertise_port": str(args.advertise_port),
         "mask": "GS",
     }
-    service = Service(store, config, Transcript(args.transcript),
-                      verbose=not args.quiet)
+    transcript = Transcript(args.transcript)
+    buddy_service = None
+    if args.buddy_port:
+        # A separate endpoint. The client only learns its address after login,
+        # so it cannot gate reaching a lobby -- the stub exists to keep the
+        # buddy layer quiet rather than because anything depends on it.
+        from .buddy import BuddyService
+        buddy_service = BuddyService(verbose=not args.quiet,
+                                     transcript=transcript)
+        threading.Thread(
+            target=buddy_service.serve_forever,
+            args=(args.bind, args.buddy_port), daemon=True).start()
+
+    service = Service(store, config, transcript, verbose=not args.quiet)
     try:
         service.serve_forever(args.bind, args.port)
     except ServiceError as exc:
@@ -84,6 +99,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     except KeyboardInterrupt:
         return 130
     finally:
+        if buddy_service is not None:
+            buddy_service.stop()
         store.close()
     return 0
 
