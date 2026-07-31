@@ -94,3 +94,37 @@ patch=1,EE,00305258,word,10000003
 //   before  0x00431026  xor   v0, v0, v1
 //   after   0x0000102d  daddu v0, zero, zero
 //patch=1,EE,0012A978,word,0000102D
+
+// ---------------------------------------------------------------------------
+// MEASUREMENT PATCH -- temporary, remove when the checksum is solved
+//
+// The console never sends us the roster checksum it computes, so a wrong
+// algorithm is only visible as "your rosters are out of date" -- one bit of
+// feedback per login, with no way to tell which of several candidate
+// algorithms is close. Five candidates were tested against hardware and all
+// five were rejected, which is where guessing stops being useful.
+//
+// This makes the console write its own computed value into memory so it can be
+// read out of a savestate:
+//
+//   0012a968  jal   0x0012a888        ; v0 = the checksum the console computed
+//   0012a970  lw    v1, -19396(gp)    ; v1 = the checksum we announced
+//   0012a978  xor   v0, v0, v1        ; -> REPLACED
+//   0012a97c  sltiu v0, v0, 1
+//
+// gp is 0x006056f0, so gp-19396 is 0x00600b2c -- the slot holding the value we
+// sent. Overwriting it is harmless: nothing else reads it, and it is refilled
+// from the next `news` reply by 0x0012a988.
+//
+//   before  0x00431026  xor v0, v0, v1
+//   after   0xaf82b43c  sw  v0, -19396(gp)
+//
+// The comparison then tests the checksum against zero instead, so the title
+// will always claim the rosters are stale. That is expected -- the point is the
+// value at 0x00600b2c, not the verdict.
+// ANSWER (2026-07-31): the console computes 0x8108963c -- exactly what
+// tools/roster_checksum.py produces. The checksum was never wrong. The prompt
+// came from the DATE test at 0x00350960 instead, which asks whether the
+// server's date is newer than the console's. Announce DATE=0 and it is not.
+// Left disabled rather than deleted: it is the only way to see this value.
+//patch=1,EE,0012A978,word,AF82B43C

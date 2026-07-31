@@ -450,8 +450,31 @@ TWRP_DEFAULT = 240
 # And the mismatch path becomes meaningful: announce a checksum that does not
 # match and the console asks to download, which is the hook a roster update
 # would hang off.
-PLACEHOLDER_ROSTER_DATE = "20030817"      # Madden NFL 2004's own release window
-PLACEHOLDER_ROSTER_CSUM = "0"             # not derived from any roster
+#: The roster version has **two** independent staleness tests, and satisfying
+#: only one of them is not enough. This was the harder of the two to see,
+#: because the failure looks identical either way.
+#:
+#: 0x00350960 is not the getter it appears to be -- its answer is in the delay
+#: slot::
+#:
+#:     00350960  lw   v0, 2452(gp)     ; the DATE we announced
+#:     00350964  jr   ra
+#:     00350968  sltu v0, a0, v0       ; return (local_date < server_DATE)
+#:
+#: So the script hands it the console's own roster date and asks whether ours is
+#: newer. Announcing a real date therefore tells every console with a lower one
+#: -- which, on a disc that has never taken an update, means essentially all of
+#: them -- that an update exists, however well the checksum matches.
+#:
+#: Zero is the honest default: it claims nothing is newer than what the console
+#: already holds, and the comparison is unsigned, so no local date can be below
+#: it. Announce a real date only when actually serving a newer roster.
+DEFAULT_ROSTER_DATE = "0"
+
+#: Not derived from any roster. Serve one with --roster-db instead; the console
+#: computes its own and compares (0x0012a960), and a wrong value here is the
+#: other half of the staleness test.
+PLACEHOLDER_ROSTER_CSUM = "0"
 
 
 def _occupancy(ctx: Context, room_name: str) -> int:
@@ -976,7 +999,7 @@ def service_news(ctx: Context) -> List[bytes]:
     # Always sent, so the field is populated and the path is exercised. The
     # default checksum is a placeholder and will not match the console's --
     # see the note above PLACEHOLDER_ROSTER_CSUM.
-    fields["DATE"] = str(ctx.config.get("roster_date", PLACEHOLDER_ROSTER_DATE))
+    fields["DATE"] = str(ctx.config.get("roster_date", DEFAULT_ROSTER_DATE))
     fields["CSUM"] = _pick_csum(ctx)
     return [protocol.encode(_news_reply_type(NEWS_CONFIG), protocol.OK, fields)]
 

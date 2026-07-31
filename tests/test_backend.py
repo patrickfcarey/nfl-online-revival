@@ -1132,7 +1132,10 @@ class NewsTests(unittest.TestCase):
         and the path is exercised. The pnach zeroes the comparison, so a
         mismatch is currently inert."""
         fields = self._news()[0].fields
-        self.assertEqual(fields["DATE"], handlers.PLACEHOLDER_ROSTER_DATE)
+        # Zero, not a real date: 0x00350960 returns (local_date < server_DATE),
+        # so any real date tells the console a newer roster exists.
+        self.assertEqual(fields["DATE"], handlers.DEFAULT_ROSTER_DATE)
+        self.assertEqual(fields["DATE"], "0")
         self.assertEqual(fields["CSUM"], handlers.PLACEHOLDER_ROSTER_CSUM)
 
     def test_the_placeholder_is_labelled_as_one(self):
@@ -1140,7 +1143,10 @@ class NewsTests(unittest.TestCase):
         import inspect
         source = inspect.getsource(handlers)
         self.assertIn("PLACEHOLDER_ROSTER_CSUM", source)
-        self.assertIn("not derived from any roster", source)
+        self.assertIn("Not derived from any roster", source)
+        # And the other half of the staleness test, which cost a session to
+        # find: DATE is compared, not merely recorded.
+        self.assertIn("local_date < server_DATE", source)
 
     def test_all_eight_fields_the_parser_reads_are_present(self):
         """The parser reads these unconditionally; leaving one out means
