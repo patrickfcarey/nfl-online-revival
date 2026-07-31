@@ -22,6 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend import handlers, protocol  # noqa: E402
 from backend.handlers import Context, Session  # noqa: E402
+from backend.hub import (CLIENT_DEADLINE, Connection, Hub,  # noqa: E402
+                         PING_AFTER, PUSH_ONLY, PushError)
 from backend.service import Service, Transcript  # noqa: E402
 from backend.store import MAX_PERSONAS, Store  # noqa: E402
 
@@ -372,10 +374,13 @@ class SubscriptionTests(unittest.TestCase):
         self.assertTrue(session.subscriptions.get("MESGS"))
         self.assertEqual(replies[0].fields["SLOTS"], str(MAX_PERSONAS))
 
-    def test_ping_is_echoed(self):
-        _s, replies = run(self.store, "~png", {})
-        self.assertEqual(replies[0].type, "~png")
-        self.assertTrue(replies[0].ok)
+    def test_ping_is_not_echoed_back(self):
+        """The client never originates a ping -- it echoes any it receives. So
+        an incoming ~png is the echo of ours, and answering it would make the
+        two of us ping each other forever."""
+        session, replies = run(self.store, "~png", {})
+        self.assertEqual(replies, [])
+        self.assertGreater(session.last_seen, 0)
 
     def test_an_unregistered_type_is_silent(self):
         _s, replies = run(self.store, "zzzz", {})
@@ -529,6 +534,138 @@ class DefaultRoomTests(unittest.TestCase):
             self.assertEqual(len(store.rooms()), first)
         finally:
             store.close(); os.unlink(path)
+
+
+class _FakeSocket:
+    """Records what was written, and can pretend the peer has gone."""
+
+    def __init__(self, fail=False):
+        self.written = []
+        self.fail = fail
+        self.closed = False
+
+    def sendall(self, blob):
+        if self.fail:
+            raise OSError("peer gone")
+        self.written.append(blob)
+
+    def close(self):
+        self.closed = True
+
+
+class HubTests(unittest.TestCase):
+    def setUp(self):
+        self.hub = Hub()
+
+    def tearDown(self):
+        self.hub.stop()
+
+    def _conn(self, label="c:1", fail=False):
+        session = open_session()
+        conn = Connection(_FakeSocket(fail), label, session)
+        self.hub.register(conn)
+        return conn
+
+    def test_only_push_only_types_may_be_sent_unsolicited(self):
+        """The client matches replies by type against the head of its pending
+        queue, so an unsolicited reply-type can fire the wrong callback."""
+        conn = self._conn()
+        for good in ("+rom", "+usr", "+msg", "+ses"):
+            self.assertTrue(self.hub.push(conn, protocol.encode(good)))
+        for bad in ("auth", "acct", "@dir", "pers", "sele"):
+            with self.assertRaises(PushError, msg=bad):
+                self.hub.push(conn, protocol.encode(bad))
+
+    def test_the_push_only_set_matches_the_documented_types(self):
+        self.assertEqual(PUSH_ONLY, frozenset(
+            ("+ses", "+msg", "+who", "+rom", "+pop", "+usr", "+rnk", "+snp")))
+
+    def test_ping_is_unsolicited_safe_for_a_different_reason(self):
+        """~png is not push-only, but the client intercepts it before the
+        reply matching runs, so it can never be taken for a reply."""
+        from backend.hub import SAFE_UNSOLICITED
+        self.assertNotIn("~png", PUSH_ONLY)
+        self.assertIn("~png", SAFE_UNSOLICITED)
+        conn = self._conn("p")
+        self.assertTrue(self.hub.push(conn, protocol.encode("~png")))
+
+    def test_keepalive_pings_only_connections_that_have_gone_quiet(self):
+        fresh = self._conn("fresh")
+        stale = self._conn("stale")
+        stale.last_sent = time.time() - (PING_AFTER + 1)
+        self.assertEqual(self.hub.keepalive_once(), 1)
+        self.assertEqual(len(stale.sock.written), 1)
+        self.assertEqual(protocol.decode(stale.sock.written[0]).type, "~png")
+        self.assertEqual(fresh.sock.written, [])
+
+    def test_the_keepalive_interval_leaves_room_under_the_client_deadline(self):
+        # One lost keepalive must not be fatal.
+        self.assertLess(PING_AFTER * 2, CLIENT_DEADLINE)
+
+    def test_sending_marks_a_dead_peer_closed_rather_than_raising(self):
+        conn = self._conn("dead", fail=True)
+        self.assertFalse(conn.send(protocol.encode("+rom")))
+        self.assertTrue(conn.closed)
+
+    def test_broadcast_reaches_a_room_and_can_exclude_the_sender(self):
+        a, b, c = self._conn("a"), self._conn("b"), self._conn("c")
+        a.session.room = b.session.room = "Lobby"
+        c.session.room = "Other"
+        sent = self.hub.broadcast([protocol.encode("+usr")], room="Lobby",
+                                  exclude=a)
+        self.assertEqual(sent, 1)
+        self.assertEqual(len(b.sock.written), 1)
+        self.assertEqual(c.sock.written, [])
+        self.assertEqual(a.sock.written, [])
+
+    def test_writes_to_one_connection_are_serialised(self):
+        """A torn message is not a delay -- the client cannot reassemble, so
+        the stream desynchronises permanently."""
+        conn = self._conn("busy")
+        blob = protocol.encode("+usr", 0, {"N": "x" * 200})
+        errors = []
+
+        def hammer():
+            try:
+                for _ in range(50):
+                    conn.send(blob)
+            except Exception as exc:      # pragma: no cover - failure path
+                errors.append(exc)
+
+        threads = [threading.Thread(target=hammer) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(len(conn.sock.written), 200)
+        # Every recorded write is exactly one whole message.
+        self.assertTrue(all(w == blob for w in conn.sock.written))
+
+    def test_by_persona_and_in_room_lookups(self):
+        a = self._conn("a")
+        a.session.persona = "AlphaQB"
+        a.session.room = "Lobby"
+        self.assertIs(self.hub.by_persona("AlphaQB"), a)
+        self.assertIsNone(self.hub.by_persona("nobody"))
+        self.assertEqual(self.hub.in_room("Lobby"), [a])
+        self.assertEqual(self.hub.in_room(None), [])
+
+
+class MessageCeilingTests(unittest.TestCase):
+    """The client clamps its socket buffer to 8192 and writes a NUL at
+    base+declared_length-1 without bounds checking."""
+
+    def test_a_message_over_the_ceiling_is_refused(self):
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.encode("+msg", 0, {"BODY": "x" * 9000})
+
+    def test_the_ceiling_matches_the_clients_buffer(self):
+        self.assertEqual(protocol.MAX_MESSAGE_SIZE, 8192)
+
+    def test_a_message_just_under_the_ceiling_is_fine(self):
+        blob = protocol.encode("+msg", 0, {"BODY": "x" * 8000})
+        self.assertLessEqual(len(blob), protocol.MAX_MESSAGE_SIZE)
 
 
 # --------------------------------------------------------------------------

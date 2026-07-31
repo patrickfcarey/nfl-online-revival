@@ -27,14 +27,20 @@ HEADER_SIZE = 12
 #: Success. Any other status is a four-character tag.
 OK = 0
 
-#: Refuse to buffer more than this for one message. A desynchronised stream
-#: yields a nonsense length -- 4 GB is representable in the header -- and
-#: without a cap the reader waits for bytes that will never come while the
-#: buffer grows. Real messages are a few hundred bytes; the largest field the
-#: client reads is 4097.
-MAX_MESSAGE_SIZE = 65536
+#: The client clamps its socket buffer to 8192 bytes (0x00452D90, called from
+#: 0x0044759C with 0x8000). It writes a NUL at base+cursor+declared_length-1
+#: without bounds-checking, so a length larger than that buffer is an
+#: out-of-bounds write in the client -- we must never emit one. The same
+#: ceiling is applied to inbound messages, where a nonsense length means the
+#: stream has desynchronised.
+MAX_MESSAGE_SIZE = 8192
 
 Status = Union[int, str]
+
+
+#: Sending this as a status tears the session down -- the client routes it to
+#: its terminate path (0x00449090). It is never a general-purpose error.
+STATUS_TERMINATE = "auth"
 
 
 class ProtocolError(ValueError):
@@ -184,8 +190,13 @@ def encode(msg_type: str, status: Status = OK,
         lines.append("%s=%s" % (key, text))
     payload = (("\n".join(lines) + "\n").encode("latin-1") + b"\x00"
                if lines else b"\x00")
+    total = HEADER_SIZE + len(payload)
+    if total > MAX_MESSAGE_SIZE:
+        raise ProtocolError(
+            "message would be %d bytes; the client's buffer is %d and it writes "
+            "past a longer one" % (total, MAX_MESSAGE_SIZE))
     return (msg_type.encode("latin-1")
-            + struct.pack(">II", encode_status(status), HEADER_SIZE + len(payload))
+            + struct.pack(">II", encode_status(status), total)
             + payload)
 
 

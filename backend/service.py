@@ -22,6 +22,7 @@ from typing import Dict, List, Optional
 
 from . import handlers, protocol
 from .handlers import Context, Session
+from .hub import Connection, Hub, PushError
 from .store import Store
 
 
@@ -67,8 +68,7 @@ class Service:
         self.config = config
         self.transcript = transcript or Transcript(None)
         self.verbose = verbose
-        self.sessions: Dict[str, Session] = {}
-        self._sessions_lock = threading.Lock()
+        self.hub = Hub(on_event=self._say)
         self._listeners: List[socket.socket] = []
         self._stopping = threading.Event()
 
@@ -84,8 +84,8 @@ class Service:
         peer = "%s:%d" % addr
         label = "%s->:%d" % (peer, listen_port)
         session = Session(peer, listen_port)
-        with self._sessions_lock:
-            self.sessions[label] = session
+        connection = Connection(conn, label, session, listen_port)
+        self.hub.register(connection)
         buffer = b""
         self._say("\n[ea] %s %s connected" % (time.strftime("%H:%M:%S"), label))
         try:
@@ -105,23 +105,20 @@ class Service:
                     self.transcript.raw(label, "framing-error", buffer, str(exc))
                     break
                 for message in messages:
-                    self._handle(conn, label, session, message)
+                    self._handle(connection, message)
         except OSError as exc:
             self._say("[ea] %s socket error: %s" % (label, exc))
         finally:
             if buffer:
                 self.transcript.raw(label, "unconsumed", buffer,
                                     "still buffered at disconnect")
-            with self._sessions_lock:
-                self.sessions.pop(label, None)
+            self.hub.unregister(connection)
             self._say("[ea] %s disconnected (%s)" % (label, session.describe()))
-            try:
-                conn.close()
-            except OSError:
-                pass
+            connection.close()
 
-    def _handle(self, conn: socket.socket, label: str, session: Session,
+    def _handle(self, connection: Connection,
                 message: protocol.Message) -> None:
+        label, session = connection.label, connection.session
         # The bytes as they arrived, not a re-encode: the two differ exactly
         # when our parsing is wrong, which is the case worth being able to see.
         raw = message.raw or protocol.encode(message.type, message.status,
@@ -130,7 +127,8 @@ class Service:
         self._say(message.describe())
         self.transcript.message("recv", label, message, raw)
 
-        context = Context(message, session, self.store, self.config)
+        context = Context(message, session, self.store, self.config,
+                          hub=self.hub, connection=connection)
         try:
             outgoing = handlers.dispatch(context)
         except Exception as exc:  # a handler bug must not drop the connection
@@ -141,9 +139,9 @@ class Service:
             self.transcript.raw(label, "handler-error", b"", "%s: %s"
                                 % (message.type, exc))
             try:
-                conn.sendall(protocol.encode(message.type,
-                                             handlers.ERR_INTERNAL, {}))
-            except (OSError, protocol.ProtocolError):
+                connection.send(protocol.encode(message.type,
+                                                handlers.ERR_INTERNAL, {}))
+            except protocol.ProtocolError:
                 pass
             return
 
@@ -154,10 +152,8 @@ class Service:
                          % message.type))
             return
         for blob in outgoing:
-            try:
-                conn.sendall(blob)
-            except OSError as exc:
-                self._say("[ea] send to %s failed: %s" % (label, exc))
+            if not connection.send(blob):
+                self._say("[ea] send to %s failed; peer gone" % label)
                 return
             decoded = protocol.decode(blob)
             detail = ", ".join("%s=%s" % kv for kv in decoded.fields.items())
@@ -204,6 +200,13 @@ class Service:
         for sock, port in zip(self._listeners, ports):
             threading.Thread(target=self._accept_loop, args=(sock, port),
                              daemon=True).start()
+        # Without this the client hears nothing for 60 s and tears the session
+        # down. It never pings us -- it only echoes -- so this is the only
+        # thing keeping an idle lobby alive.
+        threading.Thread(target=self.hub.run_keepalive, daemon=True).start()
+        self._say("[ea] keepalive every %.0fs (client deadline is %.0fs)"
+                  % (__import__("backend.hub", fromlist=["PING_AFTER"]).PING_AFTER,
+                     __import__("backend.hub", fromlist=["CLIENT_DEADLINE"]).CLIENT_DEADLINE))
         try:
             while True:
                 time.sleep(3600)
@@ -223,6 +226,7 @@ class Service:
 
     def stop(self) -> None:
         self._stopping.set()
+        self.hub.stop()
         for sock in self._listeners:
             try:
                 sock.close()

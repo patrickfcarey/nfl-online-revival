@@ -77,8 +77,14 @@ class Session:
         self.client_port: int = 0
         self.product: str = ""
         self.opened = time.time()
+        self.last_seen = self.opened
         #: Subscriptions requested via `sele` ("ROOMS=1 USERS=1 ...").
+        #: Until these exist the client silently drops +rom/+usr/+pop.
         self.subscriptions: Dict[str, bool] = {}
+        #: Current room name, or None. Rooms are joined by NAME, not by id.
+        self.room: Optional[str] = None
+        #: Numeric room id the client believes it is in (its conn+440).
+        self.room_id: int = 0
 
     @property
     def authenticated(self) -> bool:
@@ -86,19 +92,23 @@ class Session:
 
     def describe(self) -> str:
         who = self.account or "-"
-        return "%s state=%s account=%s persona=%s" % (
-            self.peer, self.state, who, self.persona or "-")
+        return "%s state=%s account=%s persona=%s room=%s" % (
+            self.peer, self.state, who, self.persona or "-", self.room or "-")
 
 
 class Context:
     """What a handler is given: the message, its session, and the store."""
 
     def __init__(self, message: Message, session: Session, store: Store,
-                 config: Dict[str, str]) -> None:
+                 config: Dict[str, str], hub=None, connection=None) -> None:
         self.message = message
         self.session = session
         self.store = store
         self.config = config
+        #: Present when a handler needs to reach clients other than its own.
+        #: Optional so unit tests can dispatch without a live socket.
+        self.hub = hub
+        self.connection = connection
 
     # Convenience so handlers read cleanly.
     def reply(self, **fields) -> List[bytes]:
@@ -352,8 +362,20 @@ def subscribe(ctx: Context) -> List[bytes]:
 
 @handles("~png")
 def ping(ctx: Context) -> List[bytes]:
-    """Keepalive. Echoed straight back."""
-    return ctx.reply()
+    """A keepalive coming back to us -- acknowledge it by staying quiet.
+
+    The client never originates a ping. It intercepts any `~png` it receives
+    and echoes it verbatim before anything else (0x00448C58), so this message
+    is the echo of one *we* sent. Replying would make it echo again, and the
+    two of us would ping each other forever.
+
+    The direction that matters is the other one: the client's receive deadline
+    is reset to now + 60 s by every message that arrives, so the server has to
+    send something within that window or the session is torn down. See the
+    keepalive in service.py.
+    """
+    ctx.session.last_seen = time.time()
+    return ctx.silent()
 
 
 def dispatch(ctx: Context) -> List[bytes]:

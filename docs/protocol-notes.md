@@ -391,6 +391,109 @@ leaderboards, tournaments, and keepalive.
 
 ---
 
+## Transport rules the server must obey (2026-07-31)
+
+Recovered from the client's own reader. Each of these is cheap to get wrong and
+expensive to diagnose.
+
+**The server must speak within 60 seconds.** The client resets its receive
+deadline to `now + 60s` on every message that arrives (`0x00448C4C`, 0xEA60) and
+tears the session down when it lapses. The directory phase allows 120 s
+(`0x00447854`).
+
+**The client never originates a keepalive.** It intercepts any `~png` at
+`0x00448C58`, echoes it verbatim, and returns *before* anything else runs. So
+the ping must come from the server -- and the server must **not** answer the
+echo, or the two ping each other forever.
+
+**Replies are matched by type, against the head of the pending queue only**
+(`0x00446CE0`). Consequences:
+
+* One reply per request, exact type, in order. An extra, wrong or out-of-order
+  reply pops the wrong record and fires its callback.
+* Only types the client never sends may be pushed unsolicited: `+ses` `+msg`
+  `+who` `+rom` `+pop` `+usr` `+rnk` `+snp`. `~png` is also safe, but for a
+  different reason -- it is intercepted before the matching runs.
+* A non-match is harmless: the out-record is memset first, so callback is 0.
+
+**Maximum message 8192 bytes.** The client clamps its socket buffer to that
+(`0x00452D90`, called with 0x8000) and writes a NUL at
+`base + cursor + declared_length - 1` without bounds checking, so an
+over-declared length is an out-of-bounds write in the client.
+
+**One TCP write per message; no reassembly exists.** The reader handles several
+whole messages coalesced in one read, but a message split across two reads is
+lost -- the completion callback resets the cursor and discards the remainder
+(`0x004533FC`).
+
+**Status `auth` terminates the session** (`0x00449090`). Never use it as a
+general error tag.
+
+**There is no graceful close.** A FIN simply stalls the client until its 60 s
+timer fires.
+
+## Rooms and the lobby
+
+`+rom` and `+usr` are ordinary `KEY=VALUE`, **one record per message** -- not
+concatenated record buffers.
+
+Both are dropped unless the subscription slot exists, which is created by
+answering `sele`. `conn+784` is a 20-byte-stride slot array: slot 0 is ROOMS,
+slot 1 is USERS (`conn+804`).
+
+* **`+rom`** (104-byte record): `I` id (default -1; negative discards the
+  record), `F` letter-bitmask, `L`, `T`, `N` name (32), `H` (32), `P` ping,
+  `A` dotted quad. **Send `F=` explicitly** -- an absent `F` defaults to
+  0xFFFFFFFF, which sets the `P` bit and makes the client show the room as
+  password-protected.
+* **`+usr`** (312-byte record): `I`, `F`, `N` (32), `P` (8), `A` quad, `R`,
+  `S` (128), `X` (128), `T`. `F` letter `U` marks "this record is me".
+* **`N` absent means delete that id.**
+
+**Rooms are joined by NAME, not by id** -- the client sends `move` with `NAME`
+and `PASS` (`0x00356A30`); leaving is the same message with `NAME=""`. On a
+successful `move` to a different room the client **drains and frees its entire
+user list**, so the server must re-push `+usr` for every occupant afterwards.
+
+Ordering: the `sele` reply must land first (no slots, no pushes), then `+who`
+or `move` to establish the room, then `+rom`, then `+usr`.
+
+## Matches are peer to peer
+
+The server introduces; it relays nothing.
+
+`+ses` fills a 272-byte record at `conn+512`, memset first so every field
+defaults to empty. `SELF`, `HOST` and `OPPO` are **persona-name strings**
+(proven by `strcmp` at `0x004e2cbc`). `WHEN` is a validity gate: the record is
+only delivered while it is non-zero (`0x00447ffc`), and is cleared after
+delivery.
+
+Then `0x004e2c88` decides the role:
+
+| Condition | Connects to | Using | Flags |
+|---|---|---|---|
+| `SELF == HOST` | `OPPO` | `ADDR` | 0x102 |
+| `SELF != HOST` | `HOST` | `FROM` | 0x101 |
+
+and `0x004e2bf8` formats `"%d.%d.%d.%d:%d"` with **port 3658, hardcoded**
+(`0x004e2c1c`), handing it to DirtySDK's NetGameUtil/NetGameLink. Which side
+binds is decided inside `DRTYSCKF.IRX` on the IOP and is not visible in this
+executable.
+
+So a server starts a match by sending each player a `+ses` naming the other and
+the address to reach them on. Gameplay never touches us again.
+
+## The buddy service
+
+Same framing, same send function (`0x00453220`), despite XMPP-shaped verbs. It
+is a **separate endpoint** whose address arrives in-band from the main service,
+*after* login -- so it cannot gate reaching a lobby, and a stub suffices:
+accept, answer `AUTH` with status 0, echo `PING`, return an empty `ROST`.
+`SHOW` is an integer selecting a string from a table at `0x005742b8`:
+0 DISC, 1 CHAT, 2 AWAY, 3 XA, 4 DND, 5 PASS.
+
+---
+
 ## Slice decision log
 
 Record here, once recon is in, which title+platform becomes the first
