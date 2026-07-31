@@ -145,12 +145,36 @@ recon/                 Phase 1 harness (stdlib only)
 tools/
   madden_tdb.py        DB_TEAMS.DAT reader: TERF container + bit-packed TDB
   roster_checksum.py   the roster CSUM the console compares against
+  fake_console.py      a stand-in client: drives login/lobby/matchmaking and
+                       checks what comes back, so mistakes cost seconds rather
+                       than a console boot
 docs/
   emulator-capture.md  rig-side runbook: DNS redirect, plaintext vs NIC, tcpdump
   protocol-notes.md    living per-title findings (fill during capture)
   roster-checksum.md   how the CSUM was reversed, and what is still unproven
 captures/              transcripts and pcaps land here (contents gitignored)
 ```
+
+## Testing without a console
+
+Hardware is a poor debugger: one bit of feedback per boot, and most mistakes in
+this protocol are ones the server cannot see -- a client that disagrees does not
+complain, it goes quiet. `fake_console.py` speaks the client's half and asserts
+the things the real one silently requires.
+
+```bash
+./serve-madden.sh &
+python3 tools/fake_console.py --host 127.0.0.1 --pair     # two clients, quickmatch
+python3 tools/fake_console.py --host 127.0.0.1 --persona alice --say hi
+```
+
+`--pair` is the matchmaking test: it logs two clients in, queues both, and holds
+the resulting `+ses` records to the rules that matter -- only `SELF` differs,
+`HOST` agrees, `SEED` matches, `WHEN` is non-zero, and neither console is handed
+the address it reported rather than the one it connected from.
+
+It cannot prove the address *crossing*, because two clients on one host share an
+address. That part is covered in `tests/test_matchmaking.py`, with distinct ones.
 
 ## Rosters
 
