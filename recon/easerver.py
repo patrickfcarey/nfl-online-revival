@@ -93,6 +93,21 @@ class _Transcript:
         self.path = path
         self._lock = threading.Lock()
 
+    def record_raw(self, peer: str, kind: str, raw: bytes,
+                   note: str = "") -> None:
+        """Persist bytes we could not decode. They are the most valuable kind."""
+        if not self.path:
+            return
+        row = {"ts": time.time(), "peer": peer, "dir": kind,
+               "note": note, "len": len(raw), "hex": raw.hex()}
+        with self._lock:
+            try:
+                with open(self.path, "a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(row) + "\n")
+                    handle.flush()
+            except OSError as exc:
+                print("[ea] transcript write failed: %s" % exc, flush=True)
+
     def record(self, direction: str, peer: str, message: eaproto.EaMessage,
                raw: bytes) -> None:
         if not self.path:
@@ -146,10 +161,14 @@ def _serve_connection(conn: socket.socket, addr, replies, transcript,
             try:
                 messages, buffer = eaproto.split_stream(buffer)
             except eaproto.EaProtocolError as exc:
-                # Desync is worth seeing in full: it usually means the framing
-                # assumption is wrong, not that the client misbehaved.
-                print("[ea] framing error from %s: %s" % (peer, exc), flush=True)
-                print("     buffer head: %s" % buffer[:48].hex(), flush=True)
+                # Desync usually means our framing assumption is wrong, not that
+                # the client misbehaved -- so keep the bytes. Console-only
+                # reporting made a rejected message look identical to no message
+                # at all, which is the most expensive ambiguity available here.
+                print("[ea] FRAMING ERROR from %s: %s" % (peer, exc), flush=True)
+                print("     %d unparsed byte(s): %s"
+                      % (len(buffer), buffer[:64].hex()), flush=True)
+                transcript.record_raw(peer, "framing-error", buffer, str(exc))
                 break
             for message in messages:
                 raw = message.type.encode("latin-1") + b"" + message.raw_payload
@@ -179,6 +198,8 @@ def _serve_connection(conn: socket.socket, addr, replies, transcript,
         if buffer:
             print("[ea] %s left %d unconsumed byte(s): %s"
                   % (peer, len(buffer), buffer[:48].hex()), flush=True)
+            transcript.record_raw(peer, "unconsumed", buffer,
+                                  "still buffered when the peer disconnected")
         print("[ea] %s disconnected" % peer, flush=True)
         try:
             conn.close()

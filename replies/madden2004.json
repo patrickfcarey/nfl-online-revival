@@ -2,24 +2,26 @@
   "@dir": {
     "ADDR": "192.168.68.85",
     "PORT": "10001",
-    "SESS": "1"
+    "SESS": "1",
+    "MASK": "GS"
   },
-  "skey": [
-    { "type": "skey",
-      "fields": { "SKEY": "$00000000000000000000000000000000" } },
-    { "type": "sele",
-      "fields": {
-        "LAST": "0",
-        "LKEY": "0",
-        "DATE": "0",
-        "CSUM": "0",
-        "BUDDY_URL": "192.168.68.85",
-        "BUDDY_PORT": "10002",
-        "RANKS": "0",
-        "FPLY": "0",
-        "BGNR": "0",
-        "ELIT": "0",
-        "TWRP": "0"
-      } }
-  ]
+
+  "skey": { "SKEY": "$00000000000000000000000000000000" },
+
+  "acct": {},
+
+  "auth": {
+    "NAME": "player",
+    "ADDR": "192.168.68.85",
+    "PERSONAS": "",
+    "OPTS": ""
+  },
+
+  "pers": { "PERS": "player" },
+
+  "sele": { "MORE": "0", "SLOTS": "4" },
+
+  "cper": {},
+  "dper": {},
+  "pass": {}
 }
