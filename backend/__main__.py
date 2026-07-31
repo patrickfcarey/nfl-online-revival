@@ -50,6 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
                              "omitted by default, which leaves it at zero")
     parser.add_argument("--roster-csum",
                         help="roster checksum, as above")
+    parser.add_argument("--roster-db",
+                        help="path to DB_TEAMS.DAT; the announced checksum is "
+                             "computed from it, so the console agrees its "
+                             "roster is current. Overridden by --roster-csum.")
     parser.add_argument("--quiet", action="store_true")
     return parser
 
@@ -87,6 +91,27 @@ def main(argv: Optional[List[str]] = None) -> int:
     }
     if args.roster_date:
         config["roster_date"] = args.roster_date
+    # An explicit --roster-csum wins, so a value observed on hardware can always
+    # override whatever the tool derives.
+    if args.roster_db and not args.roster_csum:
+        try:
+            # Imported here, not at module scope: the server runs perfectly well
+            # without a roster, and should not fail to start over a tool it is
+            # not being asked to use.
+            from tools import roster_checksum
+            value, rows = roster_checksum.from_file(args.roster_db)
+        except Exception as exc:                      # any read or parse failure
+            print("error: cannot compute a checksum from %s: %s"
+                  % (args.roster_db, exc), file=sys.stderr)
+            return 2
+        if not rows:
+            print("error: %s has no players on teams 1-32; wrong file?"
+                  % args.roster_db, file=sys.stderr)
+            return 2
+        config["roster_csum"] = str(value)
+        if not args.quiet:
+            print("roster: %d players from %s -> CSUM %d (0x%08x)"
+                  % (len(rows), args.roster_db, value, value))
     if args.roster_csum:
         config["roster_csum"] = args.roster_csum
     transcript = Transcript(args.transcript)

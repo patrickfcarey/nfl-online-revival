@@ -121,8 +121,29 @@ recon/                 Phase 1 harness (stdlib only)
   pcapreader.py        classic-pcap reader (no scapy)
   classify.py          stack fingerprinter
   __main__.py          CLI: python -m recon <dns|sink|classify|pcap>
+tools/
+  madden_tdb.py        DB_TEAMS.DAT reader: TERF container + bit-packed TDB
+  roster_checksum.py   the roster CSUM the console compares against
 docs/
   emulator-capture.md  rig-side runbook: DNS redirect, plaintext vs NIC, tcpdump
   protocol-notes.md    living per-title findings (fill during capture)
+  roster-checksum.md   how the CSUM was reversed, and what is still unproven
 captures/              transcripts and pcaps land here (contents gitignored)
 ```
+
+## Rosters
+
+The console computes a checksum over its own roster and compares it against the
+`CSUM` the server announces. That algorithm is reversed and implemented, so the
+server can state a version the console agrees with:
+
+```bash
+python3 tools/roster_checksum.py /path/to/DB_TEAMS.DAT
+python3 -m backend --advertise-host <ip> --port 10001 \
+        --roster-db /path/to/DB_TEAMS.DAT
+```
+
+No game data lives in this repository; point these at your own extracted disc.
+The value has not yet been confirmed against a console — see
+`docs/roster-checksum.md` for the algorithm and for exactly what remains
+unproven.

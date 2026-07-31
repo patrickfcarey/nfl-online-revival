@@ -420,21 +420,19 @@ TWRP_DEFAULT = 240
 # --- roster version -------------------------------------------------------
 #
 # The console computes the checksum of its own roster and compares it against
-# the CSUM we announce; a difference means "yours is stale". Ours is a
-# PLACEHOLDER -- it is not computed from any roster and will not match.
+# the CSUM we announce; a difference means "yours is stale".
 #
-# That is currently harmless because the pnach zeroes the comparison
-# (0x0012A978), so the console never acts on the mismatch. The value is sent
-# anyway so the field is populated and the path is exercised end to end.
+# The algorithm is now known and implemented in tools/roster_checksum.py, so a
+# real value can be computed from the roster being served -- run the server with
+# `--roster-db DB_TEAMS.DAT` and it announces a checksum the console agrees
+# with. The fallback below is still a placeholder and still will not match.
 #
-# TO MAKE THIS REAL, see docs/protocol-notes.md: the console derives its
-# checksum at 0x0012a888 by running
-#     select * from 'PLAY' where 'TGID' between 1 and 32
-# over the LEAG database and accumulating each row through 0x0012a730. That
-# accumulator has not been reversed. Once it is, compute the checksum of the
-# roster actually being served, send it here, and drop the pnach line -- the
-# comparison then works as designed and a genuine update is no longer
-# suppressed.
+# Two things follow from serving a real value. The pnach line that zeroes the
+# comparison (0x0012A978) becomes unnecessary and should be removed, because
+# leaving it in would suppress a legitimate update once rosters actually differ.
+# And the mismatch path becomes meaningful: announce a checksum that does not
+# match and the console asks to download, which is the hook a roster update
+# would hang off.
 PLACEHOLDER_ROSTER_DATE = "20030817"      # Madden NFL 2004's own release window
 PLACEHOLDER_ROSTER_CSUM = "0"             # not derived from any roster
 
