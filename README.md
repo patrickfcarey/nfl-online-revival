@@ -50,9 +50,11 @@ confirms or overturns this before anyone commits.
 
 ## Phase 1 harness (`recon/`)
 
-Standard-library Python 3.9+, no dependencies, so it drops onto the rig with no
-install. The harness doesn't revive anything — it watches a client that still
-tries to phone home and turns that into a written protocol map.
+Standard-library Python 3.9+, so it drops onto the rig with a file copy — no
+pip, no virtualenv to go wrong mid-session. That is a deliberate choice for the
+capture harness rather than a rule for the whole project. The harness doesn't
+revive anything — it watches a client that still tries to phone home and turns
+that into a written protocol map.
 
 ```bash
 # 1. Answer the game's DNS so it connects to your capture box.

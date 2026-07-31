@@ -110,12 +110,17 @@ queue. Nothing here is re-read after a reconnect.
 
 ## Storage
 
-**`sqlite3` from the standard library**, one file, `journal_mode=WAL`,
-`foreign_keys=ON`. It is the only durable store in Python 3.9's stdlib offering
-transactions, the `UNIQUE` constraint the `dupl` tag needs, and the
-`ORDER BY`/`LIMIT` that the `snap` paging maps onto directly. At the expected
-scale — dozens of users — one connection behind a lock is ample, and the
-project's no-dependency rule is preserved.
+**`sqlite3`**, one file, `journal_mode=WAL`, `foreign_keys=ON`. It offers
+transactions, the `UNIQUE` constraint the `dupl` error tag implies, and the
+`ORDER BY`/`LIMIT` that `snap`'s `FIRST`/`COUNT`/`RANGE` paging maps onto
+directly. At the expected scale — dozens of users — one connection behind a
+lock is ample.
+
+It also happens to be in the standard library, which suits how this repo is
+deployed: `tar | ssh` onto the rig, no pip and no virtualenv to go wrong
+mid-session. That is a convenience of the current setup, **not a constraint
+anyone has agreed to** — if a real dependency earns its place later (a proper
+async server, a migration tool), nothing here forbids it.
 
 ## A separate service
 
