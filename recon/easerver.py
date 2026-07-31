@@ -102,8 +102,11 @@ def _reply_for(message: eaproto.EaMessage, replies: Dict[str, Dict[str, str]],
 
 def _serve_connection(conn: socket.socket, addr, replies, transcript,
                       host: str, redirect_port: int,
-                      on_message: Optional[Callable] = None) -> None:
+                      on_message: Optional[Callable] = None,
+                      listen_port: Optional[int] = None) -> None:
     peer = "%s:%d" % addr
+    if listen_port is not None:
+        peer = "%s->:%d" % (peer, listen_port)
     buffer = b""
     print("\n[ea] %s %s connected" % (time.strftime("%H:%M:%S"), peer), flush=True)
     try:
@@ -155,25 +158,37 @@ def _serve_connection(conn: socket.socket, addr, replies, transcript,
             pass
 
 
-def serve(bind: str = "0.0.0.0", port: int = 10000,
+def serve(bind: str = "0.0.0.0", port=10000,
           reply_file: Optional[str] = None,
           transcript_path: Optional[str] = None,
           redirect_host: Optional[str] = None,
           redirect_port: int = 10001) -> None:
-    """Answer EA protocol messages until interrupted."""
+    """Answer EA protocol messages until interrupted.
+
+    ``port`` may be a list. ``@dir`` is a *redirector*: it answers with an
+    address the client then reconnects to, so the port named in that answer
+    must also be listening or the redirect dead-ends in a refused connection
+    that looks like a rejected reply.
+    """
+    ports = [port] if isinstance(port, int) else list(port)
     replies = load_replies(reply_file)
     transcript = _Transcript(transcript_path)
     host = redirect_host or bind
     if host in ("0.0.0.0", ""):
         host = "127.0.0.1"
 
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        srv.bind((bind, port))
-        srv.listen(8)
-    except OSError as exc:
-        raise EaServerError("cannot bind %s:%d: %s" % (bind, port, exc))
+    listeners = []
+    for one in ports:
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            srv.bind((bind, one))
+            srv.listen(8)
+        except OSError as exc:
+            for _p, done in listeners:
+                done.close()
+            raise EaServerError("cannot bind %s:%d: %s" % (bind, one, exc))
+        listeners.append((one, srv))
 
     import signal
 
@@ -185,20 +200,35 @@ def serve(bind: str = "0.0.0.0", port: int = 10000,
     except (ValueError, OSError):  # pragma: no cover - not the main thread
         pass
 
-    print("[ea] serving the EA protocol on %s:%d" % (bind, port), flush=True)
+    print("[ea] serving the EA protocol on %s ports %s"
+          % (bind, ", ".join(str(p) for p, _ in listeners)), flush=True)
     print("[ea] replies: %s"
           % (reply_file if reply_file else "built-in @dir guess only"), flush=True)
     if transcript_path:
         print("[ea] transcript -> %s" % transcript_path, flush=True)
     print("[ea] waiting for the console. Ctrl-C when done.", flush=True)
-    try:
+    def accept_loop(listen_port, sock):
         while True:
-            conn, addr = srv.accept()
+            try:
+                conn, addr = sock.accept()
+            except OSError:
+                return
             threading.Thread(
                 target=_serve_connection,
-                args=(conn, addr, replies, transcript, host, redirect_port),
+                args=(conn, addr, replies, transcript, host, redirect_port,
+                      None, listen_port),
                 daemon=True).start()
+
+    for one, sock in listeners:
+        threading.Thread(target=accept_loop, args=(one, sock), daemon=True).start()
+    try:
+        while True:
+            time.sleep(3600)
     except KeyboardInterrupt:
         print("\n[ea] stopping", flush=True)
     finally:
-        srv.close()
+        for _one, sock in listeners:
+            try:
+                sock.close()
+            except OSError:
+                pass

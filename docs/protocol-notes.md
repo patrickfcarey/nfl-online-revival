@@ -283,12 +283,63 @@ nothing else follows until it is answered.
 exactly 87 bytes. `split_stream` keeps a partial trailer, because TCP does not
 preserve message boundaries.
 
-### What is NOT known
+### The reply, recovered from the client's own parser
 
-**The reply format.** No server answered, so the keys a `@dir` response must
-carry are unobserved. `directory_reply()` is a hypothesis built from the shape
-of the request, and the only test of it is whether the client connects where it
-is sent. Expect to iterate on the field names.
+The client contains the parser, so the reply format is readable without ever
+seeing a server. Recovered by disassembly and independently cross-checked:
+
+**The reply is typed `@dir`** — the server echoes the request type. `rdir` is
+*not* a wire type; it is the client's internal state token at `conn+12` meaning
+"awaiting directory reply". Both are checked, in sequence, at `0x00448d18`:
+
+```
+lui v0,0x7264 / ori v0,0x6972   -> 'rdir'
+bne  v1, v0                      require STATE == 'rdir'
+lui v0,0x4064 / ori v0,0x6972   -> '@dir'
+bnel v1, v0                      require RECEIVED TYPE == '@dir'
+```
+
+Fields the reply parser reads (block `0x00448d40`-`0x00448ee0`), all via
+`TagFieldFind` at `0x0044acc8`:
+
+| Key | vaddr | Converter | Stored | Notes |
+|---|---|---|---|---|
+| `DIRECT` | `0x608828` | presence test | — | if present, **ADDR/PORT are skipped** |
+| `ADDR` | `0x6087a0` | `0x44c628` | `conn+948` | **dotted quad**, default 0 |
+| `PORT` | `0x608830` | `0x44c550` | `conn+944` | decimal |
+| `SESS` | `0x608838` | `0x44c550` | `conn+1208` | decimal, default 0 |
+| `MASK` | `0x6087f0` | `0x44c9b0` | `conn+1212` | string, 64 bytes, default "" |
+| `DOWN` | `0x608840` | `0x44c9b0` | `conn+952` | **only read when ADDR==0**; sets "server down" flag `0x400` |
+
+`0x44c628` is a dotted-quad IPv4 parser, not an integer one — it compares
+against 46 (`'.'`) and shifts the accumulator left 8 bits per octet, so
+**`ADDR` must be written `192.168.68.85`**, not hex and not decimal. `0x44c550`
+is an ordinary atoi. That distinction is the difference between a working
+redirect and a silent failure.
+
+**`@dir` is a redirector.** With `ADDR` non-zero the client sets state `conn`,
+logs `"connecting to %08x:%d"`, reconnects to `ADDR:PORT` and continues there.
+So whatever port the reply names must also be listening, or the redirect
+dead-ends in a refused connection that looks like a rejected reply.
+
+Minimal reply, evidenced: `ADDR` and `PORT`. Everything else has an explicit
+default. `SESS` is consumed later during login (`0x004f7110`), so it is
+plausibly required downstream — not yet proven.
+
+### The wider feature set
+
+The string catalogue and state tokens map the whole service: states run
+`offl` -> `conn` -> `sele` -> `auth`/`acct`/`pass`/`skey` -> `pers` -> `room` ->
+`play`, with `idle`, `down`, `disc`, `term`, `ping`/`~png`, `snap`, `move`.
+Subscription channels `+ses +msg +who +rom +pop +usr +rnk +snp` carry
+`chat`/`cast`/`priv`. Errors are 4-char ASCII tags, not numbers, dispatched by
+binary search at `0x3583a0`: `full`, `time`, `room`, `dupl`, `name`, `fane`,
+`strt`. Account fields live at `0x609248`: `PERS CDEV AGE NAME MAIL SPAM CPAT
+TOS PASS ALTS BORN GEND MINAGE PMAIL CHNG OPTS`.
+
+A revived server therefore needs: directory redirect, EA-account login with
+personas, buddy list with presence, rooms with chat, ranked matchmaking,
+leaderboards, tournaments, and keepalive.
 
 ---
 

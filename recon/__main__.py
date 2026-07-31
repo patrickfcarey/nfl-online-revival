@@ -218,7 +218,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_ea = sub.add_parser("ea", help="serve the EA game protocol and answer it")
     p_ea.add_argument("--bind", default="0.0.0.0")
-    p_ea.add_argument("--port", type=_port, default=10000)
+    p_ea.add_argument("--port", type=_port_list, default=[10000],
+                      help="comma-separated; include the port @dir redirects to")
     p_ea.add_argument("--replies", help="JSON file of per-message-type reply fields")
     p_ea.add_argument("--out", help="JSONL transcript path")
     p_ea.add_argument("--redirect-host", help="host to send the client to (@dir)")
