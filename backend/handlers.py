@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import struct
 import time
 from typing import Callable, Dict, List, Optional
 
@@ -948,6 +949,40 @@ NEWS_HEADLINES = 1   # the news list it displays
 NEWS_ROSTERS = 2     # the roster update manifest
 
 
+#: Sub-block header size: 4CC type, 4 reserved, 4 length (0x0044f400 walks by
+#: reading the type at +0 and the length at +8, advancing by the length).
+SUBBLOCK_HEADER = 12
+
+
+def news_subblock(kind: int, payload: bytes) -> bytes:
+    """Wrap a ``news`` payload in the ``new<n>`` sub-block the client walks for.
+
+    Measured on hardware, from the completion code the reply callback leaves at
+    0x00560af4:
+
+    * answering with message type ``new0`` gives code **3** -- "no reply object".
+      The pending queue matches replies by type, so a ``new0``-tagged reply is
+      never delivered at all. That is what silently discarded every checksum we
+      announced, and why five candidate algorithms all appeared to fail: none of
+      them was ever compared against anything.
+    * answering with type ``news`` gives code **0** -- delivered, but the word at
+      reply+8 is zero, and NewsRequest keeps the body only when that word equals
+      ``'new0' + kind`` (0x0034f500).
+
+    So the type belongs on the wire as ``news`` and ``new0`` belongs *inside* the
+    body, as the sub-block selector the walker at 0x0044f400 looks for.
+    """
+    header = struct.pack(">4sII", news_subblock_type(kind).encode("latin-1"),
+                         0, SUBBLOCK_HEADER + len(payload))
+    return header + payload
+
+
+def news_subblock_type(kind: int) -> str:
+    if not 0 <= kind <= 9:
+        raise ProtocolError("news category %d is out of range" % kind)
+    return NEWS_REPLY_BASE[:3] + str(kind)
+
+
 def news_reply_type(ctx: Context, kind: int) -> str:
     """The type to answer a ``news`` request with.
 
@@ -1002,8 +1037,7 @@ def service_news(ctx: Context) -> List[bytes]:
     if kind == NEWS_ROSTERS:
         return _roster_manifest(ctx)
     if kind == NEWS_HEADLINES:
-        return [protocol.encode(news_reply_type(ctx, kind), protocol.OK,
-                                {"NAME": str(kind)})]
+        return [_news_message(ctx, kind, {"NAME": str(kind)})]
 
     fields = {
         "NAME": str(kind),
@@ -1022,7 +1056,22 @@ def service_news(ctx: Context) -> List[bytes]:
     # see the note above PLACEHOLDER_ROSTER_CSUM.
     fields["DATE"] = str(ctx.config.get("roster_date", DEFAULT_ROSTER_DATE))
     fields["CSUM"] = _pick_csum(ctx)
-    return [protocol.encode(news_reply_type(ctx, NEWS_CONFIG), protocol.OK, fields)]
+    return [_news_message(ctx, NEWS_CONFIG, fields)]
+
+
+def _news_message(ctx: Context, kind: int, fields) -> bytes:
+    """One `news` reply, in whichever shape is being tested.
+
+    ``--news-body subblock`` puts the fields inside a ``new<n>`` sub-block and
+    sends the message as ``news``, which is what the measurements point to.
+    ``--news-body plain`` keeps the old behaviour for comparison.
+    """
+    if ctx.config.get("news_body") == "subblock":
+        payload = protocol.encode(news_subblock_type(kind), protocol.OK,
+                                  fields)[protocol.HEADER_SIZE:]
+        return protocol.encode_raw("news", protocol.OK,
+                                   news_subblock(kind, payload))
+    return protocol.encode(news_reply_type(ctx, kind), protocol.OK, fields)
 
 
 def _pick_csum(ctx: Context) -> str:
@@ -1080,9 +1129,8 @@ def _roster_manifest(ctx: Context) -> List[bytes]:
     url = ctx.config.get("roster_url")
     crc = ctx.config.get("roster_file_crc")
     if not url or crc is None:
-        return [protocol.encode(news_reply_type(ctx, NEWS_ROSTERS), protocol.OK,
-                                {"NAME": str(NEWS_ROSTERS)})]
-    return [protocol.encode(news_reply_type(ctx, NEWS_ROSTERS), protocol.OK, {
+        return [_news_message(ctx, NEWS_ROSTERS, {"NAME": str(NEWS_ROSTERS)})]
+    return [_news_message(ctx, NEWS_ROSTERS, {
         "NAME": str(NEWS_ROSTERS),
         "URL": str(url),
         "CRC": str(crc),

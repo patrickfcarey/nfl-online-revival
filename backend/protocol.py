@@ -247,6 +247,25 @@ def encode(msg_type: str, status: Status = OK,
             + payload)
 
 
+def encode_raw(msg_type: str, status: Status = OK, body: bytes = b"") -> bytes:
+    """Build a message whose payload is supplied verbatim.
+
+    Most replies are KEY=VALUE text, which :func:`encode` builds. A few carry a
+    structured body instead -- the ``news`` reply wraps its fields in a
+    ``new<n>`` sub-block with a binary 12-byte header -- and those bytes must
+    reach the wire untouched, so they cannot go through the field encoder.
+    """
+    if len(msg_type) != 4:
+        raise ProtocolError("message type must be exactly 4 characters, got %r"
+                            % (msg_type,))
+    total = HEADER_SIZE + len(body)
+    if total > MAX_MESSAGE_SIZE:
+        raise ProtocolError("message would be %d bytes; the client's buffer is %d"
+                            % (total, MAX_MESSAGE_SIZE))
+    return (msg_type.encode("latin-1")
+            + struct.pack(">II", encode_status(status), total) + body)
+
+
 def split_stream(buffer: bytes) -> Tuple[List[Message], bytes]:
     """Pull every complete message out of a stream, keeping a partial trailer.
 
