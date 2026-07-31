@@ -128,3 +128,35 @@ patch=1,EE,00305258,word,10000003
 // server's date is newer than the console's. Announce DATE=0 and it is not.
 // Left disabled rather than deleted: it is the only way to see this value.
 //patch=1,EE,0012A978,word,AF82B43C
+
+// ---------------------------------------------------------------------------
+// MEASUREMENT PATCH 2 -- the local roster date. Disabled; enable deliberately.
+//
+// With CSUM matching (measured: the console computes 0x8108963c, exactly what
+// tools/roster_checksum.py derives from the disc) and DATE announced as 0, the
+// console STILL reports its rosters as out of date. So neither test we know
+// about is the trigger, and the decision is made in UI Studio bytecode we
+// cannot read -- it lives in the uis_*.dat screen files, not in this ELF.
+//
+// 0x00350960 answers "is the caller's date older than the one the server
+// announced", with the comparison in the delay slot:
+//
+//   00350960  lw   v0, 2452(gp)     ; the DATE we announced
+//   00350964  jr   ra
+//   00350968  sltu v0, a0, v0       ; return (a0 < server_DATE)
+//
+// Replacing the load with a store captures a0 -- the LOCAL roster date the
+// script passes in. That answers two things at once: whether this path is
+// consulted at all (the slot stays untouched if it is not), and what value the
+// script believes its own roster carries.
+//
+// The function then returns whatever v0 held, so its verdict is meaningless
+// while this is active. That is fine; the point is the captured argument.
+//
+//   before  0x8f820994  lw v0, 2452(gp)
+//   after   0xaf84b43c  sw a0, -19396(gp)
+//
+// Read it with: python3 tools/read_roster_checksum.py <savestate>
+// Do not enable this at the same time as MEASUREMENT PATCH 1 -- they write the
+// same slot, and the last writer wins.
+//patch=1,EE,00350960,word,AF84B43C
