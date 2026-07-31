@@ -494,6 +494,45 @@ accept, answer `AUTH` with status 0, echo `PING`, return an empty `ROST`.
 
 ---
 
+## ESPN NFL 2K5 — DNAS located, service found (2026-07-31)
+
+**Its networking is in the main ELF after all**, roughly `0x003b0000`-`0x003e0000`,
+entered at `0x003c1910(20919, ...)` straight off the DNAS success path. The
+VC_20919 containers did not need unpacking.
+
+**Server: `nfl2k5.games.espnvideogames.com`** (file offset `0x93b166`). Earlier
+scans missed it because **2K5 stores nearly all strings as UTF-16LE** — that
+one detail is why the title looked like it had no network strings at all.
+Companion strings confirm the service: "Locating Servers.", "The ESPN
+VIDEOGAMES service is down", "Could not connect to the Leaderboard server",
+"ESPN Messenger" (a separate messaging service, as Madden has a separate buddy
+service).
+
+**DNAS.** libdnas2 2.71 is statically linked into a non-ALLOC `.dnas` section at
+`0x01ee8280` — invisible to a loader that only maps PT_LOAD. Five call sites,
+all from one wrapper; a per-frame state machine at `0x00403848` polls it and
+stashes a result at `0x00BA7630`, and `0x00402f00` returns `(result == 2)`.
+
+**The polarity is inverted from the intuitive reading**: 2 is authenticated and
+1 is failed, so the stub at `0x004038ec` — which writes 1 — is a *failure*
+stub. Patching it through without also correcting the constant would have
+forced permanent failure rather than a bypass. `patches/42F9D5AF.pnach` carries
+both a one-word gate patch (the pattern that worked for Madden) and the
+two-word variant that skips DNAS entirely.
+
+**2K5 does not speak Madden's protocol.** No DirtySDK signature, no four-char
+ASCII types, no `KEY=VALUE`. Sends route through
+`0x0014c848(ctx, id16, channel=3, buf, len)` — a binary, numeric-ID scheme. The
+backend in this repo is Madden's and will not serve 2K5 without separate work.
+
+The constant **3658** appears here too, stored as a halfword into the online
+config, but at `0x003d2e98` it is passed as `a1 & 0xffff` with `a2=3, t0=16`,
+which reads more like a message id and channel than a port. **Do not stand up a
+listener on it without a live capture** — the coincidence with Madden's
+peer-to-peer port is not evidence.
+
+---
+
 ## Slice decision log
 
 Record here, once recon is in, which title+platform becomes the first

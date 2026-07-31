@@ -1,0 +1,43 @@
+gametitle=ESPN NFL 2K5 (SLUS-20919, CRC 42F9D5AF)
+comment=DNAS bypass - VARIANT A (force the success branch at the gate)
+
+// ---------------------------------------------------------------------------
+// Sony's DNAS servers are gone, so 2K5 cannot authenticate and never reaches
+// its own service at nfl2k5.games.espnvideogames.com.
+//
+// libdnas2 2.71 is statically linked into a non-ALLOC .dnas section at
+// 0x01ee8280. A per-frame state machine at 0x00403848 polls it and stashes a
+// result code at 0x00BA7630. 0x00402f00 returns (code == 2).
+//
+// WATCH THE POLARITY. Code 2 means authenticated and code 1 means failed --
+// the reverse of the intuitive reading. The stub path at 0x004038ec writes 1,
+// so it is a *failure* stub, and "patching it through" without changing the
+// constant would force a permanent failure rather than a bypass.
+//
+// The gate, verified by disassembly:
+//   0014bc54  jal   0x00402f00           ; -> (result == 2)
+//   0014bc5c  bne   v0, zero, 0x0014bc74 ; non-zero -> SUCCESS
+//   0014bc64  jal   0x00403290           ; else -> "DNAS Error (%i)" dispatcher
+//   0014bca0  addiu a0, zero, 20919      ; SLUS-20919 -> online init 0x003c1910
+// ---------------------------------------------------------------------------
+
+// VARIANT A (active): make the success test unconditional. DNAS still runs and
+// still fails; its verdict simply stops deciding anything. This mirrors the
+// patch that worked for Madden NFL 2004, which is why it is the default.
+//   before  0x14400005  bne v0,   zero, 0x0014bc74
+//   after   0x10000005  beq zero, zero, 0x0014bc74   (same target)
+patch=1,EE,0014BC5C,word,10000005
+
+// VARIANT B: never run DNAS at all. Forces the stub path and corrects its
+// verdict from 1 (fail) to 2 (authenticated). Avoids waiting on a connection
+// to dead Sony hosts, at the cost of touching two words instead of one.
+// Comment out A and uncomment both lines.
+//   004038EC: bne v0,zero,+7      -> nop            (always fall through)
+//   004038FC: addiu v0,zero,1     -> addiu v0,zero,2 (fail -> authenticated)
+//patch=1,EE,004038EC,word,00000000
+//patch=1,EE,004038FC,word,24020002
+
+// SCOPE: this gets the title past its own DNAS gate. It obtains no DNAS
+// ticket. 2K5's service is a different protocol from Madden's -- a binary,
+// numeric-ID scheme through 0x0014c848, not EA's 4-char text framing -- so the
+// backend in this repo does not speak it yet.
