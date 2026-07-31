@@ -124,20 +124,40 @@ it just moved from GameSpy to DirtySDK.
 `/DATA/ONLINE.DAT` is almost entirely EULA text, plus `bio_gethostbyname`.
 `/NETGUI/NTGUI.ELF` is Sony's stock network-config GUI, not EA code.
 
-### ESPN NFL 2K5 — everything hidden in the packed containers
+### ESPN NFL 2K5 — not hidden at all; the scan was wrong
 
-The main ELF `SLUS_209.19` (12.6 MB) contains **no hostnames and no lobby
-vocabulary at all** — only `sceLibnetInitialize`, `socket`, and
-`authorityKeyIdentifier`. That last one is an X.509 extension name, so 2K5
-carries certificate-parsing code, which is directly relevant to whether DNAS
-can be impersonated.
+**Corrected 2026-07-31. The earlier conclusion in this section was false and is
+kept here only so the mistake is not repeated.**
 
-Its game code lives in `/VC_20919/0` .. `/4` — five Visual Concepts packed
-containers, ~4.3 GB total, VC-LZ compressed. **This is the same pack-table and
-VC-LZ format the 2K5 mod tools already decode**, so unpacking them and
-re-scanning is a known quantity rather than new research.
+It used to read: "the main ELF contains no hostnames and no lobby vocabulary at
+all", and concluded the network code must live inside the `/VC_20919/0`..`/4`
+packed containers, ~4.3 GB of VC-LZ that would need unpacking before anything
+could be found.
+
+That was an artefact of the search, not a property of the game. **2K5 stores
+nearly all of its strings as UTF-16LE**, and an ASCII scan steps straight over
+them. Searching the same 12.6 MB ELF for UTF-16LE finds everything immediately:
+
+| String | Offset |
+|---|---|
+| `nfl2k5.games.espnvideogames.com` | `0x93b166` |
+| `Locating Servers.` | `0x93b1a6` |
+| `The ESPN VIDEOGAMES service is down` | `0x93ae6a` |
+| `Could not connect to the Leaderboard server` | `0x97257e` |
+| `ESPN Messenger` | `0x971b94` |
+
+So the networking is in the main executable, reachable without touching the
+containers at all. Note also that `libdnas2`, `2.71` and `sceDNAS` do **not**
+appear as literals — the "libdnas2 2.71" attribution comes from the separate
+`DNAS271.IMG` module, not from strings in the ELF.
+
+There is no DirtySDK here: `DirtySDK`, `DirtySock`, `DirtyDnas`, `ProtoSSL` and
+`NetConn` all have zero occurrences. None of Madden's protocol work transfers.
 
 `/VC_20919/DATA/DNAS271.IMG` (269 KB) is the DNAS module, version 2.7.1.
+
+**Lesson worth generalising:** any "this title has no strings" finding on a
+Visual Concepts game should be re-run as UTF-16LE before it is believed.
 
 ### Both discs
 
@@ -546,28 +566,128 @@ So the original server never knew any console's value. It simply stated the
 current one, and consoles that disagreed fetched an update.
 
 **What the checksum covers.** `0x0012a888` runs a query against the game's own
-record store, whose text sits at `0x00579b90`:
+record store, whose full text sits at `0x00579b90`:
 
 ```
-use 'GAEL' declare <cursor> for select * from 'YALP'
-    where ('DIGT' >= 1) and ('DIGT' <= 32) order by ...
+use 'GAEL' declare <cur> cursor for select * from 'YALP'
+where ('DIGT' >= 1) and ('DIGT' <= 32) order by 'DIGP'
 ```
 
-The four-character names are byte-reversed, as everywhere else here:
-`GAEL` is **LEAG**, `YALP` is **PLAY**, `DIGT` is **TGID**. So it is
-`select * from PLAY where TGID between 1 and 32` -- every player on all
-thirty-two teams -- accumulated row by row through `0x0012a730`.
+The four-character names are byte-reversed, as everywhere else here: `GAEL` is
+**LEAG**, `YALP` is **PLAY**, `DIGT` is **TGID**, `DIGP` is **PGID**. So it is
+`select * from PLAY where TGID between 1 and 32 order by PGID` -- every player
+on all thirty-two teams, in player-id order.
 
-That means the checksum is a function of the roster data itself, in Madden's
-TDB format. It is computable outside the game by anyone who can read that
-table and reproduce the accumulator, which also makes it a prerequisite for
-serving a roster at all: a replacement roster has to be announced with its own
-correct checksum or the console will refuse to believe it arrived.
+**Status: solved and implemented (2026-07-31).** See `docs/roster-checksum.md`
+for the full derivation. In brief, and correcting two things this section used
+to say:
 
-**Status.** The accumulator at `0x0012a730` is not yet reversed, so no checksum
-is computed here and the comparison is bypassed by a patch instead. That is a
-stopgap, not the design: the honest implementation computes the checksum of
-whatever roster is being served.
+* `0x0012a730` is **not** the accumulator. It is a varargs marshaller that hands
+  the query VM a format string at `0x00579958` plus 31 pointers spaced four
+  bytes apart across a 124-byte buffer. That format string is the authority for
+  which columns are hashed and in what order.
+* The real accumulator is `0x0039d7e8`, whose table at `0x00565510` matches the
+  reflected `0xEDB88320` polynomial on all 256 entries -- plain zlib CRC-32.
+
+The loop seeds from the **row count**, read via `lhu`, not from 0 and not from
+`0xFFFFFFFF`. A `0xFFFFFFFF` does sit nearby at `sp+8` and looks like a
+conventional CRC init; it is cursor-struct setup and never reaches the
+accumulator.
+
+Retail `DB_TEAMS.DAT` yields 1743 players across 32 teams and a checksum of
+`0x8108963c`. `tools/roster_checksum.py` computes it; `--roster-db` makes the
+server announce it. The pnach line that bypassed the comparison is therefore
+disabled -- leaving it on would suppress a *legitimate* update, which is the
+mechanism a roster download has to hang off.
+
+**Not yet confirmed by a console.** The algorithm is verified against the
+executable and the extraction is verified against real player data, but no
+hardware run has reached the comparison.
+
+---
+
+## What the console has actually done (2026-07-31)
+
+Worth separating from what merely has tests, because the transcripts are
+unambiguous and the distinction keeps getting blurred.
+
+**Exchanged with a real console:** `@dir`, `skey`, `addr`, `auth`, `acct`,
+`cper`, `pers`, `sele`, `cusr`, `news`, and `~png` keepalives. An account and a
+persona were created and are reloaded on reconnect.
+
+**Never sent by a console, in any capture:** `room`, `chat`, `mesg`, `move`. The
+lobby, chat, matchmaking and buddy code is unit-tested only. No game has been
+played.
+
+`addr` is answered with silence deliberately — the client does not wait on it.
+That is by design, not a gap.
+
+**The stall, and the evidence it is fixed.** Before the handlers for `news` and
+`cusr` existed, the console sent them and got nothing:
+
+```
+12:33:20  recv cusr      12:33:50  recv news      12:34:40  recv news
+```
+
+— 30-50 seconds apart, which is the client retrying, and exactly the "it sits
+for about a minute" symptom reported from the sofa. After the fix, in the same
+capture file:
+
+```
+13:02:08  recv cusr / send cusr      13:02:08  recv news / send news
+```
+
+Every request answered in the same second. When counting a transcript for
+unanswered messages, note that one file can span a code change.
+
+---
+
+## The disc's modules, and what is in each
+
+Established while hunting the roster download, so the next search starts in the
+right file:
+
+| File | Size | Contents |
+|---|---|---|
+| `SLUS_207.52` | 5.4 MB | main ELF: the EA protocol, the record store, the roster checksum |
+| `NTGUI.ELF` | 4.2 MB | separate network-GUI module, loaded from `cdrom0:\NETGUI\NTGUI.ELF` |
+| `ONLINE.DAT` | 1.2 MB | **a TERF container**, same format as `DB_TEAMS.DAT`: DNAS plus RSA **SSL-C 2.1.0** (not OpenSSL, despite `EVP_*`/`SHA1_*` symbol names) |
+| `DB_TEAMS.DAT` | 8.4 MB | TERF container of 232 Madden TDB databases — the rosters |
+
+Two dead ends recorded so they are not re-walked:
+
+* `ONLINE.DAT` contains `http://www.ea.com/global/legal/privacy_noseal` three
+  times. That is the **privacy-policy boilerplate** in the membership agreement
+  text, not a service endpoint. There is no HTTP roster URL on this disc.
+* It also contains `"A download error has occurred."` at `0x96998`. That string
+  sits inside the **DNAS** error table, between "The network authentication
+  server is not in service." and "DNAS Error (%d)". It is `sceDNAS2`'s
+  auth-data download, unrelated to rosters.
+
+---
+
+## Open: how a roster is actually delivered
+
+Knowing the checksum does not yet mean a roster can be **sent**, and this is now
+the only thing between here and serving real rosters.
+
+What is known: when the console was offered a mismatching `CSUM` it displayed
+its update prompt, and the attempt then failed. What is *not* known is by what
+route it expected the data.
+
+The negative evidence is the interesting part. On the failed update the console:
+
+* opened **no new TCP connection** -- nothing beyond the ports already in use;
+* resolved **no new hostname** -- the DNS responder logged nothing further.
+
+So the download is not a separate service on a separate host, which rules out
+the most obvious shape. That leaves it either riding the existing lobby
+connection as a message type we have not implemented and therefore never
+answered, or reusing an already-resolved endpoint on a port we were not
+listening on.
+
+Distinguishing those is the next piece of work, and the entry point is the code
+immediately after the comparison at `0x0012a97c`.
 
 ---
 
