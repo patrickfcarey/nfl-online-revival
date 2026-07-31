@@ -326,6 +326,54 @@ Minimal reply, evidenced: `ADDR` and `PORT`. Everything else has an explicit
 default. `SESS` is consumed later during login (`0x004f7110`), so it is
 plausibly required downstream — not yet proven.
 
+### The complete message vocabulary
+
+Message types are **32-bit big-endian immediates built by `lui`/`ori`**, never
+strings — which is why `@dir` cannot be found by grepping the binary. Read out
+of data they appear byte-reversed (`erc#` in a hexdump is `#cre` on the wire);
+that inversion is the single easiest way to misread this protocol.
+
+The send function is `0x00453220(sess, type, txid, payload, len|-1)`; it
+computes `strlen(payload) + 1 + 12`, confirming the framing independently.
+
+**Client -> server:** `@dir` `sele` `addr` `skey` `#cre` `#new` `#joi` `#lea`
+`#sta` `#sea` `#mem` `#dat`, plus `PING` in a separate subsystem.
+
+**Server -> client:** `~png` `@dir` `auth` `acct` `snap` `sele` `pers` `move`
+`room`, and the push-only subscriptions `+ses` `+msg` `+who` `+rom` `+pop`
+`+usr` `+rnk` `+snp` (these never reach the send function).
+
+**Record types** inside a buffer of concatenated frames: `*dir` `*usr` `user`
+`strt` `game` `gam2` `roll` `crnd`. Four of them sit in a contiguous table at
+`0x005f60d8` — `"*dir*usrstrtgame"` — used as the value of key `FILT` on a
+`#sea` subscription.
+
+**Replies reuse the request's type *and* transaction id.** Proven at the `~png`
+handler (`0x00448ca4`), which calls the send function with `a1 = received type`
+and `a2 = received txid`. That is why `@dir` is answered with `@dir`, and it
+generalises: our server should echo both on every reply.
+
+### Error vocabulary
+
+`.data` at `0x0056d4dc` holds sixteen 12-byte triples of
+`(request type, internal tag, wire tag)`:
+
+| Request | | |
+|---|---|---|
+| `#cre` | `xist`/`dupl`, `maxt`/`full`, `filt`/`fane` |
+| `#joi` | `dupl`/`uniq`, `ajoi`/`dupl`, `nspc`/`full`, `many`/`many`, `mist`/`twic` |
+| `#lea` | `uusr`/`miss` |
+| `#sea` | `many`/`parm` |
+| `#mem` | `uusr` |
+| `#new` | `nspc`/`size` |
+| `#dat` | (one entry) |
+| *(no type)* | `dber`/`misc`, `nspc`/`misc`, `invp`/`parm` |
+
+These are the error tags a server sends back, and they match the user-facing
+strings: `full` -> "The selected tournament is full.", `dupl` -> "That
+tournament name is already taken.", `strt` -> "That tournament has started.",
+`time` -> "The server is not responding."
+
 ### The wider feature set
 
 The string catalogue and state tokens map the whole service: states run
