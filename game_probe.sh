@@ -91,9 +91,16 @@ echo "=============================================================="
 # Capture everything to/from the rig except the noise: SSH, the VR headset
 # stream, mDNS and NetBIOS. Without this the file is ~99% not-the-game.
 EXCLUDE="${EXCLUDE-not port 22 and not port 9757 and not port 5353 and not port 137 and not port 138}"
+rm -f captures/.tcpdump.err
 tcpdump -i any -s0 -U -w "$PCAP" "host $RIG_IP and ($EXCLUDE)" \
     >/dev/null 2>captures/.tcpdump.err &
 TCPDUMP_PID=$!
+sleep 1
+if ! kill -0 "$TCPDUMP_PID" 2>/dev/null; then
+    echo "!! tcpdump did not start; continuing with the sinkhole only."
+    sed 's/^/     /' captures/.tcpdump.err 2>/dev/null
+    echo "   For packet capture: sudo setcap cap_net_raw,cap_net_admin+eip \"\$(command -v tcpdump)\""
+fi
 
 SINK_ARGS=(--tcp "$TCP_PORTS" --out "$SINKJSON")
 [ -n "$UDP_PORTS" ] && SINK_ARGS+=(--udp "$UDP_PORTS")
@@ -124,8 +131,10 @@ cleanup() {
     echo "=============================================================="
     echo " WHAT THE CLIENT SENT"
     echo "=============================================================="
-    if grep -q "bytes" "$SINKLOG" 2>/dev/null; then
-        grep -c "recv" "$SINKLOG" | xargs echo "  messages received:"
+    # Count from the transcript, not the console log: the console renders
+    # direction as an arrow, so grepping it for "recv" always found nothing.
+    if [ -s "$SINKJSON" ]; then
+        echo "  messages from the client: $(grep -c '"dir": "recv"' "$SINKJSON" 2>/dev/null || echo 0)"
         echo
         "$PYTHON" -m recon classify --transcript "$SINKJSON" 2>/dev/null \
             || echo "  (classify found nothing yet)"
