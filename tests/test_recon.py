@@ -23,7 +23,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from recon import __main__ as recon_cli  # noqa: E402
-from recon import classify, dnsd, pcapreader, sinkd, tlssink  # noqa: E402
+from recon import classify, dnsd, eaproto, pcapreader, sinkd, tlssink  # noqa: E402
 
 
 # --------------------------------------------------------------------------
@@ -770,6 +770,93 @@ class TlsVerdictTests(unittest.TestCase):
             tlssink.parse_client_hello(client_hello(sni="a.b.com")))
         self.assertIn("a.b.com", text)
         self.assertIn("TLS version", text)
+
+
+#: The exact opening message Madden NFL 2004 (PS2) sent to ps2madden04.ea.com
+#: on TCP/10000, captured 2026-07-30. Real wire bytes, not a construction.
+MADDEN_DIR_REQUEST = bytes.fromhex(
+    "40646972000000000000005750524f443d4d414444454e2d5053322d323030340a"
+    "564552533d225053322f4d53352d4a756e2031372032303033220a4c414e473d65"
+    "6e0a534c55533d4241534c55532d32303735320a00")
+
+
+class EaFramingTests(unittest.TestCase):
+    """Framing decoded from the live capture; the reply format is not covered
+    here because it is not yet known."""
+
+    def test_the_captured_message_decodes(self):
+        msg = eaproto.decode(MADDEN_DIR_REQUEST)
+        self.assertEqual(msg.type, "@dir")
+        self.assertEqual(msg.txn, 0)
+        self.assertEqual(msg.fields["PROD"], "MADDEN-PS2-2004")
+        self.assertEqual(msg.fields["SLUS"], "BASLUS-20752")
+        self.assertEqual(msg.fields["LANG"], "en")
+
+    def test_declared_length_counts_the_header(self):
+        # 87 total = 12 header + 75 payload; a reader that forgets the header
+        # desynchronises on the very next message.
+        self.assertEqual(len(MADDEN_DIR_REQUEST), 87)
+        declared = struct.unpack_from(">I", MADDEN_DIR_REQUEST, 8)[0]
+        self.assertEqual(declared, 87)
+
+    def test_quoted_value_loses_its_quotes(self):
+        msg = eaproto.decode(MADDEN_DIR_REQUEST)
+        self.assertEqual(msg.fields["VERS"], "PS2/MS5-Jun 17 2003")
+        self.assertNotIn('"', msg.fields["VERS"])
+
+    def test_round_trip_reproduces_the_exact_length(self):
+        msg = eaproto.decode(MADDEN_DIR_REQUEST)
+        again = eaproto.encode(msg.type, msg.txn, msg.fields)
+        self.assertEqual(len(again), len(MADDEN_DIR_REQUEST))
+        self.assertEqual(eaproto.decode(again).fields, msg.fields)
+
+    def test_encode_computes_length_rather_than_trusting_a_caller(self):
+        blob = eaproto.encode("@dir", 7, {"A": "b"})
+        self.assertEqual(struct.unpack_from(">I", blob, 8)[0], len(blob))
+        self.assertEqual(struct.unpack_from(">I", blob, 4)[0], 7)
+
+    def test_type_must_be_four_characters(self):
+        for bad in ("dir", "@direct", ""):
+            with self.assertRaises(eaproto.EaProtocolError):
+                eaproto.encode(bad, 0, {})
+
+    def test_short_and_lying_lengths_are_refused(self):
+        with self.assertRaises(eaproto.EaProtocolError):
+            eaproto.decode(b"@dir\x00\x00")                       # truncated
+        lying = b"@dir" + struct.pack(">II", 0, 9999) + b"X"
+        with self.assertRaises(eaproto.EaProtocolError):
+            eaproto.decode(lying)                                  # length > data
+        tiny = b"@dir" + struct.pack(">II", 0, 4)
+        with self.assertRaises(eaproto.EaProtocolError):
+            eaproto.decode(tiny)                                   # length < header
+
+    def test_stream_splitting_keeps_a_partial_trailer(self):
+        """TCP does not preserve boundaries; a half-arrived message must be
+        held for the next read, not dropped."""
+        two = MADDEN_DIR_REQUEST + MADDEN_DIR_REQUEST
+        msgs, rest = eaproto.split_stream(two)
+        self.assertEqual(len(msgs), 2)
+        self.assertEqual(rest, b"")
+        msgs, rest = eaproto.split_stream(two + MADDEN_DIR_REQUEST[:20])
+        self.assertEqual(len(msgs), 2)
+        self.assertEqual(len(rest), 20)
+
+    def test_empty_buffer_is_not_an_error(self):
+        self.assertEqual(eaproto.split_stream(b""), ([], b""))
+
+    def test_directory_reply_is_well_formed_and_echoes_the_txn(self):
+        request = eaproto.decode(MADDEN_DIR_REQUEST)
+        reply = eaproto.directory_reply(request, "10.0.0.5", 10001)
+        decoded = eaproto.decode(reply)
+        self.assertEqual(decoded.type, "@dir")
+        self.assertEqual(decoded.txn, request.txn)
+        self.assertEqual(decoded.fields["ADDR"], "10.0.0.5")
+        self.assertEqual(decoded.fields["PORT"], "10001")
+
+    def test_value_with_spaces_is_quoted_on_the_way_out(self):
+        blob = eaproto.encode("@dir", 0, {"VERS": "PS2/MS5-Jun 17 2003"})
+        self.assertIn(b'"PS2/MS5-Jun 17 2003"', blob)
+        self.assertEqual(eaproto.decode(blob).fields["VERS"], "PS2/MS5-Jun 17 2003")
 
 
 if __name__ == "__main__":

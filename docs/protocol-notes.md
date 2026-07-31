@@ -242,6 +242,56 @@ serving DNAS ever becomes necessary.
 
 ---
 
+## EA's game protocol, captured (2026-07-30)
+
+With DNAS bypassed, Madden connects to `ps2madden04.ea.com` **TCP/10000** and
+sends this as its opening message — the first time this project has seen the
+protocol it exists to reconstruct:
+
+```
+40 64 69 72  00 00 00 00  00 00 00 57
+"@dir"        txn = 0       length = 87
+
+PROD=MADDEN-PS2-2004
+VERS="PS2/MS5-Jun 17 2003"
+LANG=en
+SLUS=BASLUS-20752
+\0
+```
+
+### Framing (established from the wire)
+
+| Offset | Size | Meaning |
+|---|---|---|
+| 0 | 4 | message type, four ASCII bytes |
+| 4 | 4 | transaction id, big-endian; 0 on the opening message |
+| 8 | 4 | length, big-endian, **counting the header** |
+| 12 | .. | `KEY=VALUE` lines, `\n` separated, NUL-terminated |
+
+87 = 12 + 75, verified byte-exact against the capture. A reader that forgets
+the header is included in the length desynchronises on the next message.
+Values are quoted only when they contain spaces (`VERS`), and the quotes are
+not part of the value.
+
+This is EA's **FESL-family** framing, which the static analysis predicted from
+`Dirtysock` plus the four-character token vocabulary (`AUTH`, `CHAT`, `GAME`,
+`ROOM`, `USER`) found in `SLUS_207.52`. `@dir` is a **directory lookup**: the
+client asking where to go next, which is why it is the first thing sent and why
+nothing else follows until it is answered.
+
+`recon/eaproto.py` implements the codec; it round-trips the captured message to
+exactly 87 bytes. `split_stream` keeps a partial trailer, because TCP does not
+preserve message boundaries.
+
+### What is NOT known
+
+**The reply format.** No server answered, so the keys a `@dir` response must
+carry are unobserved. `directory_reply()` is a hypothesis built from the shape
+of the request, and the only test of it is whether the client connects where it
+is sent. Expect to iterate on the field names.
+
+---
+
 ## Slice decision log
 
 Record here, once recon is in, which title+platform becomes the first
