@@ -132,6 +132,13 @@ def disassemble(word: int, vaddr: int = 0) -> str:
         if name in ("mfhi", "mflo"):
             return "%s %s" % (name, _REGS[rd])
         if name in ("mult", "multu", "div", "divu"):
+            # The R5900 adds a three-operand form: as well as HI/LO it writes
+            # the low result to rd. Printing only rs and rt hides that write and
+            # makes an ordinary multiply look like it discards its result --
+            # which reads as a loop that sums digits rather than building a
+            # number. Show rd whenever it is not zero.
+            if rd:
+                return "%s %s, %s, %s" % (name, _REGS[rd], _REGS[rs], _REGS[rt])
             return "%s %s, %s" % (name, _REGS[rs], _REGS[rt])
         if name in ("movz", "movn"):
             # Conditional: rd is written only when rt is zero / non-zero.
