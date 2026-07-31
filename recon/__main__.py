@@ -121,6 +121,19 @@ def _cmd_tls(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ea(args: argparse.Namespace) -> int:
+    from . import easerver
+
+    try:
+        easerver.serve(bind=args.bind, port=args.port, reply_file=args.replies,
+                       transcript_path=args.out, redirect_host=args.redirect_host,
+                       redirect_port=args.redirect_port)
+    except easerver.EaServerError as exc:
+        print("error: %s" % exc, file=sys.stderr)
+        return 1
+    return 0
+
+
 def _cmd_classify(args: argparse.Namespace) -> int:
     from . import classify
 
@@ -202,6 +215,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_tls.add_argument("--key", help="private key PEM (generated if absent)")
     p_tls.add_argument("--out", help="JSONL transcript path")
     p_tls.set_defaults(func=_cmd_tls)
+
+    p_ea = sub.add_parser("ea", help="serve the EA game protocol and answer it")
+    p_ea.add_argument("--bind", default="0.0.0.0")
+    p_ea.add_argument("--port", type=_port, default=10000)
+    p_ea.add_argument("--replies", help="JSON file of per-message-type reply fields")
+    p_ea.add_argument("--out", help="JSONL transcript path")
+    p_ea.add_argument("--redirect-host", help="host to send the client to (@dir)")
+    p_ea.add_argument("--redirect-port", type=_port, default=10001)
+    p_ea.set_defaults(func=_cmd_ea)
 
     p_cls = sub.add_parser("classify", help="fingerprint a capture")
     p_cls.add_argument("path", help="a .pcap, or a sink transcript with --transcript")

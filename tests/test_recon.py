@@ -23,7 +23,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from recon import __main__ as recon_cli  # noqa: E402
-from recon import classify, dnsd, eaproto, pcapreader, sinkd, tlssink  # noqa: E402
+from recon import classify, dnsd, eaproto, easerver, pcapreader, sinkd, tlssink  # noqa: E402
 
 
 # --------------------------------------------------------------------------
@@ -857,6 +857,65 @@ class EaFramingTests(unittest.TestCase):
         blob = eaproto.encode("@dir", 0, {"VERS": "PS2/MS5-Jun 17 2003"})
         self.assertIn(b'"PS2/MS5-Jun 17 2003"', blob)
         self.assertEqual(eaproto.decode(blob).fields["VERS"], "PS2/MS5-Jun 17 2003")
+
+
+class EaServerTests(unittest.TestCase):
+    def _reply_file(self, obj):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump(obj, handle)
+        handle.close()
+        return handle.name
+
+    def test_replies_load_from_json(self):
+        path = self._reply_file({"@dir": {"ADDR": "10.0.0.5", "PORT": "10001"}})
+        try:
+            table = easerver.load_replies(path)
+            self.assertEqual(table["@dir"]["ADDR"], "10.0.0.5")
+        finally:
+            os.unlink(path)
+
+    def test_a_bad_message_type_key_is_rejected_at_load(self):
+        """Better to fail on startup than to silently never answer."""
+        path = self._reply_file({"dir": {"A": "b"}})
+        try:
+            with self.assertRaises(easerver.EaServerError):
+                easerver.load_replies(path)
+        finally:
+            os.unlink(path)
+
+    def test_malformed_json_names_the_file(self):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        handle.write("{not json")
+        handle.close()
+        try:
+            with self.assertRaises(easerver.EaServerError) as caught:
+                easerver.load_replies(handle.name)
+            self.assertIn("valid JSON", str(caught.exception))
+        finally:
+            os.unlink(handle.name)
+
+    def test_no_reply_file_means_no_table(self):
+        self.assertEqual(easerver.load_replies(None), {})
+
+    def test_configured_reply_wins_and_echoes_the_txn(self):
+        request = eaproto.decode(MADDEN_DIR_REQUEST)._replace(txn=42)
+        table = {"@dir": {"ADDR": "1.2.3.4", "PORT": "999"}}
+        blob = easerver._reply_for(request, table, "unused", 0)
+        decoded = eaproto.decode(blob)
+        self.assertEqual(decoded.txn, 42)
+        self.assertEqual(decoded.fields["ADDR"], "1.2.3.4")
+
+    def test_unknown_type_gets_no_reply(self):
+        """Silence is data: it distinguishes a message that needs an answer
+        from one the client moves past regardless."""
+        msg = eaproto.decode(eaproto.encode("@zzz", 1, {"X": "y"}))
+        self.assertIsNone(easerver._reply_for(msg, {}, "1.2.3.4", 10001))
+
+    def test_dir_falls_back_to_the_builtin_guess(self):
+        request = eaproto.decode(MADDEN_DIR_REQUEST)
+        blob = easerver._reply_for(request, {}, "9.9.9.9", 10001)
+        self.assertIsNotNone(blob)
+        self.assertEqual(eaproto.decode(blob).fields["ADDR"], "9.9.9.9")
 
 
 if __name__ == "__main__":
