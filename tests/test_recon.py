@@ -726,6 +726,29 @@ class Sslv2HelloTests(unittest.TestCase):
         self.assertFalse(info.get("is_sslv2_hello"))
 
 
+class CertificateTests(unittest.TestCase):
+    def test_unreadable_pair_is_explained_not_a_bare_permission_error(self):
+        """Regression: a root-owned pair from an earlier sudo run crashed the
+        sinkhole with PermissionError and no indication of the cause."""
+        import stat
+        work = tempfile.mkdtemp()
+        cert = os.path.join(work, "c.pem")
+        key = os.path.join(work, "k.pem")
+        for path in (cert, key):
+            with open(path, "w") as handle:
+                handle.write("x")
+        os.chmod(key, 0)
+        try:
+            if os.access(key, os.R_OK):      # running as root: guard cannot fire
+                self.skipTest("cannot make a file unreadable as this user")
+            with self.assertRaises(tlssink.TlsSinkError) as caught:
+                tlssink.ensure_certificate(cert, key)
+            self.assertIn("rm -f", str(caught.exception))
+        finally:
+            os.chmod(key, stat.S_IRUSR | stat.S_IWUSR)
+            os.unlink(cert); os.unlink(key); os.rmdir(work)
+
+
 class TlsVerdictTests(unittest.TestCase):
     def test_no_connections_says_so(self):
         self.assertIn("no connections", tlssink.format_summary([]))

@@ -56,6 +56,17 @@ def ensure_certificate(cert_path: str, key_path: str,
     enough to learn whether the client cares.
     """
     if os.path.exists(cert_path) and os.path.exists(key_path):
+        # A pair left behind by an earlier `sudo` run is root-owned, and the
+        # key is mode 600, so an unprivileged run cannot read it. That surfaced
+        # as a bare PermissionError from load_cert_chain with no hint at the
+        # cause; say what to delete instead.
+        unreadable = [path for path in (cert_path, key_path)
+                      if not os.access(path, os.R_OK)]
+        if unreadable:
+            raise TlsSinkError(
+                "cannot read %s -- most likely left root-owned by an earlier "
+                "sudo run. Delete the pair and it will be regenerated: "
+                "rm -f %s %s" % (", ".join(unreadable), cert_path, key_path))
         return cert_path, key_path
     if not os.path.isdir(os.path.dirname(cert_path) or "."):
         os.makedirs(os.path.dirname(cert_path), exist_ok=True)

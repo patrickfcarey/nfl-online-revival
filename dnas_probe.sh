@@ -9,15 +9,10 @@
 # resolve the auth gateway, so it never opens a connection to terminate. A run
 # where every emulog line reads "DNS: Answer Count 0" is this mistake.
 #
-# Answers the one question that picks the route:
-#   handshake accepted -> the client does not validate our certificate, so a
-#                         substitute DNAS endpoint can be served.
-#   handshake refused  -> the client pins/validates, so patching its own check
-#                         is the way in.
-#
 # Ports 53 and 443 are both privileged; one capability grant covers both:
 #     sudo setcap cap_net_bind_service=+ep "$(readlink -f $(command -v python3))"
-# or run this under sudo.
+# or run this under sudo. Prefer the capability: run unprivileged and any
+# stray process is yours to kill without sudo.
 #
 # Launches no emulator. Run the headset check yourself before booting:
 #   pgrep -x pcsx2-qt; pgrep -x mupen64plus; pgrep -f "qemu-system-i38[6]"
@@ -43,48 +38,46 @@ TLSLOG="captures/${LABEL}-${STAMP}-tls.log"
 TLSJSON="captures/${LABEL}-${STAMP}-tls.jsonl"
 DNSLOG="captures/${LABEL}-${STAMP}-dns.log"
 
-# Check BOTH privileged ports up front: failing halfway costs a whole session.
-if [ "$(id -u)" -ne 0 ]; then
-    for p in 53 443; do
-        if ! "$PYTHON" - "$p" <<'PROBE' 2>/dev/null
-import socket, sys
-port = int(sys.argv[1])
-for family, kind in ((socket.AF_INET, socket.SOCK_DGRAM),
-                     (socket.AF_INET, socket.SOCK_STREAM)):
-    s = socket.socket(family, kind)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        s.bind(("0.0.0.0", port))
-    except OSError:
-        sys.exit(1)
-    finally:
-        s.close()
-PROBE
-        then
-            echo "!! Cannot bind port $p as this user. Both 53 (DNS) and 443 (TLS)"
-            echo "!! are needed. Fix with ONE of:"
-            echo "     sudo setcap cap_net_bind_service=+ep \"\$(readlink -f \$(command -v $PYTHON))\""
-            echo "     sudo $0 $RIG_IP $LABEL"
-            exit 1
-        fi
-    done
-fi
-
-# A previous run that did not die still owns the port, and the error ("errno 98,
-# address already in use") does not say who. Name the squatter up front.
+# Both ports are checked by actually binding them. Reading `ss` output and
+# matching on the port number cannot tell a conflicting listener from a
+# harmless one: systemd-resolved sits on 127.0.0.53:53 and 127.0.0.54:53 on
+# every modern Ubuntu, and neither prevents binding 0.0.0.0:53. A name-based
+# check refuses to start for no reason, which is exactly what it did.
+# ss is still used -- but only to explain a failure the bind already proved.
 for spec in "udp:53" "tcp:443"; do
     proto="${spec%%:*}"; port="${spec##*:}"
-    holder=$(ss -H "-${proto:0:1}lpn" 2>/dev/null | grep -E "[:.]${port} " | head -1)
-    if [ -n "$holder" ]; then
-        pid=$(printf '%s' "$holder" | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
-        echo "!! ${proto}/${port} is already in use$( [ -n "$pid" ] && echo " by pid $pid" )."
-        printf '%s\n' "   $holder"
-        if [ -n "$pid" ]; then
-            owner=$(ps -o user= -p "$pid" 2>/dev/null | tr -d ' ')
-            echo "   Clear it with:  ${owner:+sudo }kill $pid"
-        fi
-        echo "!! Tip: with cap_net_bind_service granted to python3 you do NOT need"
-        echo "!! sudo here, and an orphan would then be yours to kill without it."
+    reason=$("$PYTHON" - "$proto" "$port" <<'BINDTEST'
+import errno, socket, sys
+proto, port = sys.argv[1], int(sys.argv[2])
+kind = socket.SOCK_DGRAM if proto == "udp" else socket.SOCK_STREAM
+sock = socket.socket(socket.AF_INET, kind)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    sock.bind(("0.0.0.0", port))
+except OSError as exc:
+    print("EACCES" if exc.errno == errno.EACCES else
+          "EADDRINUSE" if exc.errno == errno.EADDRINUSE else str(exc))
+    sys.exit(1)
+finally:
+    sock.close()
+BINDTEST
+)
+    if [ -n "$reason" ]; then
+        echo "!! cannot bind ${proto}/${port}: $reason"
+        case "$reason" in
+            EACCES)
+                echo "   Ports below 1024 need privilege. Grant it once:"
+                echo "     sudo setcap cap_net_bind_service=+ep \"\$(readlink -f \$(command -v $PYTHON))\""
+                echo "   or run: sudo $0 $RIG_IP $LABEL"
+                ;;
+            EADDRINUSE)
+                echo "   Something already holds it:"
+                ss -H "-${proto:0:1}lpn" 2>/dev/null \
+                    | grep -E "(0\.0\.0\.0|\*):${port} " | sed 's/^/     /'
+                echo "   Usually a previous run of this script. Find and clear it:"
+                echo "     pgrep -af 'recon (dns|tls)'"
+                ;;
+        esac
         exit 1
     fi
 done
@@ -96,8 +89,8 @@ echo "   tls log  -> $TLSLOG"
 echo "   tls json -> $TLSJSON"
 echo "=============================================================="
 
-# TLS sinkhole in the background; its output is tailed so events interleave
-# with the DNS log and you can watch the handshake happen.
+# TLS sinkhole in the background; its output is tailed so handshake events
+# interleave with the live DNS log.
 "$PYTHON" -u -m recon tls --port 443 --out "$TLSJSON" > "$TLSLOG" 2>&1 &
 TLS_PID=$!
 sleep 1
@@ -111,15 +104,14 @@ tail -f "$TLSLOG" & TAIL_PID=$!
 cleanup() {
     echo
     echo "[probe] stopping the TLS sinkhole"
-    # NOT -INT: a shell starts background jobs with SIGINT ignored, so the
-    # signal is dropped and the listener survives to squat the port.
+    # NOT -INT: a shell starts background jobs with SIGINT ignored, so that
+    # signal is dropped and the listener survives to squat the port next time.
     kill -TERM "$TLS_PID" 2>/dev/null
-    # Give it a moment to print its verdict before the tail is cut.
     for _ in 1 2 3 4 5 6 7 8 9 10; do
         kill -0 "$TLS_PID" 2>/dev/null || break
         sleep 0.3
     done
-    kill -KILL "$TLS_PID" 2>/dev/null   # last resort; the port must be free
+    kill -KILL "$TLS_PID" 2>/dev/null   # last resort; the port must come free
     kill "$TAIL_PID" 2>/dev/null
     wait "$TLS_PID" 2>/dev/null
     echo
@@ -128,9 +120,9 @@ cleanup() {
     echo "=============================================================="
     sed -n '/TLS SINKHOLE RESULT/,$p' "$TLSLOG" 2>/dev/null \
         || echo " (nothing recorded -- see $TLSLOG)"
-    if ! grep -q "connection" "$TLSLOG" 2>/dev/null; then
+    if ! grep -q "connected on" "$TLSLOG" 2>/dev/null; then
         echo
-        echo " If no connections arrived, check the DNS log above: the title must"
+        echo " No connection arrived. Read the DNS log first: the title has to"
         echo " resolve the gateway before it can open a TLS connection at all."
     fi
     echo
@@ -144,6 +136,6 @@ echo ">>> Boot the game and go to online. Watch for 'Authenticating DNAS data'."
 echo ">>> Press Ctrl-C here when it finishes or errors."
 echo
 
-# DNS responder in the foreground: its Ctrl-C ends the session, and its live log
-# is the immediate proof that the console is talking to us at all.
+# DNS responder in the foreground: its Ctrl-C ends the session, and its live
+# log is the immediate proof the console is talking to us at all.
 "$PYTHON" -m recon dns --ip "$RIG_IP" --port 53 --out "$DNSLOG"
