@@ -989,13 +989,21 @@ class TwoClientLobbyTests(unittest.TestCase):
         threading.Thread(target=self.service.serve_forever,
                          args=("127.0.0.1", [self.first, self.second]),
                          daemon=True).start()
+        # Wait for EVERY port, not just the first. The service binds them in
+        # order, so checking only `first` can succeed while `second` -- the one
+        # the tests actually connect to -- is still closed. That raced about one
+        # run in three.
         deadline = time.time() + 5
-        while time.time() < deadline:
-            try:
-                socket.create_connection(("127.0.0.1", self.first), 1).close()
-                break
-            except OSError:
-                time.sleep(0.05)
+        for port in (self.first, self.second):
+            while True:
+                try:
+                    socket.create_connection(("127.0.0.1", port), 1).close()
+                    break
+                except OSError:
+                    if time.time() > deadline:
+                        raise AssertionError(
+                            "service never began listening on port %d" % port)
+                    time.sleep(0.05)
 
     def tearDown(self):
         self.service.stop()
