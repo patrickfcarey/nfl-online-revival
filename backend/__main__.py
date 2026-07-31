@@ -45,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--transcript", help="JSONL of every exchange")
     parser.add_argument("--buddy-port", type=int,
                         help="also run the buddy/presence stub on this port")
+    parser.add_argument("--roster-date",
+                        help="roster version handed to the client in `news`; "
+                             "omitted by default, which leaves it at zero")
+    parser.add_argument("--roster-csum",
+                        help="roster checksum, as above")
     parser.add_argument("--quiet", action="store_true")
     return parser
 
@@ -76,7 +81,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         "advertise_host": args.advertise_host,
         "advertise_port": str(args.advertise_port),
         "mask": "GS",
+        # Told to the client in `news`; it hands both to its buddy manager.
+        "buddy_host": args.advertise_host,
+        "buddy_port": args.buddy_port or 0,
     }
+    if args.roster_date:
+        config["roster_date"] = args.roster_date
+    if args.roster_csum:
+        config["roster_csum"] = args.roster_csum
     transcript = Transcript(args.transcript)
     buddy_service = None
     if args.buddy_port:

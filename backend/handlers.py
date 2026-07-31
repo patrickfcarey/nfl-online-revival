@@ -88,6 +88,8 @@ class Session:
         #: Stable id for this occupant in other clients' user lists. Assigned
         #: on connect; ids must be positive or the client discards the record.
         self.user_id: int = 0
+        #: Favourite team, from `cusr` SETFAV. Session-only for now.
+        self.favourite: str = ""
 
     @property
     def authenticated(self) -> bool:
@@ -633,3 +635,55 @@ def start_match(hub, host_conn, guest_conn, seed: Optional[int] = None) -> bool:
         if not hub.push(conn, blob):
             return False
     return True
+
+
+# --------------------------------------------------------------------------
+# service news -- the message that also carries the buddy address
+# --------------------------------------------------------------------------
+
+@handles("news")
+def service_news(ctx: Context) -> List[bytes]:
+    """Answer the client's news fetch, and hand it the service configuration.
+
+    This reply is doing two jobs. The visible one is news, which the client
+    shows while saying "checking for news...". The load-bearing one is that its
+    parser (0x0034ef10) reads the whole service config out of the same message:
+    ``BUDDY_URL`` and ``BUDDY_PORT`` at 0x0034ef44/0x0034ef6c, which it hands
+    straight to the buddy manager, and then ``DATE`` and ``CSUM``.
+
+    Leaving this unanswered is what made the client sit on "logging into
+    server": it had asked and was waiting.
+
+    ``DATE`` and ``CSUM`` are the roster version. Their consumers
+    (0x00350970 and 0x0012a988) are plain setters -- they only record what we
+    say -- so the comparison against the console's own roster happens
+    elsewhere, and we cannot know the right values from here. They are
+    therefore configurable and omitted by default, which leaves the client's
+    stored values at zero.
+    """
+    fields = {
+        "NAME": ctx.message.get("NAME", "0"),
+        "BUDDY_URL": ctx.config.get("buddy_host", ctx.config["advertise_host"]),
+        "BUDDY_PORT": str(ctx.config.get("buddy_port", 0)),
+    }
+    roster_date = ctx.config.get("roster_date")
+    roster_csum = ctx.config.get("roster_csum")
+    if roster_date:
+        fields["DATE"] = str(roster_date)
+    if roster_csum:
+        fields["CSUM"] = str(roster_csum)
+    return [protocol.encode("news", protocol.OK, fields)]
+
+
+@handles("cusr")
+def change_user(ctx: Context) -> List[bytes]:
+    """Persona preferences -- currently a favourite team (``SETFAV``).
+
+    Acknowledged and stored on the session. There is nowhere in the schema for
+    it yet, and inventing a column before the leaderboard work says what shape
+    that data takes would be guessing.
+    """
+    favourite = ctx.message.get("SETFAV")
+    if favourite:
+        ctx.session.favourite = favourite
+    return ctx.reply()

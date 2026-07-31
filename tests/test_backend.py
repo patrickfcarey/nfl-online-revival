@@ -1064,5 +1064,116 @@ class TwoClientLobbyTests(unittest.TestCase):
             a.close(); b.close()
 
 
+class NewsTests(unittest.TestCase):
+    """The news reply also carries the service configuration -- leaving it
+    unanswered is what made a real client sit on "logging into server"."""
+
+    def setUp(self):
+        self.store, self.path = make_store()
+        self.config = dict(CONFIG, buddy_host="192.168.68.85", buddy_port=10002)
+
+    def tearDown(self):
+        self.store.close(); os.unlink(self.path)
+
+    def _news(self, name="0", **extra):
+        cfg = dict(self.config, **extra)
+        msg = protocol.decode(protocol.encode("news", 0, {"NAME": name}))
+        blobs = handlers.dispatch(
+            Context(msg, open_session(), self.store, cfg))
+        return [protocol.decode(b) for b in blobs]
+
+    def test_news_is_answered_at_all(self):
+        replies = self._news()
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(replies[0].type, "news")
+        self.assertTrue(replies[0].ok)
+
+    def test_it_carries_the_buddy_address(self):
+        fields = self._news()[0].fields
+        self.assertEqual(fields["BUDDY_URL"], "192.168.68.85")
+        self.assertEqual(fields["BUDDY_PORT"], "10002")
+
+    def test_the_requested_index_is_echoed(self):
+        self.assertEqual(self._news("2")[0].fields["NAME"], "2")
+
+    def test_the_roster_version_is_omitted_unless_configured(self):
+        """Their consumers are plain setters, so we cannot know the console's
+        own values; sending a wrong one is worse than sending none."""
+        fields = self._news()[0].fields
+        self.assertNotIn("DATE", fields)
+        self.assertNotIn("CSUM", fields)
+
+    def test_the_roster_version_is_sent_when_configured(self):
+        fields = self._news(roster_date="20040817", roster_csum="12345")[0].fields
+        self.assertEqual(fields["DATE"], "20040817")
+        self.assertEqual(fields["CSUM"], "12345")
+
+
+class ChangeUserTests(unittest.TestCase):
+    def setUp(self):
+        self.store, self.path = make_store()
+
+    def tearDown(self):
+        self.store.close(); os.unlink(self.path)
+
+    def test_cusr_is_acknowledged_and_remembered(self):
+        session, replies = run(self.store, "cusr",
+                               {"PERS": "Raythatruth", "SETFAV": "32"})
+        self.assertTrue(replies[0].ok)
+        self.assertEqual(replies[0].type, "cusr")
+        self.assertEqual(session.favourite, "32")
+
+
+class ObservedSessionTests(unittest.TestCase):
+    """Replay the exact message sequence a real console produced, and assert
+    every one of them now gets an answer. The two that did not -- cusr and
+    news -- are why the client stalled."""
+
+    SEQUENCE = [
+        ("skey", {"SKEY": "$5075626c6963204b6579"}),
+        ("acct", {"NAME": "Itruckedray", "TOS": "1", "PASS": "$2d41",
+                  "MAIL": "Pa@sa.com", "ALTS": "4", "BORN": "19800319",
+                  "GEND": "M"}),
+        ("auth", {"NAME": "Itruckedray", "TOS": "1", "PASS": "$2d41",
+                  "MID": "$00041f82cf72", "HWFLAG": "4", "HWMASK": "67876",
+                  "PROD": "MADDEN-PS2-2004"}),
+        ("cper", {"PERS": "Raythatruth", "ALTS": "4"}),
+        ("pers", {"PERS": "Raythatruth"}),
+        ("sele", {"ROOMS": "1"}),
+        ("sele", {"RANKS": "50"}),
+        ("cusr", {"PERS": "Raythatruth", "SETFAV": "32"}),
+        ("news", {"NAME": "0"}),
+        ("news", {"NAME": "2"}),
+    ]
+
+    def test_every_message_the_console_sent_now_gets_a_reply(self):
+        store, path = make_store()
+        session = Session("console:1")
+        cfg = dict(CONFIG, buddy_host="192.168.68.85", buddy_port=10002)
+        try:
+            unanswered = []
+            for msg_type, fields in self.SEQUENCE:
+                msg = protocol.decode(protocol.encode(msg_type, 0, fields))
+                replies = handlers.dispatch(Context(msg, session, store, cfg))
+                if not replies:
+                    unanswered.append(msg_type)
+            self.assertEqual(unanswered, [], "still unanswered: %s" % unanswered)
+        finally:
+            store.close(); os.unlink(path)
+
+    def test_the_ping_echo_is_still_answered_with_silence(self):
+        """The console's ~png echoes carry a non-zero status (a latency
+        figure, not an error). They must not draw a reply either way."""
+        store, path = make_store()
+        try:
+            msg = protocol.decode(protocol.encode("~png", 0x11, {}))
+            self.assertFalse(msg.ok)      # non-zero status
+            replies = handlers.dispatch(
+                Context(msg, open_session(), store, CONFIG))
+            self.assertEqual(replies, [])
+        finally:
+            store.close(); os.unlink(path)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
