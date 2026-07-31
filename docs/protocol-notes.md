@@ -113,7 +113,7 @@ extracted, `strings` run per file rather than over the whole 4 GB image.
 | Server hostname is **stored literally** | `ps2madden04.ea.com` in `SLUS_207.52` |
 | DNAS module ships as a disc file | `/DNAS270.IMG` (251 KB) |
 | Protocol vocabulary (4-char tokens, FESL family) | `AUTH`, `CHAT`, `DISC`, `GAME`, `GAMEID`, `PING`, `ROOM`, `STAT`, `STATE`, `STATUS`, `USER`, `USERNAME` |
-| Other EA host seen | `demangler01.pogo.com` (NAT/connection assist) |
+| ~~Other EA host seen~~ | ~~`demangler01.pogo.com`~~ — **retracted 2026-07-31.** Not present in `SLUS_207.52`, `NTGUI.ELF`, `ONLINE.DAT` or 2K5's ELF; `demangler`, `pogo`, `NetGame`, `CommUDP` and `ProtoMangle` all return zero hits. Do not build a NAT-traversal theory on it. |
 
 `ROOM` + `GAME` + `USER` is a room-based lobby model, and four-character
 uppercase tokens are the shape of EA's FESL-family protocols. That matters:
@@ -284,7 +284,7 @@ SLUS=BASLUS-20752
 | Offset | Size | Meaning |
 |---|---|---|
 | 0 | 4 | message type, four ASCII bytes |
-| 4 | 4 | transaction id, big-endian; 0 on the opening message |
+| 4 | 4 | **status / error tag**, four ASCII bytes; 0 means success |
 | 8 | 4 | length, big-endian, **counting the header** |
 | 12 | .. | `KEY=VALUE` lines, `\n` separated, NUL-terminated |
 
@@ -368,10 +368,29 @@ computes `strlen(payload) + 1 + 12`, confirming the framing independently.
 `0x005f60d8` — `"*dir*usrstrtgame"` — used as the value of key `FILT` on a
 `#sea` subscription.
 
-**Replies reuse the request's type *and* transaction id.** Proven at the `~png`
-handler (`0x00448ca4`), which calls the send function with `a1 = received type`
-and `a2 = received txid`. That is why `@dir` is answered with `@dir`, and it
-generalises: our server should echo both on every reply.
+**The second header word is a status tag, not a transaction id.**
+
+This was recorded as a transaction id for a long while, on the strength of the
+`~png` handler (`0x00448ca4`) passing `a1 = received type` and `a2 = received
+word` back to the send function. It looked like an echoed correlator, and it was
+zero in every captured exchange — because every captured exchange succeeded.
+
+It is a **four-character status tag, 0 for success**. Settled at `0x004e1e68`,
+where the challenge reply callback loads word 2 and aborts on any non-zero
+value, and at `0x004e1e00`, which compares that same word against the literals
+`uusr` and `ingm`. Those are error names, not identifiers.
+
+So replies echo the request's *type*, and set word 2 to 0 or to an error tag.
+There is no correlator in the header at all — requests are matched to replies
+positionally, against the head of a pending queue (`0x00446ce0`).
+
+**That queue is why every request must be answered.** Nothing pops the head on a
+timeout, so one unanswered message blocks every later reply on that connection.
+A verb we simply do not handle is not a cosmetic gap; it wedges the session.
+
+**Replies use the request's type.** `@dir` is answered with `@dir`. The one
+documented exception is `news`, whose reply is tagged `new0`/`new1`/`new2`
+according to its `NAME` parameter — see `docs/roster-checksum.md`.
 
 ### Error vocabulary
 

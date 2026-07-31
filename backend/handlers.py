@@ -23,7 +23,7 @@ import sqlite3
 import time
 from typing import Callable, Dict, List, Optional
 
-from . import lobby, protocol
+from . import lobby, matchmaking, protocol
 from .protocol import Message, ProtocolError
 from .store import MAX_PERSONA_LEN, MAX_PERSONAS, Store
 
@@ -90,10 +90,27 @@ class Session:
         self.user_id: int = 0
         #: Favourite team, from `cusr` SETFAV. Session-only for now.
         self.favourite: str = ""
+        #: A pairing waiting to be announced once this session's reply has
+        #: gone out. The +ses push must never precede the reply that the
+        #: client is still inside.
+        self.pending_pair = None
 
     @property
     def authenticated(self) -> bool:
         return self.account is not None
+
+    @property
+    def observed_addr(self) -> str:
+        """The address we actually see this client connecting from.
+
+        Deliberately not ``client_addr``. That is what the console *reports*
+        in its ``addr`` message, sampled from the pre-redirect socket, and it is
+        the console's own local address -- under PCSX2 in Sockets mode every
+        guest is 192.0.2.100. Putting it in a ``+ses`` makes each console dial
+        itself. What the peer needs is the address we observed on the TCP
+        connection.
+        """
+        return self.peer.rsplit(":", 1)[0] if ":" in self.peer else self.peer
 
     def describe(self) -> str:
         who = self.account or "-"
@@ -484,8 +501,32 @@ def move_room(ctx: Context) -> List[bytes]:
     being left, IDENT/COUNT/NAME the one being entered.
     """
     session = ctx.session
+
+    def refuse(tag: str) -> List[bytes]:
+        """Fail a move WITHOUT destroying the client's lobby.
+
+        A bare error reply is not safe here. The client's status gate
+        (0x0044a2ac) only skips the LIDENT/LCOUNT half; the second half is gated
+        on the message *type*, so it reads on regardless, takes IDENT's default
+        of 0 (0x0044a32c), adopts that as its current room, and then drains its
+        whole user list at 0x0044a3d8. A wrong password would blank the lobby
+        while we still believed the player was where they were.
+
+        Echoing the session's current room makes the `beq s0, v0` at 0x0044a35c
+        match, so the client sees no change and keeps its list.
+        """
+        room = session.room
+        return [protocol.encode("move", tag, {
+            "LIDENT": str(session.room_id or -1),
+            "LCOUNT": str(_occupancy(ctx, room) if room else 0),
+            "IDENT": str(session.room_id or -1),
+            "COUNT": str(_occupancy(ctx, room) if room else 0),
+            "NAME": room or "",
+            "FLAGS": "",
+        })]
+
     if not session.authenticated:
-        return ctx.fail(ERR_MISSING)
+        return refuse(ERR_MISSING)
 
     target = ctx.message.get("NAME").strip()
     previous = session.room
@@ -495,7 +536,8 @@ def move_room(ctx: Context) -> List[bytes]:
     if not target:                                   # leaving
         session.room, session.room_id = None, 0
         if previous:
-            _announce(ctx, previous, lobby.user_removal(session.user_id))
+            _announce(ctx, previous, lobby.user_removal(
+                session.user_id, _occupancy(ctx, previous)))
         return [protocol.encode("move", protocol.OK, {
             "LIDENT": str(previous_id or -1),
             "LCOUNT": str(previous_count),
@@ -507,15 +549,18 @@ def move_room(ctx: Context) -> List[bytes]:
 
     row = ctx.store.room(target)
     if row is None:
-        return ctx.fail(ERR_MISSING)
+        return refuse(ERR_MISSING)
     if row["PASS"] and ctx.message.get("PASS") != row["PASS"]:
-        return ctx.fail(ERR_BAD_PASSWORD)
+        # `pass` is the one tag the client special-cases (0x00356ae4), so it
+        # gets a password prompt rather than a generic failure.
+        return refuse(ERR_BAD_PASSWORD)
     limit = row["MAX"] or 0
     if limit and _occupancy(ctx, target) >= limit:
-        return ctx.fail(ERR_FULL)
+        return refuse(ERR_FULL)
 
     if previous and previous != target:
-        _announce(ctx, previous, lobby.user_removal(session.user_id))
+        _announce(ctx, previous, lobby.user_removal(
+            session.user_id, _occupancy(ctx, previous)))
     session.room, session.room_id = target, row["ID"]
 
     reply = protocol.encode("move", protocol.OK, {
@@ -549,13 +594,176 @@ def after_move(ctx: Context) -> None:
 #: Work that has to run once a reply has been written, keyed by message type.
 #: Ordering is the whole point: these pushes are meaningless until the reply
 #: that establishes the client's new state has arrived.
-AFTER_REPLY = {"move": after_move, "sele": after_subscribe}
+# --------------------------------------------------------------------------
+# matchmaking
+# --------------------------------------------------------------------------
+
+#: Field names, from the client's own builders.
+QUICK_KIND = "KIND"          # 0x0011c4b8, signed decimal
+CHALLENGE_PERSONA = "PERS"   # 0x004e1ee0
+CHALLENGE_HOST = "HOST"      # 0x004e1ee0, "0" or "1"
+
+
+def _matchmaker(ctx: Context):
+    """The server's waiting room, or None when dispatching without a hub."""
+    return getattr(ctx.hub, "matchmaker", None) if ctx.hub else None
+
+
+def _pair(ctx: Context, pairing) -> None:
+    """Introduce two paired connections, if both are still there."""
+    if pairing is None:
+        return
+    host_conn, guest_conn = pairing
+    start_match(ctx.hub, host_conn, guest_conn)
+
+
+@handles("quik")
+def quickmatch(ctx: Context) -> List[bytes]:
+    """Join or leave the quickmatch queue.
+
+    Always replies. An unanswered request sits at the head of the client's
+    pending queue forever and blocks every later reply on the connection, so
+    even the paths with nothing to say answer with an empty body.
+    """
+    if not ctx.session.authenticated:
+        return ctx.fail(ERR_MISSING)
+
+    kind = ctx.message.get(QUICK_KIND).strip()
+    maker = _matchmaker(ctx)
+    if maker is None:
+        return ctx.reply()
+
+    if kind == matchmaking.CANCEL or not kind:
+        maker.withdraw(ctx.connection)
+        return ctx.reply()
+
+    pairing = maker.enqueue(ctx.connection, kind)
+    # The reply goes out before the +ses push: the client is still inside its
+    # request when this returns, and a session record delivered first would be
+    # consumed against a state it has not reached.
+    reply = ctx.reply()
+    if pairing is not None:
+        ctx.session.pending_pair = pairing
+    return reply
+
+
+def after_quickmatch(ctx: Context) -> None:
+    """Push +ses once the quik reply has gone."""
+    pairing = getattr(ctx.session, "pending_pair", None)
+    if pairing is not None:
+        ctx.session.pending_pair = None
+        _pair(ctx, pairing)
+
+
+@handles("chal")
+def challenge(ctx: Context) -> List[bytes]:
+    """A direct challenge against a named persona.
+
+    Both players send this and disagree on ``HOST`` by one bit, which is how
+    the server learns who hosts. The reply must be status 0 and must arrive
+    within 30 seconds (0x004e1e40 aborts on a timeout or any non-zero status).
+    """
+    if not ctx.session.authenticated:
+        return ctx.fail(ERR_MISSING)
+
+    opponent = ctx.message.get(CHALLENGE_PERSONA).strip()
+    me = ctx.session.persona or ctx.session.account or ""
+    maker = _matchmaker(ctx)
+    if maker is None:
+        return ctx.reply()
+
+    if opponent == matchmaking.CANCEL or not opponent:
+        maker.cancel_challenge(me)
+        return ctx.reply()
+
+    hosts = ctx.message.get(CHALLENGE_HOST, "0") not in ("", "0")
+    maker.offer(me, ctx.connection, hosts)
+    pairing = maker.resolve(me, opponent)
+    reply = ctx.reply()
+    if pairing is not None:
+        ctx.session.pending_pair = pairing
+    return reply
+
+
+# --------------------------------------------------------------------------
+# verbs the client can send that we do not implement yet
+# --------------------------------------------------------------------------
+
+#: Every remaining type from the 27 call sites of the client's request sender
+#: (0x004df3d8). These are acknowledged rather than ignored because an
+#: unanswered request wedges the connection: the reply queue is matched head
+#: first (0x00446ce0) and nothing pops it on a timeout, so one silent verb
+#: blocks every later reply.
+#:
+#: ``onln`` matters most -- it goes through the *modal* path (0x0034f6c8), so
+#: the client blocks on it rather than carrying on.
+UNIMPLEMENTED_VERBS = ("rank", "snap", "peek", "flag", "lost", "edit",
+                       "user", "onln")
+
+
+def _acknowledge(ctx: Context) -> List[bytes]:
+    """Answer with success and an empty body -- the least surprising thing to
+    tell a client whose request we have not implemented."""
+    return ctx.reply()
+
+
+for _verb in UNIMPLEMENTED_VERBS:
+    handles(_verb)(_acknowledge)
+
+
+AFTER_REPLY = {
+    "move": after_move,
+    "sele": after_subscribe,
+    # +ses must follow the quik/chal reply, never precede it.
+    "quik": after_quickmatch,
+    "chal": after_quickmatch,
+}
 
 
 @handles("room")
-def room_status(ctx: Context) -> List[bytes]:
-    """The client asking about the room it is leaving; only the L-half matters."""
+def create_room(ctx: Context) -> List[bytes]:
+    """Create a room. This is **not** a status query.
+
+    The client's send site (0x00119cf0) writes ``NAME=<generated>`` plus
+    ``IGNEXIST=1``, where the name generator at 0x00119cc8 emits ``X``, ``.``
+    and a suffix -- so client-made rooms are ``X.<something>``, the same
+    one-letter-prefix convention as ``Z.Quickmatch``.
+
+    Answering OK without creating anything, as this once did, is worse than
+    failing: the client immediately tries to ``move`` into a room that does not
+    exist, and a failed move used to wipe its lobby.
+
+    ``IGNEXIST`` means "an existing room of this name is not an error", which is
+    what the client relies on when several players pick the same generated name.
+    """
+    if not ctx.session.authenticated:
+        return ctx.fail(ERR_MISSING)
+
+    name = ctx.message.get("NAME").strip()
+    if not name or not _NAME_RE.match(name):
+        return ctx.fail(ERR_BAD_NAME)
+
+    ignore_existing = ctx.message.get("IGNEXIST", "0") not in ("", "0")
+    existing = ctx.store.room(name)
+    if existing is not None and not ignore_existing:
+        return ctx.fail(ERR_DUPLICATE)
+
+    if existing is None:
+        password = ctx.message.get("PASS")
+        try:
+            limit = int(ctx.message.get("MAX", "0")) or 32
+        except ValueError:
+            limit = 32
+        ctx.store.ensure_room(name, desc="", max_users=limit,
+                              password=password)
+        existing = ctx.store.room(name)
+        if existing is None:
+            return ctx.fail(ERR_INTERNAL)
+
     return [protocol.encode("room", protocol.OK, {
+        "IDENT": str(existing["ID"]),
+        "NAME": name,
+        "COUNT": str(_occupancy(ctx, name)),
         "LIDENT": str(ctx.session.room_id or -1),
         "LCOUNT": str(_occupancy(ctx, ctx.session.room) if ctx.session.room else 0),
     })]
@@ -565,42 +773,62 @@ def room_status(ctx: Context) -> List[bytes]:
 # chat
 # --------------------------------------------------------------------------
 
-#: Which type the client sends to speak has NOT been confirmed by disassembly.
-#: Both candidates are registered; an unhandled type is logged by the service,
-#: so the first real session will say which one is right -- and a wrong guess
-#: here costs nothing, because an unregistered type simply gets no reply.
-CHAT_REQUEST_TYPES = ("mesg", "chat")
+#: The client speaks with ``mesg``, proven at its send site 0x0034e6b0. ``chat``
+#: was registered alongside it as a guess and is NOT a real type -- keeping it
+#: would invite someone to build on a verb the client never sends.
+CHAT_REQUEST_TYPE = "mesg"
+
+#: Keys on an outgoing ``mesg``, from the same send site: the body is ``TEXT``
+#: (0x00605f80) and a private recipient is ``PRIV`` (0x00605f88). Reading
+#: ``USER`` -- as this once did -- means no message is ever seen as private, so
+#: every private line is broadcast to the whole room instead.
+CHAT_BODY_KEY = "TEXT"
+CHAT_PRIVATE_KEY = "PRIV"
+
+#: What the client reads back off a ``+msg`` push. The handler (0x00449488)
+#: itself reads only ``F``, which it turns into a message class; the consumer
+#: behind it reads ``N`` (sender, 64 bytes) and ``T`` (text, 256 bytes).
+#: ``PERS``/``USER``/``BODY``/``TYPE``/``TIME`` -- which this used to send --
+#: are read by nothing at all, so chat was invisible.
+MAX_SPEAKER = 63
+MAX_CHAT = 255
+
+#: ``F`` letters, through the same bitmask codec as elsewhere: bit 2 is ``B``
+#: and marks a broadcast, bit 16 is ``P`` and marks a private message.
+CHAT_BROADCAST = "B"
+CHAT_PRIVATE = "P"
 
 
+def _chat_push(speaker: str, text: str, private: bool) -> bytes:
+    """One ``+msg``, in the shape the client actually parses."""
+    return protocol.encode("+msg", protocol.OK, {
+        "N": speaker[:MAX_SPEAKER],
+        "T": text[:MAX_CHAT],
+        "F": CHAT_PRIVATE if private else CHAT_BROADCAST,
+    })
+
+
+@handles(CHAT_REQUEST_TYPE)
 def _say(ctx: Context) -> List[bytes]:
-    """Relay a line of chat to the speaker's room."""
+    """Relay a line of chat to the speaker's room, or to one player."""
     if not ctx.session.authenticated or not ctx.session.room:
         return ctx.fail(ERR_MISSING)
-    body = ctx.message.get("BODY") or ctx.message.get("TEXT")
+    body = ctx.message.get(CHAT_BODY_KEY)
     if not body:
         return ctx.reply()
     speaker = ctx.session.persona or ctx.session.account or "player"
-    private_to = ctx.message.get("USER").strip()
-    push = protocol.encode("+msg", protocol.OK, {
-        "PERS": speaker,
-        "USER": speaker,
-        "BODY": body[:400],
-        "TYPE": "priv" if private_to else "chat",
-        "TIME": str(int(time.time())),
-    })
+    private_to = ctx.message.get(CHAT_PRIVATE_KEY).strip()
+
     if ctx.hub is not None:
         if private_to:
             target = ctx.hub.by_persona(private_to)
             if target is None:
                 return ctx.fail(ERR_MISSING)
-            ctx.hub.push(target, push)
+            ctx.hub.push(target, _chat_push(speaker, body, private=True))
         else:
-            ctx.hub.broadcast([push], room=ctx.session.room)
+            ctx.hub.broadcast([_chat_push(speaker, body, private=False)],
+                              room=ctx.session.room)
     return ctx.reply()
-
-
-for _chat_type in CHAT_REQUEST_TYPES:
-    handles(_chat_type)(_say)
 
 
 # --------------------------------------------------------------------------
@@ -623,16 +851,27 @@ def session_invite(recipient, host_persona: str, guest_persona: str,
     if not when:
         raise ValueError("WHEN must be non-zero or the client discards the "
                          "invite without acting on it")
+    if not host_persona or not recipient:
+        # Both are strcmp'd at 0x004e2cbc. Two empty strings compare equal, so
+        # every client would decide it was the host and nobody would dial.
+        raise ValueError("SELF and HOST must both be set; empty strings compare "
+                         "equal and both consoles would take the host branch")
     return protocol.encode("+ses", protocol.OK, {
-        "NAME": name,
-        "SELF": recipient,
-        "HOST": host_persona,
-        "OPPO": guest_persona,
-        "P1": host_persona,
-        "P2": guest_persona,
+        "NAME": lobby._clip(name, lobby.MAX_NAME),
+        "SELF": lobby._clip(recipient, lobby.MAX_NAME),
+        "HOST": lobby._clip(host_persona, lobby.MAX_NAME),
+        "OPPO": lobby._clip(guest_persona, lobby.MAX_NAME),
+        # 16-byte slots, unlike the 32 above -- clip explicitly rather than
+        # letting the client truncate.
+        "P1": lobby._clip(host_persona, lobby.MAX_SLOT),
+        "P2": lobby._clip(guest_persona, lobby.MAX_SLOT),
         "P3": "",
         "P4": "",
         "AUTH": "1",
+        # ADDR is dialled by the HOST, so it is the guest's address; FROM is
+        # dialled by the guest, so it is the host's. Both are parsed by the
+        # dotted-quad reader at 0x0044c628 -- anything else silently yields
+        # garbage rather than an error.
         "ADDR": guest_addr,
         "FROM": host_addr,
         "SEED": str(seed),
@@ -648,8 +887,9 @@ def start_match(hub, host_conn, guest_conn, seed: Optional[int] = None) -> bool:
     """
     host = host_conn.session.persona or host_conn.session.account or "host"
     guest = guest_conn.session.persona or guest_conn.session.account or "guest"
-    host_addr = host_conn.session.client_addr or "0.0.0.0"
-    guest_addr = guest_conn.session.client_addr or "0.0.0.0"
+    # Observed, not self-reported -- see Session.observed_addr.
+    host_addr = host_conn.session.observed_addr or "0.0.0.0"
+    guest_addr = guest_conn.session.observed_addr or "0.0.0.0"
     when = int(time.time())
     seed = when & 0x7FFFFFFF if seed is None else seed
 

@@ -118,11 +118,55 @@ class Message(NamedTuple):
         return "\n".join(lines)
 
 
+def percent_escape(text: str) -> str:
+    """Protect a value from the client's percent-decoder.
+
+    Every value the client copies goes through 0x0044c9b0, which decodes ``%XX``
+    hex escapes and collapses ``%%`` to a literal ``%``. So a raw ``%`` in a
+    persona or a chat line is not passed through -- it either eats the next two
+    characters or terminates the copy early.
+
+    Only ``%`` needs escaping. The decoder also stops at any byte below 32 and
+    strips a matched leading quote, but the encoder already rejects control
+    characters and adds quotes deliberately.
+    """
+    return text.replace("%", "%%")
+
+
+def percent_unescape(text: str) -> str:
+    """Undo the client's escaping on a value it sent us."""
+    out: List[str] = []
+    i = 0
+    while i < len(text):
+        if text[i] != "%":
+            out.append(text[i])
+            i += 1
+            continue
+        if text[i + 1:i + 2] == "%":
+            out.append("%")
+            i += 2
+            continue
+        hex_digits = text[i + 1:i + 3]
+        if len(hex_digits) == 2:
+            try:
+                out.append(chr(int(hex_digits, 16)))
+                i += 3
+                continue
+            except ValueError:
+                pass
+        # A stray '%' the client did not mean as an escape. Keep it rather than
+        # dropping data.
+        out.append("%")
+        i += 1
+    return "".join(out)
+
+
 def parse_fields(payload: bytes) -> Dict[str, str]:
     """Split a ``KEY=VALUE`` payload, dropping the trailing NUL.
 
     Quotes around a value are stripped -- the client quotes only to protect
-    spaces, so they are framing rather than content.
+    spaces, so they are framing rather than content -- and percent escapes are
+    undone, for the same reason.
     """
     fields: Dict[str, str] = {}
     text = payload.split(b"\x00", 1)[0].decode("latin-1")
@@ -133,7 +177,7 @@ def parse_fields(payload: bytes) -> Dict[str, str]:
         key, value = line.split("=", 1)
         if len(value) >= 2 and value[0] == value[-1] == '"':
             value = value[1:-1]
-        fields[key.strip()] = value
+        fields[key.strip()] = percent_unescape(value)
     return fields
 
 
@@ -185,6 +229,9 @@ def encode(msg_type: str, status: Status = OK,
     for key, value in (fields or {}).items():
         text = str(value)
         _check_field(str(key), text)
+        # Before quoting: the quotes are framing the client strips, so they must
+        # not themselves be escaped.
+        text = percent_escape(text)
         if " " in text and not (text.startswith('"') and text.endswith('"')):
             text = '"%s"' % text
         lines.append("%s=%s" % (key, text))

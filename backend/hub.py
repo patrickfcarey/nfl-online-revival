@@ -31,7 +31,7 @@ import threading
 import time
 from typing import Callable, Dict, Iterable, List, Optional
 
-from . import protocol
+from . import matchmaking, protocol
 
 #: Types the client never sends, so they can never collide with something in
 #: its pending queue. Anything outside this set must only ever be a reply.
@@ -108,6 +108,11 @@ class Hub:
         self._lock = threading.RLock()
         self._stopping = threading.Event()
         self._on_event = on_event or (lambda text: None)
+        #: The quickmatch/challenge waiting room. Lives here because it spans
+        #: connections, and because unregister() must evict a departing client
+        #: from it -- a dead socket left in the queue gets paired with the next
+        #: arrival, which the survivor experiences as a match that never starts.
+        self.matchmaker = matchmaking.Matchmaker()
 
     # -- membership ----------------------------------------------------
 
@@ -118,6 +123,10 @@ class Hub:
     def unregister(self, conn: Connection) -> None:
         with self._lock:
             self._connections.pop(conn.label, None)
+        # Evict from the waiting room too. A closed socket left queued is
+        # matched against the next arrival, and that player then waits for a
+        # console that is no longer there.
+        self.matchmaker.forget(conn)
 
     def all(self) -> List[Connection]:
         with self._lock:

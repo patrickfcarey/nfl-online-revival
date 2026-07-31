@@ -811,12 +811,26 @@ class RoomRecordTests(unittest.TestCase):
         msg = protocol.decode(lobby.user_removal(7))
         self.assertNotIn("N", msg.fields)
 
-    def test_ids_must_be_positive(self):
-        for bad in (0, -1):
+    def test_negative_ids_are_refused(self):
+        # The client's guard is `bltz` (0x004696b4 for rooms, 0x00449a90 for
+        # users), so only negatives are discarded. This used to reject 0 too,
+        # which is stricter than the client and would have hidden a legal id.
+        for bad in (-1, -100):
             with self.assertRaises(ValueError):
                 lobby.room_record(bad, "x")
             with self.assertRaises(ValueError):
                 lobby.user_record(bad, "x")
+
+    def test_id_zero_is_accepted(self):
+        self.assertEqual(protocol.decode(lobby.room_record(0, "x")).fields["I"],
+                         "0")
+        self.assertEqual(protocol.decode(lobby.user_record(0, "x")).fields["I"],
+                         "0")
+
+    def test_population_still_refuses_id_zero(self):
+        # +pop is the one that genuinely terminates on 0.
+        with self.assertRaises(ValueError):
+            lobby.population([(0, 1)])
 
     def test_ping_has_three_distinct_states(self):
         blank = protocol.decode(lobby.room_record(1, "a"))
@@ -1063,11 +1077,16 @@ class TwoClientLobbyTests(unittest.TestCase):
             for sock in (a, b):
                 sock.sendall(protocol.encode("move", 0, {"NAME": "Ranked"}))
             self._drain(a, 0.5); self._drain(b, 0.5)
-            a.sendall(protocol.encode("mesg", 0, {"BODY": "hello lobby"}))
+            # TEXT, not BODY -- the client's send site (0x0034e6b0) writes
+            # TEXT, and this test previously used a key it never sends.
+            a.sendall(protocol.encode("mesg", 0, {"TEXT": "hello lobby"}))
             b_got = self._drain(b, 0.8)
             said = [m for m in b_got if m.type == "+msg"]
             self.assertTrue(said, "bob received no chat")
-            self.assertEqual(said[0].fields["BODY"], "hello lobby")
+            # N/T/F are what the client reads; BODY was read by nothing.
+            self.assertEqual(said[0].fields["T"], "hello lobby")
+            self.assertEqual(said[0].fields["N"], "alice")
+            self.assertEqual(said[0].fields["F"], handlers.CHAT_BROADCAST)
         finally:
             a.close(); b.close()
 

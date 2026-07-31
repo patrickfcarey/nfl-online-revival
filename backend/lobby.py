@@ -11,9 +11,14 @@ an error:
   removed from the client's list, and it is why every builder here is explicit
   about whether it is sending or removing.
 * **``F`` must always be present in a ``+rom``**, even empty. Its converter
-  defaults to ``-1`` when the key is absent, which sets every bit including the
-  ``P`` flag, and the client then shows the room as password-protected.
-* **A negative or missing ``I`` discards the record silently.** Ids start at 1.
+  defaults to ``-1`` when the key is absent (0x00449754), which sets every bit
+  including the ``P`` flag, and the client then shows the room as
+  password-protected. This applies to ``+rom`` **only** -- ``+usr`` ``F``
+  (0x00449b50), ``+who`` ``F``/``RF`` and ``move`` ``FLAGS`` all default to 0,
+  so there the field is optional.
+* **A negative or missing ``I`` discards the record silently** (``bltz``, so 0
+  is accepted). The ids-start-at-1 rule comes from ``+pop``, which terminates
+  its list on an id of 0.
 
 ``F`` is a letter bitmask, not a number: the converter maps ``@`` to bit 0 and
 then ``A``-``Z`` to bits 1-26, case-insensitively, with ``0``-``3`` covering
@@ -31,12 +36,19 @@ ROOM_PRIVATE = "P"
 #: User flag: "this record is you". Bit 0x200000 -> letter 'U'.
 USER_SELF = "U"
 
-#: The client reads room and user names through 32-byte buffers.
+#: ``+rom`` ``N``/``H`` and ``+usr`` ``N`` are read through 32-byte buffers.
 MAX_NAME = 31
+#: ``+who`` ``N`` and ``R``, and ``move`` ``NAME``, get 64 bytes instead
+#: (0x0044955c, 0x004495f8, 0x0044a390). Clipping these to 31 would truncate
+#: names the client is perfectly willing to display.
+MAX_NAME_LONG = 63
 #: ``S`` and ``X`` on a user record are 128-byte buffers.
 MAX_STATUS = 127
 #: ``P`` on a user record is an 8-byte buffer.
 MAX_TAG = 7
+#: ``+ses`` ``P1``-``P4`` are only 16 bytes (0x00449310-0x00449390), unlike the
+#: 32 given to NAME/SELF/HOST/OPPO and the 64 given to AUTH.
+MAX_SLOT = 15
 
 
 def _clip(text: str, limit: int) -> str:
@@ -52,8 +64,10 @@ def room_record(room_id: int, name: str, occupants: int = 0, limit: int = 0,
     ``ping`` distinguishes three states the client renders differently: absent
     shows blank, zero shows ``---``, and a positive value shows ``~Nms``.
     """
-    if room_id < 1:
-        raise ValueError("room id must be positive; the client discards id < 0")
+    if room_id < 0:
+        # bltz at 0x004696b4 -- only NEGATIVE ids are discarded. Zero is a
+        # legal room id here; it is `+pop` that terminates on 0.
+        raise ValueError("room id must not be negative; the client discards it")
     fields = {
         "I": str(room_id),
         # Always present, even empty -- absent means -1, which reads as private.
@@ -83,8 +97,9 @@ def user_record(user_id: int, name: str, addr: str = "0.0.0.0",
     ``is_self`` sets the flag that tells the client which row is its own; it
     stores that separately and the lobby highlights it.
     """
-    if user_id < 1:
-        raise ValueError("user id must be positive; the client discards id < 0")
+    if user_id < 0:
+        # bltz at 0x00449a90, as for rooms.
+        raise ValueError("user id must not be negative; the client discards it")
     fields = {
         "I": str(user_id),
         "F": USER_SELF if is_self else "",
@@ -100,9 +115,19 @@ def user_record(user_id: int, name: str, addr: str = "0.0.0.0",
     return protocol.encode("+usr", protocol.OK, fields)
 
 
-def user_removal(user_id: int) -> bytes:
-    """Remove an occupant from the client's list, by omitting ``N``."""
-    return protocol.encode("+usr", protocol.OK, {"I": str(user_id), "F": ""})
+def user_removal(user_id: int, room_occupants: int = 0) -> bytes:
+    """Remove an occupant from the client's list, by omitting ``N``.
+
+    ``T`` matters even on a deletion. The add and delete paths converge at
+    0x00449d68, which reads ``T`` with a default of 0 and applies it to the
+    *receiving* client's current room. Omit it and every departure silently
+    resets the displayed occupancy of the room the reader is sitting in to zero.
+    """
+    return protocol.encode("+usr", protocol.OK, {
+        "I": str(user_id),
+        "F": "",
+        "T": str(room_occupants),
+    })
 
 
 def population(counts: Sequence[Tuple[int, int]]) -> bytes:
@@ -135,10 +160,13 @@ def whereabouts(persona: str, room_id: int, room_name: str,
     re-sent afterwards.
     """
     return protocol.encode("+who", protocol.OK, {
-        "N": _clip(persona, MAX_NAME),
+        # 64-byte buffers here, unlike +rom/+usr.
+        "N": _clip(persona, MAX_NAME_LONG),
+        # F and RF default to 0 on this message, not to -1 as on +rom, so an
+        # empty value is merely tidy rather than load-bearing.
         "F": "",
         "RI": str(room_id),
-        "R": _clip(room_name, MAX_NAME),
+        "R": _clip(room_name, MAX_NAME_LONG),
         "RF": "",
         "RT": str(occupants),
     })
