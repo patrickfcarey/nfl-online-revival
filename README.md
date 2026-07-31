@@ -139,14 +139,23 @@ server can state a version the console agrees with:
 
 ```bash
 python3 tools/roster_checksum.py /path/to/DB_TEAMS.DAT
-python3 -m backend --advertise-host <ip> --roster-db /path/to/DB_TEAMS.DAT
+./serve-madden.sh          # reads RIG_IP from .env.local
 ```
 
-Do not narrow `--port`. It defaults to `10000,10001` and needs both: the client
-makes a brief `@dir` contact on 10000, is redirected, and runs the session on
-10001. Passing `--port 10001` alone gets the first connection refused, and the
-symptom is a silent server plus `Closed Dead TCP Connection to 10000` in the
-PCSX2 log.
+**Use the script rather than assembling the command by hand.** Four flags matter
+and none of them announce themselves when wrong — every mistake below produces
+the same "an error happened when connecting to the server" on the console:
+
+| Flag | Getting it wrong |
+| --- | --- |
+| `--db` | Defaults to `backend.db`. Point it elsewhere and existing accounts disappear: correct name and password, server answers `auth` with status `miss`. |
+| `--port` | Defaults to `10000,10001` and needs **both** — a brief `@dir` contact on 10000, then the session on 10001. Narrowing it to 10001 gets the first connection refused and the server logs nothing at all. |
+| `--buddy-port` | The presence stub the client is told about in `news`. |
+| `--advertise-host` | Must be a dotted quad; the client parses it octet by octet. |
+
+Always pass `--transcript` when something misbehaves. The console reports one
+generic error for every one of these, so the transcript is the only place the
+actual failure is visible.
 
 No game data lives in this repository; point these at your own extracted disc.
 The value has not yet been confirmed against a console — see
