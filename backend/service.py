@@ -134,9 +134,17 @@ class Service:
         try:
             outgoing = handlers.dispatch(context)
         except Exception as exc:  # a handler bug must not drop the connection
+            # Silence would leave the client waiting out its two-minute
+            # timeout for a reply that is never coming. A failure status at
+            # least moves it along and shows an error rather than a hang.
             self._say("[ea] handler for %s raised: %s" % (message.type, exc))
             self.transcript.raw(label, "handler-error", b"", "%s: %s"
                                 % (message.type, exc))
+            try:
+                conn.sendall(protocol.encode(message.type,
+                                             handlers.ERR_INTERNAL, {}))
+            except (OSError, protocol.ProtocolError):
+                pass
             return
 
         if not outgoing:

@@ -250,6 +250,18 @@ class Store:
                 "VALUES(?, ?, '', ?, ?)", (name, desc, max_users, chan))
             self._db.commit()
 
+    def seed_defaults(self) -> None:
+        """Create the starting lobbies.
+
+        A first boot with no rooms gives the client an empty list, which is
+        indistinguishable from a broken subscription. Names are ours -- the
+        original set is not recoverable from the client.
+        """
+        for name, desc in (("Open Lobby", "Anyone welcome"),
+                           ("Ranked", "Ranked matches"),
+                           ("Tournament", "Tournament play")):
+            self.ensure_room(name, desc)
+
     # -- diagnostics ---------------------------------------------------
 
     def counts(self) -> dict:

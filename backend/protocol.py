@@ -151,6 +151,24 @@ def decode(data: bytes) -> Message:
                    bytes(data[:length]))
 
 
+def _check_field(key: str, value: str) -> None:
+    """Refuse anything that could forge the payload's own framing.
+
+    Fields are newline-separated and NUL-terminated, so a value containing
+    either does not merely corrupt the message -- it *injects*. A persona named
+    ``eve\nADMIN=1`` would arrive at the client as two fields. Handlers already
+    validate the names they accept, but the encoder is the last place this can
+    be caught for every field, including ones read back out of the database.
+    """
+    if "\n" in key or "\x00" in key or "=" in key:
+        raise ProtocolError(
+            "field name %r contains a character that would break framing" % key)
+    if "\n" in value or "\x00" in value:
+        raise ProtocolError(
+            "value of %s contains a newline or NUL, which would inject a field"
+            % key)
+
+
 def encode(msg_type: str, status: Status = OK,
            fields: Optional[Dict[str, str]] = None) -> bytes:
     """Build a message. The length is computed, never supplied by a caller."""
@@ -160,6 +178,7 @@ def encode(msg_type: str, status: Status = OK,
     lines: List[str] = []
     for key, value in (fields or {}).items():
         text = str(value)
+        _check_field(str(key), text)
         if " " in text and not (text.startswith('"') and text.endswith('"')):
             text = '"%s"' % text
         lines.append("%s=%s" % (key, text))

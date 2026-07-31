@@ -42,10 +42,19 @@ def make_store():
     return Store(handle.name), handle.name
 
 
+def open_session():
+    """A session as it exists after `skey` -- the state the client is in before
+    it sends anything that matters. Starting from a fresh Session would skip
+    the handshake the real client always performs."""
+    session = Session("test:1")
+    session.state = "idle"
+    return session
+
+
 def run(store, msg_type, fields=None, session=None, status=protocol.OK,
         raw_payload=None):
     """Dispatch one message and return (session, decoded replies)."""
-    session = session or Session("test:1")
+    session = session if session is not None else open_session()
     blob = protocol.encode(msg_type, status, fields or {})
     message = protocol.decode(blob)
     if raw_payload is not None:
@@ -307,7 +316,8 @@ class PersonaTests(unittest.TestCase):
     def setUp(self):
         self.store, self.path = make_store()
         self.store.create_account("alice", PASS="")
-        self.session, _ = run(self.store, "auth", {"NAME": "alice", "PASS": ""})
+        self.session, _ = run(self.store, "auth", {"NAME": "alice", "PASS": ""},
+                              session=open_session())
 
     def tearDown(self):
         self.store.close(); os.unlink(self.path)
@@ -432,6 +442,93 @@ class ReviewRegressionTests(unittest.TestCase):
         self.assertEqual(replies[0].status_tag, handlers.ERR_BAD_PASS)
         _s, replies = run(self.store, "auth", {"NAME": "nopass", "PASS": ""})
         self.assertTrue(replies[0].ok)
+
+
+class InjectionTests(unittest.TestCase):
+    """A field value must not be able to forge the payload's own framing."""
+
+    def test_a_newline_in_a_value_is_refused(self):
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.encode("auth", 0, {"NAME": "eve\nADMIN=1"})
+
+    def test_a_nul_in_a_value_is_refused(self):
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.encode("auth", 0, {"NAME": "eve\x00tail"})
+
+    def test_a_key_that_would_break_framing_is_refused(self):
+        for bad in ("A=B", "A\nB", "A\x00B"):
+            with self.assertRaises(protocol.ProtocolError):
+                protocol.encode("auth", 0, {bad: "v"})
+
+    def test_an_equals_sign_inside_a_value_is_fine(self):
+        # Only the first '=' separates, so this is data, not injection.
+        blob = protocol.encode("auth", 0, {"A": "x=y"})
+        self.assertEqual(protocol.decode(blob).fields["A"], "x=y")
+
+    def test_a_persona_read_back_from_the_store_cannot_inject(self):
+        """The encoder is the last line of defence for values that did not
+        come straight off the wire."""
+        store, path = make_store()
+        try:
+            store.create_account("alice")
+            # Bypass the handler's own validation, as a future bug might.
+            with store._lock:
+                store._db.execute(
+                    "INSERT INTO persona(PERS, NAME, created) VALUES(?,?,0)",
+                    ("bad\nOPTS=x", "alice"))
+                store._db.commit()
+            session = open_session()
+            _s, replies = run(store, "auth", {"NAME": "alice", "PASS": ""},
+                              session=session)
+            self.fail("expected the encoder to refuse, got %r" % replies)
+        except protocol.ProtocolError:
+            pass
+        finally:
+            store.close(); os.unlink(path)
+
+
+class SessionGateTests(unittest.TestCase):
+    """The client's own wrapper only sends in {idle, auth, acct, skey}, so a
+    message arriving before the session is open is a desync, not a request."""
+
+    def setUp(self):
+        self.store, self.path = make_store()
+
+    def tearDown(self):
+        self.store.close(); os.unlink(self.path)
+
+    def test_acct_before_skey_is_refused(self):
+        fresh = Session("t:1")            # state 'conn'
+        _s, replies = run(self.store, "acct", {"NAME": "x", "TOS": "1"},
+                          session=fresh)
+        self.assertEqual(replies[0].status_tag, handlers.ERR_INTERNAL)
+        self.assertEqual(self.store.counts()["account"], 0)
+
+    def test_auth_before_skey_is_refused(self):
+        self.store.create_account("alice", PASS="")
+        fresh = Session("t:1")
+        _s, replies = run(self.store, "auth", {"NAME": "alice", "PASS": ""},
+                          session=fresh)
+        self.assertEqual(replies[0].status_tag, handlers.ERR_INTERNAL)
+
+    def test_skey_opens_the_gate(self):
+        session, _ = run(self.store, "skey", {"SKEY": "$00"},
+                         session=Session("t:1"))
+        self.assertIn(session.state, handlers.OPEN_STATES)
+
+
+class DefaultRoomTests(unittest.TestCase):
+    def test_seed_creates_lobbies_and_is_idempotent(self):
+        store, path = make_store()
+        try:
+            self.assertEqual(len(store.rooms()), 0)
+            store.seed_defaults()
+            first = len(store.rooms())
+            self.assertGreater(first, 0)
+            store.seed_defaults()
+            self.assertEqual(len(store.rooms()), first)
+        finally:
+            store.close(); os.unlink(path)
 
 
 # --------------------------------------------------------------------------

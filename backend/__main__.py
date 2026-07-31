@@ -67,6 +67,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("error: %s" % exc, file=sys.stderr)
         return 1
 
+    store.seed_defaults()
+
     config = {
         "advertise_host": args.advertise_host,
         "advertise_port": str(args.advertise_port),

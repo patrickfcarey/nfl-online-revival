@@ -39,6 +39,13 @@ ERR_GEND = "gend"            # bad gender
 ERR_TOO_YOUNG = "tooy"       # under the age limit
 ERR_TOO_MANY = "many"        # limit reached
 ERR_MISSING = "miss"         # not found
+ERR_INTERNAL = "misc"        # generic failure, from the same table
+
+#: States in which the client's own request wrapper (0x00448050) will send.
+#: Mirroring the gate means a message that arrives before the session is
+#: established is refused rather than acted on, which would leave the two sides
+#: disagreeing about where they are.
+OPEN_STATES = frozenset(("idle", "auth", "acct", "skey"))
 
 #: Names the client will accept back. Kept deliberately conservative: the field
 #: is echoed into UI and into other players' screens.
@@ -184,6 +191,8 @@ def _birth_year(born: str) -> Optional[int]:
 @handles("acct")
 def create_account(ctx: Context) -> List[bytes]:
     """New member registration."""
+    if ctx.session.state not in OPEN_STATES:
+        return ctx.fail(ERR_INTERNAL)
     message = ctx.message
     name = message.get("NAME").strip()
     if not name:
@@ -246,6 +255,8 @@ def login(ctx: Context) -> List[bytes]:
     sending and we cannot reverse that, so this checks that the same client
     with the same key produces the same value -- see the note in store.py.
     """
+    if ctx.session.state not in OPEN_STATES:
+        return ctx.fail(ERR_INTERNAL)
     name = ctx.message.get("NAME").strip()
     row = ctx.store.account(name) if name else None
     if row is None:
