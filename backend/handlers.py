@@ -417,6 +417,27 @@ PEER_PORT = 3658
 #: unless we mean it to.
 TWRP_DEFAULT = 240
 
+# --- roster version -------------------------------------------------------
+#
+# The console computes the checksum of its own roster and compares it against
+# the CSUM we announce; a difference means "yours is stale". Ours is a
+# PLACEHOLDER -- it is not computed from any roster and will not match.
+#
+# That is currently harmless because the pnach zeroes the comparison
+# (0x0012A978), so the console never acts on the mismatch. The value is sent
+# anyway so the field is populated and the path is exercised end to end.
+#
+# TO MAKE THIS REAL, see docs/protocol-notes.md: the console derives its
+# checksum at 0x0012a888 by running
+#     select * from 'PLAY' where 'TGID' between 1 and 32
+# over the LEAG database and accumulating each row through 0x0012a730. That
+# accumulator has not been reversed. Once it is, compute the checksum of the
+# roster actually being served, send it here, and drop the pnach line -- the
+# comparison then works as designed and a genuine update is no longer
+# suppressed.
+PLACEHOLDER_ROSTER_DATE = "20030817"      # Madden NFL 2004's own release window
+PLACEHOLDER_ROSTER_CSUM = "0"             # not derived from any roster
+
 
 def _occupancy(ctx: Context, room_name: str) -> int:
     return len(ctx.hub.in_room(room_name)) if ctx.hub else 0
@@ -678,12 +699,11 @@ def service_news(ctx: Context) -> List[bytes]:
         "ELIT": str(ctx.config.get("elit", 0)),
         "TWRP": str(ctx.config.get("twrp", TWRP_DEFAULT)),
     }
-    roster_date = ctx.config.get("roster_date")
-    roster_csum = ctx.config.get("roster_csum")
-    if roster_date:
-        fields["DATE"] = str(roster_date)
-    if roster_csum:
-        fields["CSUM"] = str(roster_csum)
+    # Always sent, so the field is populated and the path is exercised. The
+    # default checksum is a placeholder and will not match the console's --
+    # see the note above PLACEHOLDER_ROSTER_CSUM.
+    fields["DATE"] = str(ctx.config.get("roster_date", PLACEHOLDER_ROSTER_DATE))
+    fields["CSUM"] = str(ctx.config.get("roster_csum", PLACEHOLDER_ROSTER_CSUM))
     return [protocol.encode("news", protocol.OK, fields)]
 
 

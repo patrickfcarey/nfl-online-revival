@@ -1096,12 +1096,20 @@ class NewsTests(unittest.TestCase):
     def test_the_requested_index_is_echoed(self):
         self.assertEqual(self._news("2")[0].fields["NAME"], "2")
 
-    def test_the_roster_version_is_omitted_unless_configured(self):
-        """Their consumers are plain setters, so we cannot know the console's
-        own values; sending a wrong one is worse than sending none."""
+    def test_the_roster_version_is_always_populated(self):
+        """Sent even though the checksum is a placeholder, so the field exists
+        and the path is exercised. The pnach zeroes the comparison, so a
+        mismatch is currently inert."""
         fields = self._news()[0].fields
-        self.assertNotIn("DATE", fields)
-        self.assertNotIn("CSUM", fields)
+        self.assertEqual(fields["DATE"], handlers.PLACEHOLDER_ROSTER_DATE)
+        self.assertEqual(fields["CSUM"], handlers.PLACEHOLDER_ROSTER_CSUM)
+
+    def test_the_placeholder_is_labelled_as_one(self):
+        """A future reader must not mistake it for a real checksum."""
+        import inspect
+        source = inspect.getsource(handlers)
+        self.assertIn("PLACEHOLDER_ROSTER_CSUM", source)
+        self.assertIn("not derived from any roster", source)
 
     def test_all_eight_fields_the_parser_reads_are_present(self):
         """The parser reads these unconditionally; leaving one out means
