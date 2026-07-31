@@ -139,9 +139,14 @@ server can state a version the console agrees with:
 
 ```bash
 python3 tools/roster_checksum.py /path/to/DB_TEAMS.DAT
-python3 -m backend --advertise-host <ip> --port 10001 \
-        --roster-db /path/to/DB_TEAMS.DAT
+python3 -m backend --advertise-host <ip> --roster-db /path/to/DB_TEAMS.DAT
 ```
+
+Do not narrow `--port`. It defaults to `10000,10001` and needs both: the client
+makes a brief `@dir` contact on 10000, is redirected, and runs the session on
+10001. Passing `--port 10001` alone gets the first connection refused, and the
+symptom is a silent server plus `Closed Dead TCP Connection to 10000` in the
+PCSX2 log.
 
 No game data lives in this repository; point these at your own extracted disc.
 The value has not yet been confirmed against a console — see
