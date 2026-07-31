@@ -533,6 +533,44 @@ peer-to-peer port is not evidence.
 
 ---
 
+## The roster version, and how a server is meant to answer it
+
+The exchange is a version *announcement*, not a challenge:
+
+* the server publishes, in its `news` reply, the `DATE` and `CSUM` of the
+  roster it considers current;
+* the console computes the checksum of the roster **it** holds;
+* they are compared at `0x0012a960`, and a difference means "yours is stale".
+
+So the original server never knew any console's value. It simply stated the
+current one, and consoles that disagreed fetched an update.
+
+**What the checksum covers.** `0x0012a888` runs a query against the game's own
+record store, whose text sits at `0x00579b90`:
+
+```
+use 'GAEL' declare <cursor> for select * from 'YALP'
+    where ('DIGT' >= 1) and ('DIGT' <= 32) order by ...
+```
+
+The four-character names are byte-reversed, as everywhere else here:
+`GAEL` is **LEAG**, `YALP` is **PLAY**, `DIGT` is **TGID**. So it is
+`select * from PLAY where TGID between 1 and 32` -- every player on all
+thirty-two teams -- accumulated row by row through `0x0012a730`.
+
+That means the checksum is a function of the roster data itself, in Madden's
+TDB format. It is computable outside the game by anyone who can read that
+table and reproduce the accumulator, which also makes it a prerequisite for
+serving a roster at all: a replacement roster has to be announced with its own
+correct checksum or the console will refuse to believe it arrived.
+
+**Status.** The accumulator at `0x0012a730` is not yet reversed, so no checksum
+is computed here and the comparison is bypassed by a patch instead. That is a
+stopgap, not the design: the honest implementation computes the checksum of
+whatever roster is being served.
+
+---
+
 ## Slice decision log
 
 Record here, once recon is in, which title+platform becomes the first
