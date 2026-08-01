@@ -1116,8 +1116,13 @@ class NewsTests(unittest.TestCase):
         # else on the floor. This assertion used to require the request type,
         # which is exactly the bug it should have caught -- see
         # tests/test_roster_delivery.py.
-        self.assertEqual(replies[0].type, "new0")
-        self.assertTrue(replies[0].ok)
+        self.assertEqual(replies[0].type, "news")
+        # The status carries the CATEGORY, not success. `ok` is therefore False
+        # here by design: this is the one reply whose status word is not an
+        # error indicator, and the client requires it to be non-zero
+        # (0x0034eb20 gives completion code 4 only for a non-zero msg+8).
+        self.assertEqual(replies[0].status_tag, "new0")
+        self.assertFalse(replies[0].ok)
 
     def test_it_carries_the_buddy_address(self):
         fields = self._news()[0].fields

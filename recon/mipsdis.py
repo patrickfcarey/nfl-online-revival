@@ -42,6 +42,18 @@ _SPECIAL = {
     0x38: "dsll", 0x3A: "dsrl", 0x3B: "dsra", 0x3C: "dsll32",
     0x3E: "dsrl32", 0x3F: "dsra32",
 }
+#: Branch-likely and unaligned load/store. Both were previously left out, so
+#: they printed as `.word` and had to be hand-decoded -- and a hand-decode is
+#: exactly where a wrong answer creeps in. Canonical encodings, checked against
+#: the MIPS IV manual: BEQL is **0x14**, not 0x13. A disassembler written for
+#: this project by another tool had that off by one, which silently inverts
+#: every branch-likely condition it prints.
+#:
+#: The delay slot of a branch-likely executes ONLY when the branch is taken.
+_LIKELY = {0x14: "beql", 0x15: "bnel", 0x16: "blezl", 0x17: "bgtzl"}
+_UNALIGNED = {0x22: "lwl", 0x26: "lwr", 0x2A: "swl", 0x2E: "swr",
+              0x1A: "ldl", 0x1B: "ldr", 0x2C: "sdl", 0x2D: "sdr"}
+
 _OPCODES = {
     0x02: "j", 0x03: "jal", 0x04: "beq", 0x05: "bne", 0x06: "blez",
     0x07: "bgtz", 0x08: "addi", 0x09: "addiu", 0x0A: "slti", 0x0B: "sltiu",
@@ -146,6 +158,13 @@ def disassemble(word: int, vaddr: int = 0) -> str:
         if name in ("dsll", "dsrl", "dsra", "dsll32", "dsrl32", "dsra32"):
             return "%s %s, %s, %d" % (name, _REGS[rd], _REGS[rt], shamt)
         return "%s %s, %s, %s" % (name, _REGS[rd], _REGS[rs], _REGS[rt])
+    if op in _LIKELY:
+        # The delay slot runs ONLY when taken -- marked so a reader cannot
+        # forget it.
+        return "%s %s, %s, 0x%08x   ; likely" % (
+            _LIKELY[op], _REGS[rs], _REGS[rt], vaddr + 4 + simm * 4)
+    if op in _UNALIGNED:
+        return "%s %s, %d(%s)" % (_UNALIGNED[op], _REGS[rt], simm, _REGS[rs])
     name = _OPCODES.get(op)
     if name is None:
         return ".word 0x%08x" % word

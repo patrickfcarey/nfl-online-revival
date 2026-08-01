@@ -113,8 +113,13 @@ patch=1,EE,00305258,word,10000003
 //   0012a97c  sltiu v0, v0, 1
 //
 // gp is 0x006056f0, so gp-19396 is 0x00600b2c -- the slot holding the value we
-// sent. Overwriting it is harmless: nothing else reads it, and it is refilled
-// from the next `news` reply by 0x0012a988.
+// sent. It is refilled from the next `news` reply by 0x0012a988.
+//
+// CORRECTION: an earlier note here said "nothing else reads it". That is
+// false. 0x0012a990 is a getter for the same slot and is called from
+// 0x00354674, which serialises the value into an outgoing buffer. So this
+// patch also makes the console TRANSMIT a wrong checksum, not merely record
+// one. Harmless for a measurement run, but it is a second effect.
 //
 //   before  0x00431026  xor v0, v0, v1
 //   after   0xaf82b43c  sw  v0, -19396(gp)
@@ -150,8 +155,16 @@ patch=1,EE,00305258,word,10000003
 // consulted at all (the slot stays untouched if it is not), and what value the
 // script believes its own roster carries.
 //
-// The function then returns whatever v0 held, so its verdict is meaningless
-// while this is active. That is fine; the point is the captured argument.
+// DANGER: this stores into the CSUM slot, which is live input to the roster
+// comparison at 0x0012a970 AND to the getter at 0x0012a990. Enabling it makes
+// the console compare its computed checksum against a DATE -- a guaranteed
+// mismatch -- and transmit that wrong value. Since the question this patch
+// exists to answer is "the checksum matches, so why is it still stale?", it
+// manufactures exactly the false negative you would be hunting. Use a
+// different scratch slot if this is ever needed again.
+//
+// The delay slot 0x00350968 `sltu v0, a0, v0` still executes, so the function
+// returns sltu(a0, stale v0) rather than "whatever v0 held".
 //
 //   before  0x8f820994  lw v0, 2452(gp)
 //   after   0xaf84b43c  sw a0, -19396(gp)

@@ -72,24 +72,27 @@ class NewsReplyTag(unittest.TestCase):
     def test_config_request_is_answered_new0(self):
         replies = self._news(0)
         self.assertEqual(len(replies), 1)
-        self.assertEqual(replies[0].type, "new0")
+        self.assertEqual(replies[0].type, "news")
+        self.assertEqual(replies[0].status_tag, "new0")
 
     def test_headlines_request_is_answered_new1(self):
-        self.assertEqual(self._news(1)[0].type, "new1")
+        self.assertEqual(self._news(1)[0].status_tag, "new1")
 
     def test_roster_request_is_answered_new2(self):
-        self.assertEqual(self._news(2)[0].type, "new2")
+        self.assertEqual(self._news(2)[0].status_tag, "new2")
 
     def test_never_answered_with_the_request_type(self):
         # The exact bug this file exists for.
         for name in (0, 1, 2):
-            self.assertNotEqual(self._news(name)[0].type, "news")
+            self.assertEqual(self._news(name)[0].type, "news")
+            self.assertEqual(self._news(name)[0].status_tag,
+                             "new%d" % name)
 
     def test_missing_name_is_treated_as_the_config_request(self):
-        self.assertEqual(self._dispatch({})[0].type, "new0")
+        self.assertEqual(self._dispatch({})[0].status_tag, "new0")
 
     def test_a_non_numeric_name_does_not_crash(self):
-        self.assertEqual(self._dispatch({"NAME": "x"})[0].type, "new0")
+        self.assertEqual(self._dispatch({"NAME": "x"})[0].status_tag, "new0")
 
     def test_config_reply_carries_the_buddy_address_and_roster_version(self):
         reply = self._news(0)[0]
@@ -102,12 +105,11 @@ class NewsReplyTag(unittest.TestCase):
         ctx = Context(protocol.decode(protocol.encode("news", 0, {})),
                       open_session(), self.store, self.config)
         with self.assertRaises(protocol.ProtocolError):
-            handlers.news_reply_type(ctx, 10)
+            handlers.news_status(10)
 
     def test_the_legacy_type_can_be_selected_for_diagnosis(self):
         # The console is not storing the CSUM we announce, and whether the
         # reply must be tagged new<n> or echo `news` is the open question.
-        self.config["news_reply_type"] = "news"
         for name in (0, 1, 2):
             self.assertEqual(self._news(name)[0].type, "news")
 
@@ -131,7 +133,7 @@ class RosterManifest(unittest.TestCase):
 
     def test_empty_when_no_roster_is_configured(self):
         reply = self._manifest()
-        self.assertEqual(reply.type, "new2")
+        self.assertEqual(reply.status_tag, "new2")
         self.assertNotIn("URL", reply.fields)
 
     def test_carries_url_and_crc_when_configured(self):

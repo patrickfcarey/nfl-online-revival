@@ -949,65 +949,6 @@ NEWS_HEADLINES = 1   # the news list it displays
 NEWS_ROSTERS = 2     # the roster update manifest
 
 
-#: Sub-block header size: 4CC type, 4 reserved, 4 length (0x0044f400 walks by
-#: reading the type at +0 and the length at +8, advancing by the length).
-SUBBLOCK_HEADER = 12
-
-
-def news_subblock(kind: int, payload: bytes) -> bytes:
-    """Wrap a ``news`` payload in the ``new<n>`` sub-block the client walks for.
-
-    Measured on hardware, from the completion code the reply callback leaves at
-    0x00560af4:
-
-    * answering with message type ``new0`` gives code **3** -- "no reply object".
-      The pending queue matches replies by type, so a ``new0``-tagged reply is
-      never delivered at all. That is what silently discarded every checksum we
-      announced, and why five candidate algorithms all appeared to fail: none of
-      them was ever compared against anything.
-    * answering with type ``news`` gives code **0** -- delivered, but the word at
-      reply+8 is zero, and NewsRequest keeps the body only when that word equals
-      ``'new0' + kind`` (0x0034f500).
-
-    **This wrapping is a REFUTED guess. Do not rely on it.** It was built on an
-    agent's claim that ``new0`` is one of the sub-block selectors walked by
-    0x0044f400. Two checks say otherwise: all nine callers of that walker are in
-    the tournament module (0x0044f000-0x00452000) and none is in the news path,
-    and ``new0`` appears nowhere in the file as data, in either byte order -- it
-    exists only as the lui/ori immediate pair inside NewsRequest.
-
-    What *is* established: 0x0034f2a0 enqueues the request with type ``news``
-    (0x0034f308 passes the caller's type straight to 0x004df3d8), and replies are
-    matched against the pending head by type (0x00446d20, with ``DQUE`` as the
-    only wildcard). So ``news`` is required for delivery, and the word at
-    ``reply+8`` is something other than the message type. What sets it is still
-    unknown.
-
-    A previous note here claimed to have measured that struct as
-    [0x00001ac0, 0, 0, 0]. That reading was worthless and is withdrawn: the
-    struct lives on NewsRequest's own stack (0x0034f4dc passes ``t0 = sp``,
-    which 0x0034f30c stores as state[8]), so by the time a savestate is taken
-    the function has returned and the memory has been reused. Only the
-    completion code at 0x00560af4 is in static storage and survives.
-
-    One thing the callback does establish: ``reply+12`` is a ``char *``. It is
-    passed to strlen (0x0034ead4), a buffer of len+1 is allocated, and the text
-    is copied in -- which is why NewsRequest's return value can be handed
-    straight to the field lookup at 0x0044acc8.
-
-    Kept only so the experiment is repeatable and the dead end is recorded.
-    """
-    header = struct.pack(">4sII", news_subblock_type(kind).encode("latin-1"),
-                         0, SUBBLOCK_HEADER + len(payload))
-    return header + payload
-
-
-def news_subblock_type(kind: int) -> str:
-    if not 0 <= kind <= 9:
-        raise ProtocolError("news category %d is out of range" % kind)
-    return NEWS_REPLY_BASE[:3] + str(kind)
-
-
 def news_reply_type(ctx: Context, kind: int) -> str:
     """The type to answer a ``news`` request with.
 
@@ -1085,18 +1026,40 @@ def service_news(ctx: Context) -> List[bytes]:
 
 
 def _news_message(ctx: Context, kind: int, fields) -> bytes:
-    """One `news` reply, in whichever shape is being tested.
+    """One `news` reply: type ``news``, **status ``new<n>``**, plain fields.
 
-    ``--news-body subblock`` puts the fields inside a ``new<n>`` sub-block and
-    sends the message as ``news``, which is what the measurements point to.
-    ``--news-body plain`` keeps the old behaviour for comparison.
+    The category tag rides in the *status* word, not the type. That is the whole
+    answer to why the console ignored every news reply we ever sent, and both
+    earlier attempts got it wrong in the same place:
+
+    * tagging the message ``new0`` failed the type match -- twice over, at the
+      one-shot handler list (0x00446d20) and at the pending-request ring
+      (0x004df0e0) -- so the reply was never delivered and the callback recorded
+      completion code 3, "no reply object".
+    * tagging it ``news`` with status 0 delivered it, but NewsRequest requires
+      completion code 4 (0x0034f4f0), and the callback only yields 4 when the
+      word at msg+8 is non-zero (0x0034eb20). With a success status that word is
+      zero, so the code was 0 and the body was dropped.
+
+    ``msg+8`` is the status field. The wire parser 0x00453380 reads header bytes
+    4..7 into it (0x00453524), 0x00448cc0 builds the message object as
+    {+0: 0, +4: type, +8: status, +12: body}, and the callback copies those
+    16 bytes verbatim into NewsRequest's stack out-struct -- so the ``out+8``
+    compared against ``'new0' + kind`` at 0x0034f500 *is* the status we send.
+
+    Corroborated independently: 0x004e1e00, a different reply callback, reads
+    msg+8 and compares it against ``uusr`` and ``ingm``, which are plainly error
+    tags. And the client always sends status 0 on requests (0x004482b0), so this
+    word is entirely the server's to choose.
     """
-    if ctx.config.get("news_body") == "subblock":
-        payload = protocol.encode(news_subblock_type(kind), protocol.OK,
-                                  fields)[protocol.HEADER_SIZE:]
-        return protocol.encode_raw("news", protocol.OK,
-                                   news_subblock(kind, payload))
-    return protocol.encode(news_reply_type(ctx, kind), protocol.OK, fields)
+    return protocol.encode("news", news_status(kind), fields)
+
+
+def news_status(kind: int) -> str:
+    """``new0``/``new1``/``new2`` -- the category tag, carried as the status."""
+    if not 0 <= kind <= 9:
+        raise ProtocolError("news category %d is out of range" % kind)
+    return NEWS_REPLY_BASE[:3] + str(kind)
 
 
 def _pick_csum(ctx: Context) -> str:
