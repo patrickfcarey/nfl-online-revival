@@ -16,7 +16,8 @@ discarded every one.
 
 So this asserts the things the real client silently requires:
 
-* a ``news`` reply is tagged ``new0``/``new1``/``new2``, never ``news``
+* a ``news`` reply has type ``news`` and carries its category in the STATUS
+  word as ``new0``/``new1``/``new2`` -- the client gates on that, not the type
 * a ``+ses`` names both SELF and HOST, and they differ for exactly one of the
   two players
 * ADDR and FROM are dotted quads and are *crossed* -- each console is told the
@@ -234,7 +235,14 @@ class FakeConsole:
     def _check_news(self) -> None:
         """Fetch the service config, and hold the reply to the tag rule."""
         self.send("news", NAME="0")
-        reply = self.expect("new0")          # NOT "news" -- see module docstring
+        reply = self.expect("news")
+        # The category rides in the STATUS word. The client requires it non-zero
+        # (0x0034eb20) and equal to 'new0' + NAME (0x0034f500); a success status
+        # there means the console silently discards the whole reply.
+        if reply.status_tag != "new0":
+            self._fault("news reply status is %r, not 'new0'; the console would "
+                        "drop the body and never store CSUM"
+                        % (reply.status_tag or "0 (success)"))
         self._say("news: buddy=%s:%s roster DATE=%s CSUM=%s" % (
             reply.get("BUDDY_URL"), reply.get("BUDDY_PORT"),
             reply.get("DATE"), reply.get("CSUM")))

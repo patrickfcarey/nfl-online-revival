@@ -962,36 +962,6 @@ NEWS_HEADLINES = 1   # the news list it displays
 NEWS_ROSTERS = 2     # the roster update manifest
 
 
-def news_reply_type(ctx: Context, kind: int) -> str:
-    """The type to answer a ``news`` request with.
-
-    Two readings of the client are in play and only hardware can separate them.
-
-    0x0034f4f0-0x0034f504 compares a word at ``sp+8`` in the reply out-struct
-    against ``'new0' + kind`` and keeps the body only on a match, which is why
-    we tag replies ``new0``/``new1``/``new2``. But that offset was never
-    confirmed to be the reply's *type* -- the header's second word turned out to
-    be a status tag rather than the transaction id it was once assumed to be, so
-    the struct's layout is not as obvious as it looked.
-
-    Meanwhile the console demonstrably never stores the ``CSUM`` we announce:
-    the value is absent from all 32 MB of EE RAM in a savestate, and the slot at
-    gp-19396 stays zero, so the comparison runs against 0 and always reports the
-    rosters stale. Something is stopping the reply being consumed.
-
-    ``--news-reply-type news`` echoes the request type instead, as every other
-    reply in this protocol does. Whichever setting makes the checksum land in
-    memory is the right one.
-    """
-    if not 0 <= kind <= 9:
-        # The client forms the tag by integer addition on the last byte, so
-        # anything outside one digit would produce a type we cannot name.
-        raise ProtocolError("news category %d is out of range" % kind)
-    if ctx.config.get("news_reply_type") == "news":
-        return "news"
-    return NEWS_REPLY_BASE[:3] + str(kind)
-
-
 @handles("news")
 def service_news(ctx: Context) -> List[bytes]:
     """Answer the client's news fetch.
@@ -1064,6 +1034,16 @@ def _news_message(ctx: Context, kind: int, fields) -> bytes:
     msg+8 and compares it against ``uusr`` and ``ingm``, which are plainly error
     tags. And the client always sends status 0 on requests (0x004482b0), so this
     word is entirely the server's to choose.
+
+    **Is a non-zero status safe here?** Yes, and positively so rather than for
+    want of contrary evidence. Between the wire parse and the dispatch
+    (0x00448cc0-0x00448d14) nothing branches on the status at all -- the only
+    tests are on callback pointers. There is a generic pre-dispatch callback at
+    conn+1300, but 0x00447770 has exactly one caller (0x004de668) and it
+    registers index **1**, the ``+msg`` consumer at conn+0x51C. Index 0 is never
+    registered, so it stays zero from the 1360-byte memset at 0x0044754c and the
+    `beq a3, zero` at 0x00448cd8 always skips it. No generic layer sees this
+    message before its one-shot handler does.
     """
     return protocol.encode("news", news_status(kind), fields)
 

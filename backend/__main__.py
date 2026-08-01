@@ -58,18 +58,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help="comma-separated candidate checksums; a different "
                              "one is announced on each login, so several can be "
                              "tested in one session instead of one per boot")
-    parser.add_argument("--news-reply-type", choices=("new", "news"),
-                        default="new",
-                        help="how to tag a `news` reply: 'new' for new0/new1/"
-                             "new2 (what 0x0034f4f0 appears to require), or "
-                             "'news' to echo the request type as every other "
-                             "reply does. Diagnostic -- the console is not "
-                             "storing our CSUM and only one of these is right.")
-    parser.add_argument("--news-body", choices=("plain", "subblock"),
-                        default="plain",
-                        help="'subblock' sends the news reply as type `news` "
-                             "with its fields inside a new<n> sub-block, which "
-                             "is what the measured completion codes point to")
     parser.add_argument("--roster-payload",
                         help="league database to SERVE as an update. Published "
                              "over HTTP and named in the `new2` manifest; the "
@@ -138,8 +126,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                   % (len(rows), args.roster_db, value, value))
     if args.roster_csum:
         config["roster_csum"] = args.roster_csum
-    config["news_reply_type"] = args.news_reply_type
-    config["news_body"] = args.news_body
     if args.roster_csum_sweep:
         candidates = [c.strip() for c in args.roster_csum_sweep.split(",")
                       if c.strip()]
