@@ -1300,3 +1300,87 @@ class RoomNameTests(unittest.TestCase):
 
     def test_an_empty_name_is_refused(self):
         self.assertFalse(self._create("   ").ok)
+
+
+class AddressPropagationTests(unittest.TestCase):
+    """`+usr A` must carry the OBSERVED address, not the reported one.
+
+    The client does not simply dial the address in a `+ses`: 0x004deb58 looks
+    the opponent's name up in its own user list and overrides the invite with
+    what it finds (`movn s0, v0, v0`). Every PCSX2 guest reports 192.0.2.100, so
+    a self-reported address leaking into `+usr` silently defeats the invite and
+    both consoles dial the same wrong host.
+    """
+
+    def test_a_user_record_uses_the_observed_address(self):
+        session = Session("10.0.0.7:41000")
+        session.client_addr = "192.0.2.100"      # what a console reports
+        self.assertEqual(session.observed_addr, "10.0.0.7")
+        self.assertNotEqual(session.observed_addr, session.client_addr)
+
+
+class RoomReuseTests(unittest.TestCase):
+    """Creating a room that already exists must succeed, not fail `dupl`.
+
+    The create path a console actually uses (0x00356480) sends no IGNEXIST, and
+    its default name is the same every time. Refusing duplicates means a room
+    can be made once per database and never again -- the second attempt of a
+    session hits an error screen.
+    """
+
+    def setUp(self):
+        self.store, self.path = make_store()
+        self.store.seed_defaults()
+
+    def tearDown(self):
+        self.store.close(); os.unlink(self.path)
+
+    def _create(self, name, **extra):
+        session = open_session()
+        session.account, session.persona = "alice", "AliceP"
+        fields = {"NAME": name, "PASS": "", "DESC": "None", "MAX": "50"}
+        fields.update(extra)
+        _s, replies = run(self.store, "room", fields, session=session)
+        return replies[0]
+
+    def test_the_same_name_twice_returns_the_same_room(self):
+        first = self._create("C.NEW ROOM")
+        second = self._create("C.NEW ROOM")
+        self.assertTrue(first.ok)
+        self.assertTrue(second.ok, "a console cannot make its default room twice")
+        self.assertEqual(first.fields["IDENT"], second.fields["IDENT"])
+
+    def test_a_password_still_guards_an_existing_room(self):
+        self._create("Locked", PASS="secret")
+        self.assertFalse(self._create("Locked", PASS="wrong").ok)
+        self.assertTrue(self._create("Locked", PASS="secret").ok)
+
+
+class MoveRefusalStateTests(unittest.TestCase):
+    """A refused `move` must echo the room id the CLIENT is holding."""
+
+    def setUp(self):
+        self.store, self.path = make_store()
+        self.store.seed_defaults()
+
+    def tearDown(self):
+        self.store.close(); os.unlink(self.path)
+
+    def _session(self):
+        session = open_session()
+        session.account, session.persona = "alice", "AliceP"
+        return session
+
+    def test_before_any_join_the_client_holds_zero(self):
+        session = self._session()
+        _s, replies = run(self.store, "move", {"NAME": "Nope"}, session=session)
+        self.assertEqual(replies[0].fields["IDENT"], "0")
+
+    def test_after_a_leave_the_client_holds_minus_one(self):
+        # The leave reply sends IDENT=-1, so that is what the client adopted.
+        session = self._session()
+        run(self.store, "move", {"NAME": "Open Lobby"}, session=session)
+        _s, left = run(self.store, "move", {"NAME": ""}, session=session)
+        self.assertEqual(left[0].fields["IDENT"], "-1")
+        _s, refused = run(self.store, "move", {"NAME": "Nope"}, session=session)
+        self.assertEqual(refused[0].fields["IDENT"], "-1")

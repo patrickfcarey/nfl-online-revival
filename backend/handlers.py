@@ -56,10 +56,17 @@ _MAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 #: Room names are NOT persona names and must not be validated as such.
 #:
-#: The client generates its own, and they contain spaces: a real console asked
-#: to create ``C.NEW ROOM``. Rejecting that with ``inam`` is what stopped the
-#: first console ever to reach a lobby from creating a game. The generator at
-#: 0x00119cc8 emits a letter, a dot and a suffix, so the shape varies.
+#: A real console asked to create ``C.NEW ROOM``, and rejecting that with
+#: ``inam`` is what stopped the first console to reach a lobby from making a
+#: game.
+#:
+#: Note where that name does NOT come from. 0x00119cc8 generates
+#: ``X.<user-name>`` with a hardcoded ``'X'``, and its caller 0x00119cf0 is the
+#: path that sends ``IGNEXIST=1``. The console used a different create,
+#: 0x00356480, which sends a typed name plus ``PASS``, a literal ``DESC=None``
+#: and a hardcoded ``MAX=50``. So the name is user-typed through the on-screen
+#: keyboard, and no generator constrains its shape -- which is exactly why the
+#: rule below has to be permissive rather than pattern-matched.
 #:
 #: Printable ASCII only, and no longer than the client's 32-byte buffer allows.
 #: Control characters are excluded because the client's own value copy stops at
@@ -103,6 +110,9 @@ class Session:
         self.user_id: int = 0
         #: Favourite team, from `cusr` SETFAV. Session-only for now.
         self.favourite: str = ""
+        #: True once a leave reply has told the client to adopt room -1. The
+        #: client's own field is 0 only until its first leave.
+        self.left_a_room = False
         #: A pairing waiting to be announced once this session's reply has
         #: gone out. The +ses push must never precede the reply that the
         #: client is still inside.
@@ -516,7 +526,7 @@ def _push_occupants(ctx: Context, room_name: str) -> None:
         ctx.hub.push(ctx.connection, lobby.user_record(
             other.session.user_id,
             other.session.persona or other.session.account or "player",
-            addr=other.session.client_addr or "0.0.0.0",
+            addr=other.session.observed_addr or "0.0.0.0",
             room_occupants=count,
             is_self=other is ctx.connection))
 
@@ -552,6 +562,15 @@ def move_room(ctx: Context) -> List[bytes]:
         match, so the client sees no change and keeps its list.
         """
         room = session.room
+        # After a *leave* the client adopted -1, because that is what the leave
+        # reply sent; with no room the server's own id is 0. Echo what the
+        # client is actually holding, which is -1 once it has left and 0 only
+        # before it has ever joined. Getting this wrong drains an already-empty
+        # list, so it is harmless today -- but the invariant this function
+        # exists to maintain is "echo what the client holds", and silently not
+        # holding it is how the next subtle desync starts.
+        held = session.room_id if session.room else (
+            -1 if session.left_a_room else 0)
         # IDENT verbatim, NOT `or -1`. A session with no room has room_id 0, and
         # the client's own field (conn+0x1B8) is also 0 -- the whole struct is
         # memset at 0x0044754c. Substituting -1 makes the comparison at
@@ -559,9 +578,9 @@ def move_room(ctx: Context) -> List[bytes]:
         # precisely the wipe this function exists to prevent, in precisely the
         # cases it is called for.
         return [protocol.encode("move", tag, {
-            "LIDENT": str(session.room_id),
+            "LIDENT": str(held),
             "LCOUNT": str(_occupancy(ctx, room) if room else 0),
-            "IDENT": str(session.room_id),
+            "IDENT": str(held),
             "COUNT": str(_occupancy(ctx, room) if room else 0),
             "NAME": room or "",
             "FLAGS": "",
@@ -577,6 +596,7 @@ def move_room(ctx: Context) -> List[bytes]:
 
     if not target:                                   # leaving
         session.room, session.room_id = None, 0
+        session.left_a_room = True
         if previous:
             _announce(ctx, previous, lobby.user_removal(
                 session.user_id, _occupancy(ctx, previous)))
@@ -629,7 +649,7 @@ def after_move(ctx: Context) -> None:
     _announce(ctx, ctx.session.room, lobby.user_record(
         ctx.session.user_id,
         ctx.session.persona or ctx.session.account or "player",
-        addr=ctx.session.client_addr or "0.0.0.0",
+        addr=ctx.session.observed_addr or "0.0.0.0",
         room_occupants=_occupancy(ctx, ctx.session.room)))
 
 
@@ -792,10 +812,23 @@ def create_room(ctx: Context) -> List[bytes]:
     if not name or not _ROOM_NAME_RE.match(name):
         return ctx.fail(ERR_BAD_NAME)
 
-    ignore_existing = ctx.message.get("IGNEXIST", "0") not in ("", "0")
+    # An existing room of this name is NOT an error.
+    #
+    # `IGNEXIST=1` is sent by one create path (0x00119cf0, the generated
+    # `X.<user>` name), but the path a console actually uses -- 0x00356480, with
+    # a typed name plus PASS, DESC and a hardcoded MAX=50 -- does not send it at
+    # all. Failing those with `dupl` would mean a room could be made once and
+    # never again: the default name is the same every time, so the second
+    # attempt of the session hits an error screen.
+    #
+    # Joining an existing room by the same name is what the player wanted in
+    # either case, so return its id rather than refusing. The room is still
+    # refused if a password is set and does not match, which is the case where
+    # "already exists" genuinely blocks the caller.
     existing = ctx.store.room(name)
-    if existing is not None and not ignore_existing:
-        return ctx.fail(ERR_DUPLICATE)
+    if existing is not None and existing["PASS"]:
+        if ctx.message.get("PASS") != existing["PASS"]:
+            return ctx.fail(ERR_BAD_PASS)
 
     if existing is None:
         password = ctx.message.get("PASS")

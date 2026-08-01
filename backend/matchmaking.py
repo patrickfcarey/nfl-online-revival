@@ -19,8 +19,12 @@ carry status 0 and arrive within 30 seconds (descriptor at 0x00573d88).
 Two rules from the client's transport that shape everything here:
 
 * **Every request must be answered.** Replies are matched against the *head* of
-  a pending queue (0x00446ce0) and nothing pops it on a timeout, so one
-  unanswered ``quik`` silently blocks every later reply on that connection.
+  a pending queue (0x00446ce0), so one unanswered ``quik`` silently blocks every
+  later reply on that connection. Nothing pops the head on a timeout **except
+  ``ping``**, whose entries carry a 10-second deadline (set at 0x00448404) and
+  are expired by a ping-only sweep at 0x00446e64. So an unanswered ``ping``
+  costs ten seconds of dropped replies; an unanswered anything-else wedges the
+  connection for good.
   Both handlers therefore always return exactly one reply, including on the
   paths where there is nothing useful to say.
 * **A queued client waits forever.** There is no client-side timeout in the
