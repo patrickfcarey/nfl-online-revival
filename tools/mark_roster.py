@@ -64,9 +64,12 @@ def reseal(blob: bytes) -> bytes:
       table's word at +0 -- the field a JS reader calls ``priorcrc``, which is
       exactly what it is: the checksum of the *prior* block.
     * each table header runs +4..+36 with its checksum at +36.
-    * each table's data block runs from its +40 to the next table's header, and
-      its checksum lands in that next table's +0. The last table's data runs to
-      the final four bytes of the file, which hold its checksum.
+    * each table's data block runs from its +40 for
+      ``field_count * 16 + record_bytes * max_records`` bytes -- the table's
+      full capacity, not its rows in use -- with its checksum in the word
+      immediately after. In a packed retail file that word falls inside the next
+      table's header, at its +0, which is why a "runs to the next header" rule
+      reproduces every stored value and is nonetheless the wrong rule.
 
     So the chain interleaves: every block is followed by its own checksum word,
     and those words happen to fall inside the next structure's first field.
@@ -85,9 +88,19 @@ def reseal(blob: bytes) -> bytes:
     for index, head in enumerate(heads):
         struct.pack_into("<I", out, head + 36,
                          tdb_crc(bytes(out[head + 4:head + 36])))
-        end = heads[index + 1] if index + 1 < tables else len(out) - 4
-        slot = heads[index + 1] if index + 1 < tables else len(out) - 4
-        struct.pack_into("<I", out, slot, tdb_crc(bytes(out[head + 40:end])))
+        # The data block's length is the table's FULL CAPACITY, not the span to
+        # the next header and not the rows in use:
+        #   field_count * 16 + record_bytes * max_records
+        # (0x004c8ab0, 0x004c8b54). Those coincide in the retail file because it
+        # is packed tight, so a "to the next header" rule reproduces every
+        # stored value here and still be wrong -- any padding, or an edited
+        # max_records or record_bytes, and it checksums the wrong span.
+        record_bytes = struct.unpack_from("<I", out, head + 8)[0]
+        max_records = struct.unpack_from("<H", out, head + 20)[0]
+        field_count = out[head + 28]
+        length = field_count * 16 + record_bytes * max_records
+        end = head + 40 + length
+        struct.pack_into("<I", out, end, tdb_crc(bytes(out[head + 40:end])))
     return bytes(out)
 
 
@@ -159,7 +172,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("player 0 surname: %r -> %r" % (before, after))
     print()
     print("Serve this with --roster-payload. If that surname shows up in the")
-    print("console's roster, the install is observed rather than inferred.")
+    print("console's roster, the install is OBSERVED -- which nothing else has")
+    print("achieved: an unmodified payload is byte-identical to the disc, so no")
+    print("inspection afterwards can tell an install from an ordinary boot.")
+    print()
+    print("HAZARD, and it is real: the install path deletes every LEAG table")
+    print("(0x004c9ee8-0x004c9f14) BEFORE it opens the stream or reads the")
+    print("magic, and there is no rollback. A payload that fails validation")
+    print("halfway leaves the league database empty or half-built. Do not do")
+    print("this over a franchise or league someone cares about.")
     print()
     print("The TDB's own per-block checksums are recomputed, so the inner")
     print("checks at 0x004ca810 should pass as they do for the disc file.")

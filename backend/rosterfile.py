@@ -25,6 +25,13 @@ returns when the kernel takes the bytes, so a refused transfer can still look
 like a clean 200 in this server's log. Only the console's own state says
 whether a payload landed.
 
+**The console wipes before it validates.** The install path deletes every table
+in ``LEAG`` (0x004c9ee8-0x004c9f14) *before* the stream is opened and before the
+file's magic is read, and there is no rollback. A truncated transfer or a
+malformed payload therefore leaves the league database empty or half-built,
+recoverable only by rebooting the game. That is a reason to be careful about
+what is served, not merely about whether it verifies.
+
 **It is served to a console, not a browser.** Keep the response minimal and
 always send ``Content-Length``; the client reads the body length from the
 header ('body' selector) rather than by reading to EOF.
