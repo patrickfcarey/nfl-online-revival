@@ -47,6 +47,36 @@ ROSTER_PAYLOAD="${ROSTER_PAYLOAD:-}"
 HTTP_PORT="${HTTP_PORT:-10080}"
 TRANSCRIPT="${TRANSCRIPT:-captures/madden-$(date +%Y%m%d-%H%M%S).jsonl}"
 
+# Refuse clearly if an instance is already up. Python reports a taken port as
+# "[Errno 98] Address already in use", which reads like a bug in the server
+# rather than the obvious "you already have one running" -- and the previous
+# instance is easy to lose track of when it was started with nohup.
+#
+# The bracket in the pattern stops pgrep matching its own command line. That
+# self-match has killed a live SSH session on this project four times.
+existing=$(pgrep -f "m backen[d]" | head -1 || true)
+if [ -n "$existing" ]; then
+    echo "A backend is already running as PID $existing:" >&2
+    ps -o args= -p "$existing" | sed "s/^/    /" >&2
+    echo >&2
+    if [ -n "${REPLACE:-}" ]; then
+        echo "REPLACE is set -- stopping it." >&2
+        kill "$existing" 2>/dev/null || true
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            kill -0 "$existing" 2>/dev/null || break
+            sleep 0.5
+        done
+        if kill -0 "$existing" 2>/dev/null; then
+            echo "error: PID $existing did not stop; kill it yourself." >&2
+            exit 1
+        fi
+    else
+        echo "Stop it first, or re-run with REPLACE=1 to take over:" >&2
+        echo "    REPLACE=1 $0 $*" >&2
+        exit 1
+    fi
+fi
+
 if [ ! -f "$DB" ]; then
     echo "note: $DB does not exist yet; a new one will be created and you will"
     echo "      need to make a fresh EA account in-game."

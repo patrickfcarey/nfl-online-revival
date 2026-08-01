@@ -208,8 +208,14 @@ server can state a version the console agrees with:
 
 ```bash
 python3 tools/roster_checksum.py /path/to/DB_TEAMS.DAT
-./serve-madden.sh          # reads RIG_IP from .env.local
+./serve-madden.sh                  # reads RIG_IP from .env.local
+REPLACE=1 ./serve-madden.sh        # ...taking over from one already running
 ```
+
+It refuses to start on top of a running instance and names the PID, rather than
+letting Python report `[Errno 98] Address already in use` — which reads like a
+bug in the server instead of the obvious cause, especially when the previous
+instance was backgrounded and forgotten.
 
 **Use the script rather than assembling the command by hand.** Four flags matter
 and none of them announce themselves when wrong — every mistake below produces
