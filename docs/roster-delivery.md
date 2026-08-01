@@ -155,9 +155,9 @@ The practical consequence: if a future roster is built by editing
 that has to change is `template.dat` member 0. If `DB_TEAMS.DAT` is kept
 around only as the source `tools/roster_checksum.py` reads `CSUM` from, the
 two now have to be edited in parallel, in the same way, or the checksum
-announced and the roster served stop agreeing with each other -- which looks
-like an entirely different failure (see "What a failure looks like," below)
-from wherever this note is.
+announced and the roster actually served stop agreeing with each other --
+which does not look like a mismatch at all. It looks like an unrelated
+failure with the download itself (see "What a failure looks like," below).
 
 ## The delivery chain
 
@@ -182,10 +182,13 @@ console's own client performs; the lobby's only job is to tell it where.
    redirect layer in between; the console dials whatever host the manifest
    named, directly.
 3. On completion, `0x003527c0` verifies. It reads the manifest's own `CRC`
-   back out of memory (`0x003525c8`: `TagFieldFind(..., "CRC")` at
-   `0x0044acc8`, then the plain `atoi` at `0x0044c550` -- the same pair of
-   primitives that reads `"URL"` two lines earlier in the same function),
-   asks `0x003b6cf0` for the size of the member backing `GAEL`, and runs
+   back out of memory through a small helper, `0x003525c8`:
+   `TagFieldFind(..., "CRC")` at `0x0044acc8`, then the plain `atoi` at
+   `0x0044c550` to turn the matched text into the integer being checked
+   against. (A neighboring helper, `0x003525b0`, reads `URL` the same
+   general way, off the same manifest-record cursor -- but stops short of
+   `atoi`, since a URL has to stay a string.) `0x003527c0` then asks
+   `0x003b6cf0` for the size of the member backing `GAEL`, and runs
 
    ```
    00352800  jal   0x0039d7e8       ; crc = CRC32(downloaded_buffer, size, seed)
@@ -405,6 +408,68 @@ hand-built database not derived from the extraction above), serving a
 different candidate on each login instead of costing a reboot per attempt --
 but for anything built the way this section describes, `tools/roster_checksum.py`
 already gives the exact value, and the sweep should not be needed.
+
+## Building a real roster
+
+Everything above is about getting *a* file into the console. This is about
+getting a useful one there.
+
+`tools/build_year_roster.py` writes a whole NFL season into the league database
+in one command:
+
+```bash
+python3 tools/build_year_roster.py --year 2023 \
+    --template extract/madden_TEMPLATE.DAT -o rosters/2023.dat
+ROSTER_PAYLOAD=rosters/2023.dat ./serve-madden.sh
+```
+
+It extracts member 0 itself, so a retail disc file is enough to start from. The
+data comes from `NCAA-Draft-Class-Editor`: scraped rosters give names, teams,
+positions, jersey numbers, height, weight, age and service time, and Madden's
+own published launch ratings supply the ratings.
+
+**Build 2023.** It is the newest season EA published ratings for, so every
+player carries the ratings EA shipped for him. Later years have no authority for
+anyone who has entered the league since; those players are left out entirely
+unless `--estimate-missing` is passed, which invents ratings from position, age
+and experience. That flag is off by default because a roster that is 70% real
+and 30% invented looks exactly like a roster that is 100% real.
+
+### Never trust the source data's team numbering
+
+The scraped rosters carry their own `tgId`, and it agrees with the game for
+twenty-nine clubs and disagrees for three. The game has 30 Titans, 31 Vikings,
+32 Texans; the scraped file has 30 Texans, 31 Titans, 32 Vikings.
+
+Trusting it puts three entire rosters on the wrong teams — and the twenty-nine
+that match make the result look correct under any spot check. Derrick Henry was
+a Viking for one build. So the builder reads the game's own `TEAM` table out of
+the database it is editing and keys on the abbreviation in `TSNA`, with an alias
+table for franchises that have moved since 2003 (`LV`→`OAK`, `LAC`→`SD`,
+`LAR`→`STL`).
+
+### Field encodings, confirmed against retail records
+
+Read out of the shipped roster rather than assumed, by finding players whose
+real measurements are known:
+
+| Column | Encoding | Confirmed by |
+|---|---|---|
+| `PHGT` | height in inches | Urlacher 76, Kreutz 74 |
+| `PWGT` | pounds **minus 160** | an 8-bit field cannot hold a lineman otherwise |
+| `PJEN` | jersey number | Kreutz 57, Robinson 98 |
+| `PPOS` | Madden order, QB=0 … P=20 | Kreutz at C, Urlacher at MLB, Maynard at P |
+
+### Two things the server does so you cannot get them wrong
+
+`ROSTER_PAYLOAD` is **required** by `serve-madden.sh`. Serving no roster is a
+silent failure — the console asks, receives an empty manifest, and reports a
+vague error while the server looks healthy throughout.
+
+And the server announces the checksum of the roster it is **serving**, derived
+from the payload itself rather than from `--roster-db`. The console recomputes
+over what it installed; announcing a different roster's value would have it
+decide the fresh install was already stale and offer the same update forever.
 
 ## What a failure looks like
 
