@@ -126,7 +126,7 @@ class RosterManifest(unittest.TestCase):
 
     @staticmethod
     def _records(reply):
-        """Split a list reply into records: one per LINE, fields by space.
+        """Split a list reply into records: one per LINE, fields by TAB.
 
         Deliberately not protocol.parse_fields, which is for ordinary replies
         and would read a whole record line as a single field. The two layouts
@@ -139,7 +139,7 @@ class RosterManifest(unittest.TestCase):
             if not line.strip():
                 continue
             fields = {}
-            for part in line.split(" "):
+            for part in line.split("\t"):
                 if "=" in part:
                     key, value = part.split("=", 1)
                     fields[key] = value
@@ -178,11 +178,18 @@ class RosterManifest(unittest.TestCase):
         body = reply.raw_payload.split(b"\x00", 1)[0]
         self.assertEqual(body.count(b"\n"), 1)
 
-    def test_a_value_with_a_space_is_refused(self):
-        # Fields inside a record are space-separated, so a space in a value
-        # would silently become a new field.
+    def test_fields_are_tab_separated_not_space(self):
+        """Proven on hardware: with a space the console requested
+        `GET /roster.dat CRC=... NAME=... HTTP/1.0` -- the URL had swallowed the
+        rest of the line, because its value copy only stops below byte 32."""
+        reply = self._manifest(roster_url="http://h/r.dat", roster_file_crc=1)
+        body = reply.raw_payload.split(b"\x00", 1)[0]
+        self.assertIn(b"\t", body)
+        self.assertNotIn(b"dat ", body)      # no space after the URL
+
+    def test_a_control_character_in_a_value_is_refused(self):
         with self.assertRaises(protocol.ProtocolError):
-            handlers._news_list(None, 2, [{"NAME": "two words"}])
+            handlers._news_list(None, 2, [{"NAME": "two\tparts"}])
 
     def test_a_url_without_a_crc_is_not_advertised(self):
         # A record with a URL the client cannot verify is worse than no record:

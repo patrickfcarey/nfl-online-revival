@@ -1050,8 +1050,18 @@ def _news_message(ctx: Context, kind: int, fields) -> bytes:
     return protocol.encode("news", news_status(kind), fields)
 
 
-#: A record label. No spaces: fields inside a record are space-separated, so a
-#: space in a value would start a new field.
+#: Fields inside one record are separated by a TAB, not a space.
+#:
+#: Proven on hardware. With a space the console requested
+#: ``GET /roster.dat CRC=3617576383 NAME=Roster HTTP/1.0`` -- it had swallowed
+#: the whole remainder of the line into the URL. The client copies a value with
+#: 0x0044c9b0, which stops at any byte below 32; a space (0x20) is not below 32
+#: and so does not end the value, while a tab (0x09) does. Newline separates
+#: records, tab separates fields within one.
+RECORD_FIELD_SEP = "\t"
+
+#: A record label. Kept to plain characters -- the value copy would stop at any
+#: control byte inside it.
 ROSTER_LABEL = "Roster"
 
 
@@ -1078,12 +1088,13 @@ def _news_list(ctx: Context, kind: int, records) -> bytes:
         parts = []
         for key, value in record.items():
             text = protocol.percent_escape(str(value))
-            if " " in text:
+            if any(ord(ch) < 32 for ch in text):
                 raise ProtocolError(
-                    "%s=%r contains a space; fields within a record are "
-                    "space-separated, so it would split into two" % (key, text))
+                    "%s=%r contains a control character; the client's value "
+                    "copy stops at any byte below 32, so it would truncate"
+                    % (key, text))
             parts.append("%s=%s" % (key, text))
-        lines.append(" ".join(parts))
+        lines.append(RECORD_FIELD_SEP.join(parts))
     body = ("\n".join(lines) + "\n").encode("latin-1") + b"\x00" if lines else b"\x00"
     if lines:
         # The body is the thing that has been wrong twice: once carrying a
