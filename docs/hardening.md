@@ -318,9 +318,10 @@ a request timeout, `sendall` timeout. See §7.
 security groups. Mostly infrastructure; the only code change is binding the
 core to a private address.
 
-**Phase C — the application-layer controls.** Token buckets in log-only mode,
-pre-auth deadline, ban list, counters. Then the calibration session, then
-switch the limiter to enforcing.
+**Phase C — the application-layer controls. DONE 2026-08-01.** Token buckets in
+log-only mode, pre-auth deadline, ban list, counters. See §8. The calibration
+session and the switch to enforcing remain, and cannot be done here — they need
+a real console.
 
 **Phase D — the relay**, built with the constraints in §2 from the start.
 
@@ -388,7 +389,102 @@ which is what closes the slowloris hole. A connection that sends one byte and
 then stalls forever without ever authenticating is still bounded only by the
 120 s idle timeout and the connection caps.
 
-## 8. What this does not cover
+## 8. Phase C as built
+
+New module `backend/metrics.py`; `backend/limits.py` gains `TokenBucket`,
+`RateLimiter` and `BanList`; wiring in `service.py` and `__main__.py`.
+
+### Rate limiting ships observing, not enforcing
+
+This is the central decision and everything else follows from it. The
+thresholds are **not measured** — the transcripts that would have set them did
+not survive — and this client's response to a message that gets no reply is to
+wait forever, because an unanswered request wedges its pending queue
+(`0x00446ce0`). Shipping a guessed threshold in enforcing mode risks cutting off
+a real player in the one way they cannot diagnose.
+
+So `--rate-limit` has three settings: `off`, `observe` (default), `enforce`.
+Observing counts and logs violations and never acts on them. Two tests hold that
+line — `test_observing_never_drops_a_connection` and
+`test_observing_never_bans`.
+
+Token buckets rather than fixed windows: a window lets a client spend its whole
+allowance at the boundary and again immediately after, which is the burst the
+limit exists to bound.
+
+### The calibration loop
+
+`nfl_rate_peak_messages_per_second` is the busiest one-second window seen on any
+connection. That gauge is the entire point of log-only mode — it turns the
+guess into a measurement:
+
+1. Run a full session with a real console, `--rate-limit observe`.
+2. Read the peak off `http://127.0.0.1:9109/`.
+3. Set `--rate` and `--rate-burst` near ten times it.
+4. Switch to `--rate-limit enforce`.
+
+Until step 4 the defaults (20/s per connection, 60/s per address) are loose
+guesses and are documented as such in the banner, which prints the warning on
+every start so nobody mistakes observing for protection.
+
+### Pre-auth deadline
+
+Distinct from the first-byte deadline and it closes a different hole: a socket
+that sends one byte a minute passes every silence check forever while holding a
+thread, a slot, and a user id. 60 s, against `Session.authenticated`
+(`account is not None`). Connections that only ask `@dir` are exempt in practice
+rather than by rule — they are gone long before it expires.
+
+### Bans
+
+Five strikes in 120 s earns 600 s, in memory. Bans that expire on restart are
+acceptable at this scale, and persisting them would mean a mistake in the strike
+rules outlives the fix for it.
+
+**Only hard signals earn strikes**: malformed framing, a connection that never
+speaks, one that never authenticates. A rate violation counts *only when
+enforcing* — banning on an unmeasured threshold would take a real player off the
+service for ten minutes with no way to tell them why. The ban check runs before
+the connection limiter, so a banned address does not also consume a slot to be
+refused.
+
+Both maps are keyed on attacker input, so both are bounded (`_MAX_TRACKED`)
+rather than relying on expiry running.
+
+### Counters
+
+Prometheus text on loopback, `--metrics-port 9109`. Two rules, both about not
+leaking players:
+
+- **The listener refuses a non-loopback bind** unless `--metrics-allow-public`.
+  There is no authentication on it and none is intended.
+- **No counter carries a source address as a label.** Aggregate totals answer
+  every operational question here — how many were refused, not who — and a
+  metrics page that enumerates player addresses is a log of who played and when.
+  `test_no_counter_carries_a_source_address` asserts the shape, not a list of
+  names, since a label is the only way an address could get onto the page.
+
+Every counter is declared at zero on startup. A counter that appears only once
+non-zero cannot be told apart from one that was never wired up, so an absent
+`refused` line would read as "nothing was refused" when it might mean the check
+does not run.
+
+Losing the metrics port is a warning, never fatal. Refusing to run a game server
+because a diagnostic port is taken would be the wrong trade.
+
+### Verification
+
+31 new tests (`tests/test_limits.py` 15 → 36, `tests/test_metrics.py` new);
+368 pass.
+Confirmed live: banner, counters, and the peak gauge reading 12 after a
+12-message burst.
+
+One structural fix worth noting: the socket-level tests had shared a harness by
+subclassing, which made unittest collect the parent's tests again through the
+child and run the whole accept-gate suite twice. The harness is now a plain
+mixin.
+
+## 9. What this does not cover
 
 - **Application-layer authentication is weak by design.** The client's `auth`
   exchange is what it is; we cannot add TLS or a modern credential flow without

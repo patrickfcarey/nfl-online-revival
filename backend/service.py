@@ -21,6 +21,7 @@ import time
 from typing import Dict, List, Optional
 
 from . import handlers, limits, protocol
+from . import metrics as metrics_module
 from .handlers import Context, Session
 from .hub import SEND_TIMEOUT, Connection, Hub, PushError
 from .store import Store
@@ -42,6 +43,17 @@ FIRST_BYTE_DEADLINE = 30.0
 #: missed echoes before giving up, which keeps it firmly on the fail-open side
 #: for a real player while still bounding what an idle socket can hold.
 IDLE_TIMEOUT = 120.0
+
+#: How long a connection may talk without ever logging in.
+#:
+#: Distinct from FIRST_BYTE_DEADLINE, and it closes a different hole: a socket
+#: that sends one byte every minute passes the first-byte check and the idle
+#: check forever while holding a thread, a slot, and a user id. Login is a
+#: short fixed exchange, so a minute is many times what it needs.
+#:
+#: Connections to the redirector are exempt in practice rather than by rule --
+#: a client that asks `@dir` and leaves is gone long before this expires.
+PRE_AUTH_DEADLINE = 60.0
 
 
 class ServiceError(RuntimeError):
@@ -85,7 +97,11 @@ class Service:
                  limiter: Optional[limits.ConnectionLimiter] = None,
                  send_timeout: float = SEND_TIMEOUT,
                  idle_timeout: float = IDLE_TIMEOUT,
-                 first_byte_deadline: float = FIRST_BYTE_DEADLINE) -> None:
+                 first_byte_deadline: float = FIRST_BYTE_DEADLINE,
+                 pre_auth_deadline: float = PRE_AUTH_DEADLINE,
+                 rates: Optional[limits.RateLimiter] = None,
+                 bans: Optional[limits.BanList] = None,
+                 metrics: Optional["metrics_module.Metrics"] = None) -> None:
         self.store = store
         self.config = config
         self.transcript = transcript or Transcript(None)
@@ -97,9 +113,14 @@ class Service:
         #: :10000 and the advertised port at the same time during the redirect,
         #: so a per-port count would be counting the wrong thing.
         self.limiter = limiter or limits.ConnectionLimiter()
+        self.rates = rates or limits.RateLimiter()
+        self.bans = bans or limits.BanList()
+        self.metrics = metrics or metrics_module.Metrics()
+        self._declare_metrics()
         self.send_timeout = send_timeout
         self.idle_timeout = idle_timeout
         self.first_byte_deadline = first_byte_deadline
+        self.pre_auth_deadline = pre_auth_deadline
         self._next_user_id = 0
         self._id_lock = threading.Lock()
         self._listeners: List[socket.socket] = []
@@ -110,6 +131,57 @@ class Service:
     def _say(self, text: str) -> None:
         if self.verbose:
             print(text, flush=True)
+
+    def _declare_metrics(self) -> None:
+        """Every counter exists from the start, at zero.
+
+        A counter that only appears once it is non-zero cannot be told apart
+        from one that was never wired up, so an absent line would read as
+        "nothing was refused" when it might mean the check does not run.
+        """
+        declare = self.metrics.declare
+        declare("connections_total", "Connections accepted.")
+        declare("connections_refused_total",
+                "Connections closed immediately by a limit or a ban.")
+        declare("framing_errors_total", "Streams abandoned as unparseable.")
+        declare("timeouts_first_byte_total",
+                "Connections closed having never sent anything.")
+        declare("timeouts_idle_total",
+                "Established connections closed for going quiet.")
+        declare("timeouts_pre_auth_total",
+                "Connections closed for never logging in.")
+        declare("sends_stalled_total",
+                "Connections abandoned because a write timed out.")
+        declare("messages_total", "Messages decoded from clients.")
+        declare("rate_violations_total",
+                "Messages over a rate limit, whether or not it was enforced.")
+        declare("rate_enforced_total",
+                "Connections actually closed for exceeding a rate limit.")
+        declare("bans_total", "Addresses that crossed the strike threshold.")
+
+        self.metrics.gauge("connections_active", "Connections open now.",
+                           lambda: self.limiter.active)
+        self.metrics.gauge("bans_active", "Addresses currently refused.",
+                           lambda: len(self.bans.active()))
+        # The number the log-only mode exists to produce: set the limit from
+        # this, not from the guess in limits.py.
+        self.metrics.gauge("rate_peak_messages_per_second",
+                           "Busiest one-second window seen on any connection.",
+                           lambda: self.rates.connection_peak.peak)
+        self.metrics.gauge("rate_limit_enforced",
+                           "1 when rate limits close connections, 0 when only "
+                           "observed.",
+                           lambda: 1 if self.rates.enforce else 0)
+
+    def _strike(self, address: str, label: str, reason: str) -> None:
+        """Record a hard signal against an address, and say so if it bans."""
+        until = self.bans.record(address, reason)
+        if until is not None:
+            self.metrics.bump("bans_total")
+            self._say("[ea] BAN %s for %.0fs after %d strikes (%s)"
+                      % (address, self.bans.ttl, self.bans.threshold, reason))
+            self.transcript.raw(label, "ban", b"",
+                                "%s: %s" % (address, reason))
 
     # -- connection ----------------------------------------------------
 
@@ -132,8 +204,12 @@ class Service:
         # deadlines below can be checked at all.
         last_heard = time.time()
         heard_anything = False
+        bucket = self.rates.new_bucket()
+        self.rates.attach(addr[0])
         try:
             while not self._stopping.is_set():
+                if self._past_pre_auth(connection, addr[0]):
+                    break
                 try:
                     chunk = conn.recv(65535)
                 except socket.timeout:
@@ -150,6 +226,14 @@ class Service:
                                      else "never sent anything"))
                         self.transcript.raw(label, "timeout", b"",
                                             "silent for %.1fs" % quiet)
+                        if heard_anything:
+                            self.metrics.bump("timeouts_idle_total")
+                        else:
+                            self.metrics.bump("timeouts_first_byte_total")
+                            # A socket opened and never used is not a slow
+                            # player, it is someone holding a thread.
+                            self._strike(addr[0], label,
+                                         "connected and sent nothing")
                         break
                     continue
                 if not chunk:
@@ -166,9 +250,33 @@ class Service:
                     self._say("     %d unparsed byte(s): %s"
                               % (len(buffer), buffer[:64].hex()))
                     self.transcript.raw(label, "framing-error", buffer, str(exc))
+                    self.metrics.bump("framing_errors_total")
+                    self._strike(addr[0], label, "malformed framing")
                     break
+                over_limit = False
                 for message in messages:
+                    self.metrics.bump("messages_total")
+                    reason = self.rates.check(bucket, addr[0])
+                    if reason is not None:
+                        self.metrics.bump("rate_violations_total")
+                        if self.rates.enforce:
+                            self._say("[ea] %s dropped: %s" % (label, reason))
+                            self.transcript.raw(label, "rate-limited", b"",
+                                                reason)
+                            self.metrics.bump("rate_enforced_total")
+                            # Only a strike when enforcing. In log-only mode
+                            # the threshold is still a guess, and banning on a
+                            # guess takes a real player off the service for ten
+                            # minutes with no way to tell them why.
+                            self._strike(addr[0], label, reason)
+                            over_limit = True
+                            break
+                        # Observing: say it once and carry on serving.
+                        self._say("[ea] %s over the rate limit (%s) -- "
+                                  "observing only, not enforced" % (label, reason))
                     self._handle(connection, message)
+                if over_limit:
+                    break
         except OSError as exc:
             self._say("[ea] %s socket error: %s" % (label, exc))
         finally:
@@ -180,12 +288,38 @@ class Service:
                       % (label, session.describe(),
                          " -- stopped reading; writes timed out"
                          if connection.stalled else ""))
+            if connection.stalled:
+                self.metrics.bump("sends_stalled_total")
             connection.close()
             # Last, and outside every other failure path: a slot that is not
             # given back is a slot lost for the lifetime of the process, and
             # the symptom is a server that refuses everyone after a while for
             # no visible reason.
+            self.rates.detach(addr[0])
             self.limiter.release(addr[0])
+
+    def _past_pre_auth(self, connection: Connection, address: str) -> bool:
+        """True when this connection has been talking too long without logging in.
+
+        Separate from the idle check because it catches the opposite shape: a
+        socket that sends one byte a minute stays inside every silence deadline
+        indefinitely while holding a thread, a slot and a user id.
+        """
+        if not self.pre_auth_deadline:
+            return False
+        session = connection.session
+        if getattr(session, "authenticated", True):
+            return False
+        age = time.time() - connection.opened
+        if age < self.pre_auth_deadline:
+            return False
+        self._say("[ea] %s closed: %.0fs without logging in"
+                  % (connection.label, age))
+        self.transcript.raw(connection.label, "pre-auth-timeout", b"",
+                            "%.1fs without auth" % age)
+        self.metrics.bump("timeouts_pre_auth_total")
+        self._strike(address, connection.label, "never authenticated")
+        return True
 
     def _handle(self, connection: Connection,
                 message: protocol.Message) -> None:
@@ -280,11 +414,22 @@ class Service:
         self._say("[ea] listening on %s ports %s"
                   % (bind, ", ".join(str(p) for p in ports)))
         self._say("[ea] limits: %s connections, %s per address; "
-                  "timeouts send %.0fs, idle %.0fs, first byte %.0fs"
+                  "timeouts send %.0fs, idle %.0fs, first byte %.0fs, "
+                  "pre-auth %.0fs"
                   % (self.limiter.total or "unlimited",
                      self.limiter.per_ip or "unlimited",
                      self.send_timeout, self.idle_timeout,
-                     self.first_byte_deadline))
+                     self.first_byte_deadline, self.pre_auth_deadline))
+        self._say("[ea] rate: %s" % self.rates.describe())
+        if not self.rates.enforce:
+            self._say("[ea]   thresholds are NOT measured -- run a real "
+                      "session, read nfl_rate_peak_messages_per_second, then "
+                      "set --rate and --rate-burst from it and pass "
+                      "--rate-limit enforce.")
+        self._say("[ea] bans: %s"
+                  % ("%d strikes in %.0fs -> %.0fs"
+                     % (self.bans.threshold, self.bans.window, self.bans.ttl)
+                     if self.bans.threshold else "disabled"))
         self._say("[ea] advertising %s:%s to clients"
                   % (self.config["advertise_host"], self.config["advertise_port"]))
 
@@ -315,15 +460,25 @@ class Service:
             # Gate before the thread exists. Spawning one and then discovering
             # it is over the limit would make the limit describe how fast the
             # box dies rather than whether it does.
-            refusal = self.limiter.acquire(addr[0])
+            #
+            # Bans are checked first: an address that already earned one should
+            # not also consume a connection slot to be told so.
+            remaining = self.bans.banned_for(addr[0])
+            refusal = None
+            if remaining:
+                refusal = "banned, %.0fs remaining" % remaining
+            else:
+                refusal = self.limiter.acquire(addr[0])
             if refusal is not None:
                 self._say("[ea] refused %s:%d on :%d -- %s"
                           % (addr[0], addr[1], port, refusal))
+                self.metrics.bump("connections_refused_total")
                 try:
                     conn.close()
                 except OSError:
                     pass
                 continue
+            self.metrics.bump("connections_total")
             try:
                 conn.settimeout(self.send_timeout)
             except OSError:

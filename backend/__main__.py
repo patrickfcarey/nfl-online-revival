@@ -13,7 +13,7 @@ import threading
 from typing import List, Optional
 
 from . import handlers  # noqa: F401  -- importing registers the handlers
-from . import hub, limits
+from . import hub, limits, metrics
 from . import service as service_module
 from .service import Service, ServiceError, Transcript
 from .store import Store, StoreError
@@ -117,6 +117,70 @@ def build_parser() -> argparse.ArgumentParser:
                        default=service_module.FIRST_BYTE_DEADLINE,
                        help="seconds a connection may stay silent having sent "
                             "nothing at all (default %(default)s)")
+    group.add_argument("--pre-auth-timeout", type=float,
+                       default=service_module.PRE_AUTH_DEADLINE,
+                       help="seconds a connection may talk without ever "
+                            "logging in. Catches the socket that sends one "
+                            "byte a minute and so never looks idle "
+                            "(default %(default)s)")
+
+    rate = parser.add_argument_group(
+        "rate limiting",
+        "Defaults to OBSERVING, not enforcing. The thresholds below are not "
+        "measured -- the transcripts that would have set them did not survive "
+        "-- and this client's response to a refused message is to wait "
+        "forever rather than report anything. Run a session, read "
+        "nfl_rate_peak_messages_per_second off the metrics page, set the "
+        "limits near ten times it, then pass --rate-limit enforce.")
+    rate.add_argument("--rate-limit", choices=("off", "observe", "enforce"),
+                      default="observe",
+                      help="off disables the buckets entirely; observe counts "
+                           "and logs violations without acting on them; "
+                           "enforce closes the connection (default %(default)s)")
+    rate.add_argument("--rate", type=float, default=limits.DEFAULT_RATE,
+                      help="sustained messages per second per connection "
+                           "(default %(default)s)")
+    rate.add_argument("--rate-burst", type=float, default=limits.DEFAULT_BURST,
+                      help="bucket capacity per connection (default %(default)s)")
+    rate.add_argument("--rate-per-ip", type=float,
+                      default=limits.DEFAULT_IP_RATE,
+                      help="sustained messages per second per address "
+                           "(default %(default)s)")
+    rate.add_argument("--rate-per-ip-burst", type=float,
+                      default=limits.DEFAULT_IP_BURST,
+                      help="bucket capacity per address (default %(default)s)")
+
+    ban = parser.add_argument_group(
+        "bans",
+        "Strikes come from hard signals only -- malformed framing, a "
+        "connection that never speaks, one that never logs in. A rate "
+        "violation counts only when --rate-limit enforce is set, because "
+        "banning on an unmeasured threshold takes a real player off the "
+        "service with no way to tell them why.")
+    ban.add_argument("--ban-threshold", type=int,
+                     default=limits.DEFAULT_BAN_THRESHOLD,
+                     help="strikes within the window before an address is "
+                          "refused; 0 disables banning (default %(default)s)")
+    ban.add_argument("--ban-window", type=float,
+                     default=limits.DEFAULT_BAN_WINDOW,
+                     help="seconds over which strikes accumulate "
+                          "(default %(default)s)")
+    ban.add_argument("--ban-ttl", type=float, default=limits.DEFAULT_BAN_TTL,
+                     help="seconds a ban lasts (default %(default)s)")
+
+    obs = parser.add_argument_group(
+        "metrics",
+        "An operator's view of the process, on loopback. Without it, 'nobody "
+        "is playing' and 'everybody is being refused' look identical from "
+        "outside. Counters are aggregate and carry no addresses.")
+    obs.add_argument("--metrics-port", type=int, default=metrics.DEFAULT_PORT,
+                     help="port for the counters; 0 disables "
+                          "(default %(default)s)")
+    obs.add_argument("--metrics-bind", default=metrics.DEFAULT_BIND,
+                     help="address for the counters (default %(default)s)")
+    obs.add_argument("--metrics-allow-public", action="store_true",
+                     help="permit a non-loopback bind. There is no "
+                          "authentication on this endpoint.")
     return parser
 
 
@@ -323,13 +387,46 @@ def main(argv: Optional[List[str]] = None) -> int:
             target=buddy_service.serve_forever,
             args=(args.bind, args.buddy_port), daemon=True).start()
 
+    if args.rate_limit == "off":
+        # Zero rate and zero burst is the limiter's "unlimited"; keep the
+        # object so every call site stays uniform.
+        rates = limits.RateLimiter(0, 0, 0, 0, enforce=False)
+    else:
+        rates = limits.RateLimiter(
+            rate=args.rate, burst=args.rate_burst,
+            ip_rate=args.rate_per_ip, ip_burst=args.rate_per_ip_burst,
+            enforce=args.rate_limit == "enforce")
+
+    counters = metrics.Metrics()
     service = Service(
         store, config, transcript, verbose=not args.quiet,
         limiter=limits.ConnectionLimiter(total=args.max_connections,
                                          per_ip=args.max_connections_per_ip),
         send_timeout=args.send_timeout,
         idle_timeout=args.idle_timeout,
-        first_byte_deadline=args.first_byte_timeout)
+        first_byte_deadline=args.first_byte_timeout,
+        pre_auth_deadline=args.pre_auth_timeout,
+        rates=rates,
+        bans=limits.BanList(threshold=args.ban_threshold,
+                            window=args.ban_window, ttl=args.ban_ttl),
+        metrics=counters)
+
+    metrics_server = None
+    if args.metrics_port:
+        metrics_server = metrics.MetricsServer(counters)
+        try:
+            bound = metrics_server.start(args.metrics_bind, args.metrics_port,
+                                         allow_public=args.metrics_allow_public)
+            if not args.quiet:
+                print("[ea] metrics on http://%s:%d/"
+                      % (args.metrics_bind, bound), flush=True)
+        except metrics.MetricsError as exc:
+            # Never fatal. Losing the counters is worth a warning; refusing to
+            # run a game server because a diagnostic port is taken is not.
+            print("warning: %s" % exc, file=sys.stderr)
+            metrics_server = None
+        else:
+            atexit.register(metrics_server.stop)
     try:
         service.serve_forever(args.bind, args.port)
     except ServiceError as exc:

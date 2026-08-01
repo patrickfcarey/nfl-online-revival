@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import socket
+import struct
 import sys
 import tempfile
 import threading
@@ -205,8 +206,13 @@ class SlowConsumer(unittest.TestCase):
         self.assertEqual(got, blob)
 
 
-class AcceptGate(unittest.TestCase):
-    """Caps and deadlines against a real listening socket."""
+class _ServiceHarness:
+    """One accept loop on an ephemeral port, for the socket-level tests.
+
+    Deliberately not a TestCase. Subclassing one to share a harness makes
+    unittest collect the parent's tests again through every child, so the
+    socket suites would run twice for no added coverage.
+    """
 
     def setUp(self):
         self.store, self.path = make_store()
@@ -266,6 +272,10 @@ class AcceptGate(unittest.TestCase):
                 return False
             except OSError:
                 return True
+
+
+class AcceptGate(_ServiceHarness, unittest.TestCase):
+    """Caps and deadlines against a real listening socket."""
 
     def test_refuses_past_the_total_cap(self):
         port = self._start(limiter=limits.ConnectionLimiter(total=2, per_ip=0))
@@ -327,6 +337,213 @@ class AcceptGate(unittest.TestCase):
         self.assertFalse(self._is_closed(sock, timeout=0.5),
                          "a connection sending every 0.3s was dropped by a "
                          "1.5s idle timeout")
+
+
+class Bucket(unittest.TestCase):
+    def test_burst_is_spendable_at_once(self):
+        bucket = limits.TokenBucket(rate=1, burst=5)
+        for i in range(5):
+            self.assertTrue(bucket.take(), "refused token %d of the burst" % i)
+        self.assertFalse(bucket.take())
+
+    def test_refills_over_time(self):
+        bucket = limits.TokenBucket(rate=100, burst=2)
+        self.assertTrue(bucket.take())
+        self.assertTrue(bucket.take())
+        self.assertFalse(bucket.take())
+        time.sleep(0.15)             # 100/s -> ~15 tokens, capped at burst
+        self.assertTrue(bucket.take())
+
+    def test_zero_rate_and_burst_is_unlimited(self):
+        bucket = limits.TokenBucket(rate=0, burst=0)
+        for _ in range(1000):
+            self.assertTrue(bucket.take())
+
+    def test_zero_rate_with_a_burst_is_a_hard_quota(self):
+        # Used by the tests below to make enforcement deterministic.
+        bucket = limits.TokenBucket(rate=0, burst=3)
+        self.assertEqual([bucket.take() for _ in range(5)],
+                         [True, True, True, False, False])
+
+
+class Rates(unittest.TestCase):
+    def test_per_connection_and_per_address_are_independent(self):
+        rates = limits.RateLimiter(rate=0, burst=2, ip_rate=0, ip_burst=99)
+        rates.attach("10.0.0.1")
+        first = rates.new_bucket()
+        second = rates.new_bucket()
+        self.assertIsNone(rates.check(first, "10.0.0.1"))
+        self.assertIsNone(rates.check(first, "10.0.0.1"))
+        self.assertIsNotNone(rates.check(first, "10.0.0.1"))
+        # A second connection from the same host has its own allowance.
+        self.assertIsNone(rates.check(second, "10.0.0.1"))
+
+    def test_the_address_bucket_catches_what_per_connection_misses(self):
+        # Many connections, each individually well behaved.
+        rates = limits.RateLimiter(rate=0, burst=99, ip_rate=0, ip_burst=3)
+        rates.attach("10.0.0.1")
+        buckets = [rates.new_bucket() for _ in range(10)]
+        verdicts = [rates.check(b, "10.0.0.1") for b in buckets]
+        self.assertEqual(verdicts[:3], [None, None, None])
+        self.assertIsNotNone(verdicts[3])
+        self.assertGreater(rates.violations_per_ip, 0)
+
+    def test_detach_drops_the_bucket_when_nothing_holds_it(self):
+        rates = limits.RateLimiter()
+        rates.attach("10.0.0.1")
+        rates.attach("10.0.0.1")
+        rates.detach("10.0.0.1")
+        self.assertIn("10.0.0.1", rates._ip_buckets)   # one holder left
+        rates.detach("10.0.0.1")
+        self.assertNotIn("10.0.0.1", rates._ip_buckets)
+
+    def test_peak_is_observed_even_when_nothing_is_refused(self):
+        # The measurement log-only mode exists to produce.
+        rates = limits.RateLimiter(rate=0, burst=0, ip_rate=0, ip_burst=0)
+        bucket = rates.new_bucket()
+        for _ in range(25):
+            self.assertIsNone(rates.check(bucket, "10.0.0.1"))
+        self.assertGreaterEqual(rates.connection_peak.peak, 25)
+
+    def test_describe_says_which_mode_it_is_in(self):
+        self.assertIn("observing only", limits.RateLimiter().describe())
+        self.assertIn("ENFORCING",
+                      limits.RateLimiter(enforce=True).describe())
+
+
+class Bans(unittest.TestCase):
+    def test_strikes_accumulate_to_a_ban(self):
+        bans = limits.BanList(threshold=3, window=60, ttl=30)
+        self.assertIsNone(bans.record("10.0.0.1", "framing"))
+        self.assertIsNone(bans.record("10.0.0.1", "framing"))
+        self.assertIsNotNone(bans.record("10.0.0.1", "framing"))
+        self.assertGreater(bans.banned_for("10.0.0.1"), 0)
+
+    def test_strikes_outside_the_window_do_not_count(self):
+        bans = limits.BanList(threshold=3, window=10, ttl=30)
+        now = 1000.0
+        bans.record("10.0.0.1", "x", now=now)
+        bans.record("10.0.0.1", "x", now=now + 20)     # first has aged out
+        self.assertIsNone(bans.record("10.0.0.1", "x", now=now + 21))
+        self.assertEqual(bans.banned_for("10.0.0.1", now=now + 21), 0)
+
+    def test_a_ban_expires(self):
+        bans = limits.BanList(threshold=1, window=60, ttl=10)
+        now = 1000.0
+        bans.record("10.0.0.1", "x", now=now)
+        self.assertGreater(bans.banned_for("10.0.0.1", now=now + 5), 0)
+        self.assertEqual(bans.banned_for("10.0.0.1", now=now + 11), 0)
+
+    def test_addresses_are_independent(self):
+        bans = limits.BanList(threshold=2, window=60, ttl=30)
+        bans.record("10.0.0.1", "x")
+        bans.record("10.0.0.1", "x")
+        self.assertGreater(bans.banned_for("10.0.0.1"), 0)
+        self.assertEqual(bans.banned_for("10.0.0.2"), 0)
+
+    def test_threshold_zero_disables_everything(self):
+        bans = limits.BanList(threshold=0)
+        for _ in range(100):
+            self.assertIsNone(bans.record("10.0.0.1", "x"))
+        self.assertEqual(bans.banned_for("10.0.0.1"), 0)
+
+    def test_forget_lifts_a_ban(self):
+        bans = limits.BanList(threshold=1, window=60, ttl=600)
+        bans.record("10.0.0.1", "x")
+        bans.forget("10.0.0.1")
+        self.assertEqual(bans.banned_for("10.0.0.1"), 0)
+
+    def test_tracking_is_bounded(self):
+        # Both maps are keyed on attacker input and need a ceiling that does
+        # not depend on expiry running.
+        bans = limits.BanList(threshold=1000, window=600, ttl=600)
+        for i in range(limits._MAX_TRACKED + 500):
+            bans.record("10.%d.%d.%d" % (i >> 16 & 255, i >> 8 & 255, i & 255),
+                        "x", now=1000.0)
+        self.assertLessEqual(len(bans._strikes), limits._MAX_TRACKED)
+
+
+class RateEnforcement(_ServiceHarness, unittest.TestCase):
+    """Rate limiting and the pre-auth deadline, over a real socket."""
+
+    @staticmethod
+    def _quota(burst, enforce):
+        """A limiter that allows exactly `burst` messages, then nothing."""
+        return limits.RateLimiter(rate=0, burst=burst, ip_rate=0, ip_burst=0,
+                                  enforce=enforce)
+
+    def test_observing_never_drops_a_connection(self):
+        """The safety property that makes log-only mode worth having.
+
+        The thresholds are unmeasured guesses. If observing could disconnect,
+        shipping them would risk cutting off a real player, and this client's
+        response to that is to wait rather than report anything.
+        """
+        port = self._start(rates=self._quota(2, enforce=False),
+                           limiter=limits.ConnectionLimiter(0, 0))
+        sock = self._connect(port)
+        for _ in range(20):
+            sock.sendall(protocol.encode("@dir", protocol.OK, {}))
+        self.assertFalse(self._is_closed(sock, timeout=1.5),
+                         "an over-limit connection was dropped while only "
+                         "observing")
+        self.assertGreater(self.service.rates.violations, 0,
+                           "the violations should still have been counted")
+
+    def test_observing_never_bans(self):
+        port = self._start(rates=self._quota(1, enforce=False),
+                           bans=limits.BanList(threshold=2, window=60, ttl=60),
+                           limiter=limits.ConnectionLimiter(0, 0))
+        sock = self._connect(port)
+        for _ in range(30):
+            sock.sendall(protocol.encode("@dir", protocol.OK, {}))
+        time.sleep(0.5)
+        self.assertEqual(self.service.bans.active(), [],
+                         "a guessed threshold produced a ban")
+
+    def test_enforcing_drops_the_connection(self):
+        port = self._start(rates=self._quota(2, enforce=True),
+                           limiter=limits.ConnectionLimiter(0, 0))
+        sock = self._connect(port)
+        for _ in range(20):
+            sock.sendall(protocol.encode("@dir", protocol.OK, {}))
+        self.assertTrue(self._is_closed(sock),
+                        "an over-limit connection survived enforcement")
+
+    def test_a_connection_that_never_logs_in_is_dropped(self):
+        # @dir does not authenticate, so this stays chatty and unauthenticated
+        # -- inside every silence deadline, forever.
+        port = self._start(pre_auth_deadline=1.0, idle_timeout=0.0,
+                           first_byte_deadline=0.0,
+                           limiter=limits.ConnectionLimiter(0, 0))
+        sock = self._connect(port)
+        deadline = time.monotonic() + 2.5
+        while time.monotonic() < deadline:
+            try:
+                sock.sendall(protocol.encode("@dir", protocol.OK, {}))
+            except OSError:
+                break
+            time.sleep(0.2)
+        self.assertTrue(self._is_closed(sock),
+                        "a connection talked indefinitely without logging in")
+
+    def test_repeated_framing_errors_earn_a_ban(self):
+        port = self._start(bans=limits.BanList(threshold=3, window=60, ttl=60),
+                           limiter=limits.ConnectionLimiter(0, 0))
+        # 12 bytes whose declared length is 0 -- shorter than the header.
+        garbage = b"junk" + struct.pack(">II", 0, 0)
+        for _ in range(3):
+            sock = self._connect(port)
+            sock.sendall(garbage)
+            self._is_closed(sock, timeout=2)
+            sock.close()
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and not self.service.bans.active():
+            time.sleep(0.05)
+        self.assertTrue(self.service.bans.active(), "three framing errors "
+                        "should have crossed a threshold of three")
+        self.assertTrue(self._is_closed(self._connect(port)),
+                        "a banned address was still accepted")
 
 
 if __name__ == "__main__":
