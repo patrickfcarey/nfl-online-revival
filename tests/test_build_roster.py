@@ -137,3 +137,56 @@ class RealRoster(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Resealing(unittest.TestCase):
+    """The TDB's own block checksums.
+
+    A block whose checksum no longer matches is refused with error 43, so any
+    edit has to reseal. The layout was recovered by reproducing the stored
+    values on an untouched file rather than by reading the checker, and the test
+    below is the same argument: resealing something unedited must change
+    nothing at all. If a boundary were wrong, some byte would move.
+    """
+
+    def setUp(self):
+        path = os.environ.get("MADDEN_LEAG")
+        if not path or not os.path.exists(path):
+            self.skipTest("set MADDEN_LEAG to a raw LEAG database to run this")
+        self.blob = Path(path).read_bytes()
+
+    def test_resealing_an_untouched_file_changes_nothing(self):
+        from tools import mark_roster
+        self.assertEqual(mark_roster.reseal(self.blob), self.blob)
+
+    def test_an_edit_changes_only_the_name_and_its_checksums(self):
+        from tools import mark_roster
+        marked = mark_roster.rename_first_player(self.blob, "ZZTEST")
+        self.assertEqual(len(marked), len(self.blob),
+                         "the console demands the exact on-disc size")
+        changed = sum(1 for a, b in zip(self.blob, marked) if a != b)
+        # The name field plus the checksum words that cover it.
+        self.assertLess(changed, 64)
+        self.assertGreater(changed, 0)
+
+    def test_the_edit_survives_a_reparse(self):
+        from tools import madden_tdb, mark_roster
+        marked = mark_roster.rename_first_player(self.blob, "ZZTEST")
+        table = madden_tdb.Database(marked, 0).table("PLAY")
+        field = table.fields["PLNA"]
+        start = table._records + field.offset_bits // 8
+        surname = marked[start:start + field.bits // 8].split(b"\x00")[0]
+        self.assertEqual(surname, b"ZZTEST")
+
+
+class TdbChecksum(unittest.TestCase):
+    def test_algorithm_is_msb_first_no_final_xor(self):
+        from tools import mark_roster
+        # Poly 0x04C11DB7, init 0xFFFFFFFF, MSB-first, no final inversion --
+        # deliberately not zlib's reflected CRC-32, which the OUTER manifest
+        # checksum uses. Two different algorithms in one payload.
+        import zlib
+        data = b"the quick brown fox"
+        self.assertNotEqual(mark_roster.tdb_crc(data),
+                            zlib.crc32(data) & 0xFFFFFFFF)
+        self.assertEqual(mark_roster.tdb_crc(b""), 0xFFFFFFFF)

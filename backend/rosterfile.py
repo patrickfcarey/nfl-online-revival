@@ -13,11 +13,17 @@ the roster checksum in ``CSUM``, which seeds from the row count instead -- two
 different numbers over two different things, and swapping them silently fails
 the download with the same error as a corrupt transfer.
 
-**The length must match the console's own league database.** Before starting,
-the client asks 0x003b6cf0 for the size of its local league file and uses that
-one number for both the receive allocation and the CRC range. A body of any
-other length cannot verify: short and the tail is uninitialised, long and it is
-refused outright at 0x00305f80.
+**The length must match the console's own league database, exactly.** Before
+starting, the client asks 0x003b6cf0 for the size of the member backing LEAG --
+253,044 bytes on retail -- and uses that one number for both the receive
+allocation and the CRC range. A body of any other length cannot verify: short
+and the uninitialised tail is hashed, long and it is refused on the
+Content-Length alone at 0x00305f94, before any body is read.
+
+Note that our own ``sendall`` returning proves nothing about acceptance: it
+returns when the kernel takes the bytes, so a refused transfer can still look
+like a clean 200 in this server's log. Only the console's own state says
+whether a payload landed.
 
 **It is served to a console, not a browser.** Keep the response minimal and
 always send ``Content-Length``; the client reads the body length from the

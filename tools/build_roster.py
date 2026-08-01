@@ -28,11 +28,20 @@ This module also builds TERF containers, which is what it was written for before
 any of the above was known. That is kept for inspecting and subsetting archives;
 it is **not** how a roster is delivered.
 
-The console will not accept an arbitrarily large roster download. Measured on
-hardware: 393,216 bytes transfers completely, while 2,723,072 and 8,439,360 are
-both refused mid-transfer, the console hanging up as soon as it reads a
-``Content-Length`` past its buffer. The retail ``DB_TEAMS.DAT`` is 8.4 MB, so it
-can never be served whole.
+The console accepts exactly one size: the on-disc size of the member backing
+``LEAG``, 253,044 bytes on retail. Anything larger is refused on the
+``Content-Length`` alone, before a byte of body is read (``0x00305f94``);
+anything smaller fails the checksum, because ``0x003527c0`` hashes the whole
+allocated buffer at that fixed size rather than the bytes received, so the
+uninitialised tail is included. The retail ``DB_TEAMS.DAT`` is 8.4 MB and can
+never be served at all.
+
+An earlier version of this note claimed "393,216 bytes transfers completely,
+while larger payloads are refused mid-transfer". That was wrong twice over. A
+393,216-byte body exceeds the cap and is refused unread; what actually completed
+was our own ``sendall`` returning once the kernel accepted the bytes, which says
+nothing about whether the console read them. The apparent ceiling was the
+socket send buffer.
 
 This writes a **valid TERF container** holding a chosen subset of the members of
 an existing one. Valid is the point: truncating a container leaves a directory
