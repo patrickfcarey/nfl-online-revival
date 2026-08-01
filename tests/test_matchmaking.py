@@ -335,3 +335,57 @@ class UnimplementedVerbs(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PushesAreTranscribed(unittest.TestCase):
+    """A push must appear in the transcript.
+
+    It did not. `hub.push()` wrote to the socket and returned; only the
+    request/reply path in service.py recorded anything. So every +ses, +usr,
+    +rom and +msg the server ever sent was missing from the captures, and a
+    reviewer reading them correctly concluded that no +ses had ever been sent --
+    while the console had demonstrably acted on one.
+
+    The lesson is narrower than "log more": absence of evidence was being read
+    as evidence of absence for exactly the messages that are hardest to observe
+    from the client side.
+    """
+
+    class Recorder:
+        def __init__(self):
+            self.entries = []
+
+        def message(self, direction, label, message, blob):
+            self.entries.append((direction, message.type))
+
+    def test_a_push_is_recorded(self):
+        from backend.hub import Connection, Hub
+        recorder = self.Recorder()
+        hub = Hub(transcript=recorder)
+        conn = FakeConnection("Alice")
+        conn.label = "test:1"
+        hub.push(conn, protocol.encode("+ses", 0, {"SELF": "Alice"}))
+        self.assertEqual(recorder.entries, [("push", "+ses")])
+
+    def test_an_undelivered_push_is_not_recorded(self):
+        from backend.hub import Hub
+        recorder = self.Recorder()
+        hub = Hub(transcript=recorder)
+        conn = FakeConnection("Alice")
+        conn.label = "test:1"
+        conn.send = lambda blob: False        # peer has gone
+        hub.push(conn, protocol.encode("+ses", 0, {"SELF": "Alice"}))
+        self.assertEqual(recorder.entries, [],
+                         "a push that failed must not look delivered")
+
+    def test_start_match_leaves_both_invites_in_the_transcript(self):
+        from backend.hub import Hub
+        recorder = self.Recorder()
+        hub = Hub(transcript=recorder)
+        hub.matchmaker = matchmaking.Matchmaker()
+        host = FakeConnection("Alice", addr="10.0.0.2")
+        guest = FakeConnection("Bob", addr="10.0.0.3")
+        host.label, guest.label = "h:1", "g:1"
+        handlers.start_match(hub, host, guest)
+        self.assertEqual(recorder.entries,
+                         [("push", "+ses"), ("push", "+ses")])

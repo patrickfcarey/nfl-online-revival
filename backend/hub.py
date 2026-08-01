@@ -104,11 +104,17 @@ class Hub:
     """The set of live connections, and how to reach them."""
 
     def __init__(self, on_event: Optional[Callable[[str], None]] = None,
-                 pair_any: bool = False) -> None:
+                 pair_any: bool = False, transcript=None) -> None:
         self._connections: Dict[str, Connection] = {}
         self._lock = threading.RLock()
         self._stopping = threading.Event()
         self._on_event = on_event or (lambda text: None)
+        #: Pushes must be transcribed too. Without this they were invisible:
+        #: only the request/reply path recorded anything, so every +ses, +usr,
+        #: +rom and +msg the server ever sent was missing from the captures.
+        #: That made "it is not in the transcript" unsound reasoning for exactly
+        #: the messages hardest to observe from the client side.
+        self._transcript = transcript
         #: The quickmatch/challenge waiting room. Lives here because it spans
         #: connections, and because unregister() must evict a departing client
         #: from it -- a dead socket left in the queue gets paired with the next
@@ -161,7 +167,15 @@ class Hub:
                 "pending requests by type against the head of its queue, so an "
                 "unsolicited %r can be taken for the reply to an outstanding "
                 "request and fire the wrong callback." % (msg_type, msg_type))
-        return conn.send(blob)
+        sent = conn.send(blob)
+        if sent and self._transcript is not None:
+            try:
+                self._transcript.message("push", conn.label,
+                                         protocol.decode(blob), blob)
+            except Exception:
+                # Never let bookkeeping break delivery.
+                pass
+        return sent
 
     def broadcast(self, blobs: Iterable[bytes], room: Optional[str] = None,
                   exclude: Optional[Connection] = None) -> int:
