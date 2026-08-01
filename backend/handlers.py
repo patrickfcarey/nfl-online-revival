@@ -1070,6 +1070,9 @@ def _news_list(ctx: Context, kind: int, records) -> bytes:
     that one, found an empty URL, and reported a failed download. It had opened
     the connection and everything.
     """
+    if not records:
+        print("[roster] %s: NO records -- nothing offered. Set --roster-payload "
+              "to advertise one." % news_status(kind), flush=True)
     lines = []
     for record in records:
         parts = []
@@ -1082,6 +1085,15 @@ def _news_list(ctx: Context, kind: int, records) -> bytes:
             parts.append("%s=%s" % (key, text))
         lines.append(" ".join(parts))
     body = ("\n".join(lines) + "\n").encode("latin-1") + b"\x00" if lines else b"\x00"
+    if lines:
+        # The body is the thing that has been wrong twice: once carrying a
+        # stray NAME that became a phantom record, once split across lines so
+        # one entry became three. Print it so the next surprise is visible in
+        # the log rather than only in the console's memory.
+        print("[roster] %s: %d record(s)" % (news_status(kind), len(lines)),
+              flush=True)
+        for line in lines:
+            print("[roster]   %s" % line, flush=True)
     return protocol.encode_raw("news", news_status(kind), body)
 
 

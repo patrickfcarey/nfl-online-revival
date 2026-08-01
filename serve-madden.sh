@@ -54,20 +54,29 @@ TRANSCRIPT="${TRANSCRIPT:-captures/madden-$(date +%Y%m%d-%H%M%S).jsonl}"
 #
 # The bracket in the pattern stops pgrep matching its own command line. That
 # self-match has killed a live SSH session on this project four times.
-existing=$(pgrep -f "m backen[d]" | head -1 || true)
+# ALL of them, not just the first. Killing one of two leaves the ports held,
+# and the replacement then fails to bind while still looking like it started --
+# which is exactly how a stale server ended up answering a hardware test with
+# the wrong configuration.
+existing=$(pgrep -f "m backen[d]" || true)
 if [ -n "$existing" ]; then
-    echo "A backend is already running as PID $existing:" >&2
-    ps -o args= -p "$existing" | sed "s/^/    /" >&2
+    echo "A backend is already running:" >&2
+    for pid in $existing; do
+        printf "  PID %s: " "$pid" >&2
+        ps -o args= -p "$pid" 2>/dev/null | sed "s/^/  /" >&2
+    done
     echo >&2
     if [ -n "${REPLACE:-}" ]; then
         echo "REPLACE is set -- stopping it." >&2
-        kill "$existing" 2>/dev/null || true
+        for pid in $existing; do kill "$pid" 2>/dev/null || true; done
         for _ in 1 2 3 4 5 6 7 8 9 10; do
-            kill -0 "$existing" 2>/dev/null || break
+            still=$(pgrep -f "m backen[d]" || true)
+            [ -z "$still" ] && break
             sleep 0.5
         done
-        if kill -0 "$existing" 2>/dev/null; then
-            echo "error: PID $existing did not stop; kill it yourself." >&2
+        still=$(pgrep -f "m backen[d]" || true)
+        if [ -n "$still" ]; then
+            echo "error: still running: $still -- kill them yourself." >&2
             exit 1
         fi
     else
