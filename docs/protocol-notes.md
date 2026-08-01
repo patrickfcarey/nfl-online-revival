@@ -441,7 +441,7 @@ tears the session down when it lapses. The directory phase allows 120 s
 (`0x00447854`).
 
 **The client never originates a keepalive.** It intercepts any `~png` at
-`0x00448C58`, echoes it verbatim, and returns *before* anything else runs. So
+`0x00448C58`, echoes the type and body -- **not** the status word, which comes back carrying a counter (0x10, 0x11, ...) rather than the 0 we sent, and returns *before* anything else runs. So
 the ping must come from the server -- and the server must **not** answer the
 echo, or the two ping each other forever.
 
@@ -640,9 +640,14 @@ unambiguous and the distinction keeps getting blurred.
 `cper`, `pers`, `sele`, `cusr`, `news`, and `~png` keepalives. An account and a
 persona were created and are reloaded on reconnect.
 
-**Never sent by a console, in any capture:** `room`, `chat`, `mesg`, `move`. The
-lobby, chat, matchmaking and buddy code is unit-tested only. No game has been
-played.
+**Sent by a console since (2026-08-01):** `room` (created `C.NEW ROOM`, id 79),
+`move` (in and out of `Open Lobby`), `quik` (`KIND=-24256204`), `chal`, `peek`,
+`flag`, `user`, and the buddy service's `AUTH`/`PSET`/`RGET`. A `+ses` was
+delivered and the console dialled a peer on UDP 3658.
+
+**Still never sent by a console:** `chat`/`mesg`. No game has been played --
+the peer link needs two hosts with distinct addresses, and every PCSX2 guest
+reports 192.0.2.100.
 
 `addr` is answered with silence deliberately — the client does not wait on it.
 That is by design, not a gap.
@@ -693,30 +698,38 @@ Two dead ends recorded so they are not re-walked:
 
 ---
 
-## Open: how a roster is actually delivered
+## How a roster is delivered -- SOLVED
 
-Knowing the checksum does not yet mean a roster can be **sent**, and this is now
-the only thing between here and serving real rosters.
+The lobby connection never carries roster bytes. The `news` reply for category 2
+carries a manifest, and the console fetches the file itself over plain HTTP.
 
-What is known: when the console was offered a mismatching `CSUM` it displayed
-its update prompt, and the attempt then failed. What is *not* known is by what
-route it expected the data.
+* One record per line, fields separated by **TAB**:
+  `URL=http://host:port/path\tCRC=<decimal>\tNAME=<label>`
+* The console GETs that URL through its own HTTP client
+  (`'http'`/`'get '`, 0x004468f4).
+* The body must be **exactly** the size of the member backing `LEAG` --
+  253,044 bytes on retail. Larger is refused on the `Content-Length` alone at
+  0x00305f94; smaller fails the checksum, because 0x003527c0 hashes the whole
+  allocated buffer at that fixed size.
+* The payload is a **raw Madden TDB**, not a TERF container: 0x004c9e90 refuses
+  anything whose first word is not `0x08004244`.
+* On a CRC match it is installed as database `GAEL` (`LEAG` reversed).
 
-The negative evidence is the interesting part. On the failed update the console:
+Implemented in `backend/rosterfile.py` and `handlers._roster_manifest`; run the
+server with `--roster-payload`.
 
-* opened **no new TCP connection** -- nothing beyond the ports already in use;
-* resolved **no new hostname** -- the DNS responder logged nothing further.
+**An earlier version of this section said the transport was unidentified,
+because a console offered a mismatch "opened no new TCP connection and resolved
+no new hostname".** That was an artefact of the manifest being empty at the
+time. With a real manifest the console connects to the HTTP port immediately --
+observed twice in one session.
 
-So the download is not a separate service on a separate host, which rules out
-the most obvious shape. That leaves it either riding the existing lobby
-connection as a message type we have not implemented and therefore never
-answered, or reusing an already-resolved endpoint on a port we were not
-listening on.
-
-Distinguishing those is the next piece of work, and the entry point is the code
-immediately after the comparison at `0x0012a97c`.
-
----
+**Still open:** whether an install completes. A download demonstrably reaches
+the console, but the install call at 0x00352828 is gated by a branch
+(0x00352814) on both the transfer status and the CRC, and serving the disc's own
+member back makes the result unobservable -- the bytes in memory are identical
+either way. `tools/mark_roster.py` builds a payload that differs by one player
+name so the outcome can be seen rather than inferred.
 
 ## Slice decision log
 

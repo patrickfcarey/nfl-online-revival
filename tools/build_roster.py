@@ -54,10 +54,13 @@ right is exactly the failure this exists to avoid.
 
 Usage::
 
-    # everything that fits, largest budget first
-    python3 tools/build_roster.py DB_TEAMS.DAT out.dat --max-bytes 409600
+    # THE SERVABLE PAYLOAD: member 0 of template.dat, a raw TDB
+    python3 tools/build_roster.py TEMPLATE.DAT roster.dat --extract-member 0
 
-    # or name the members explicitly (0 is the free-agent pool, 1-32 the teams)
+The container modes below build TERF archives, which the console **cannot
+install** -- 0x004c9e90 refuses anything whose first word is not 0x08004244.
+They exist for inspecting and subsetting archives, not for serving::
+
     python3 tools/build_roster.py DB_TEAMS.DAT out.dat --members 1,2,3
 
 Serve the result with ``--roster-payload``; the server computes the CRC it

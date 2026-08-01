@@ -50,7 +50,13 @@ CONFIG = {
 
 
 class NewsReplyTag(unittest.TestCase):
-    """`news NAME=n` must be answered with type `new<n>`."""
+    """`news NAME=n` is answered with type `news` and STATUS `new<n>`.
+
+    The category rides in the status word, not the type -- msg+8 is the status
+    field, and the client keeps the body only when it equals 'new0' + n
+    (0x0034f500) and non-zero (0x0034eb20). An earlier version of this docstring
+    said "type new<n>", which is what the code was doing when nothing worked.
+    """
 
     def setUp(self):
         self.store, self.path = make_store()
@@ -81,8 +87,9 @@ class NewsReplyTag(unittest.TestCase):
     def test_roster_request_is_answered_new2(self):
         self.assertEqual(self._news(2)[0].status_tag, "new2")
 
-    def test_never_answered_with_the_request_type(self):
-        # The exact bug this file exists for.
+    def test_the_type_is_news_and_the_category_is_the_status(self):
+        # The exact bug this file exists for: tagging the message new<n> fails
+        # the client's type match and the reply is never delivered at all.
         for name in (0, 1, 2):
             self.assertEqual(self._news(name)[0].type, "news")
             self.assertEqual(self._news(name)[0].status_tag,

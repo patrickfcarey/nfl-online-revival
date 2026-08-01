@@ -1151,9 +1151,11 @@ class NewsTests(unittest.TestCase):
         self.assertEqual(reply.raw_payload, b"\x00")
 
     def test_the_roster_version_is_always_populated(self):
-        """Sent even though the checksum is a placeholder, so the field exists
-        and the path is exercised. The pnach zeroes the comparison, so a
-        mismatch is currently inert."""
+        """Always sent, so the field exists and the path is exercised.
+
+        The pnach line that zeroed the comparison is disabled, so a mismatch is
+        NOT inert: the console really does compare, which is the whole point of
+        --roster-db."""
         fields = self._news()[0].fields
         # Zero, not a real date: 0x00350960 returns (local_date < server_DATE),
         # so any real date tells the console a newer roster exists.
@@ -1317,6 +1319,41 @@ class AddressPropagationTests(unittest.TestCase):
         session.client_addr = "192.0.2.100"      # what a console reports
         self.assertEqual(session.observed_addr, "10.0.0.7")
         self.assertNotEqual(session.observed_addr, session.client_addr)
+
+    def test_the_pushed_user_record_carries_it(self):
+        """Reading the property is not enough -- the bug was in the caller.
+
+        An earlier version of this test only checked `observed_addr` and would
+        have passed unchanged if `_push_occupants` went back to `client_addr`,
+        which is precisely the mistake it was written for.
+        """
+        store, path = make_store()
+        store.seed_defaults()
+        try:
+            session = open_session()
+            session.account, session.persona = "alice", "AliceP"
+            session.client_addr = "192.0.2.100"
+            session.user_id = 7
+            session.peer = "10.0.0.7:41000"
+            captured = []
+
+            class Hub:
+                def in_room(self, room): return []
+                def broadcast(self, blobs, room=None, exclude=None):
+                    captured.extend(protocol.decode(b) for b in blobs)
+                    return 1
+
+            run(store, "move", {"NAME": "Open Lobby"}, session=session)
+            ctx = Context(protocol.decode(protocol.encode("move", 0, {})),
+                          session, store, CONFIG, hub=Hub())
+            handlers.after_move(ctx)
+            records = [m for m in captured if m.type == "+usr" and "N" in m.fields]
+            self.assertTrue(records, "no +usr was pushed")
+            self.assertEqual(records[-1].fields["A"], "10.0.0.7")
+            self.assertNotIn("192.0.2.100",
+                             [m.fields.get("A") for m in records])
+        finally:
+            store.close(); os.unlink(path)
 
 
 class RoomReuseTests(unittest.TestCase):

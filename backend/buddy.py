@@ -19,8 +19,10 @@ What this stub does, and why that is enough:
 * everything else -- answered with status 0 and no fields, which is the least
   surprising thing to tell a client whose request we have not implemented.
 
-Presence is accepted and discarded. ``SHOW`` is an integer selecting a string
-from a table in the client: 0 DISC, 1 CHAT, 2 AWAY, 3 XA, 4 DND, 5 PASS.
+Presence is accepted and discarded. The client has a table at 0x005742b8 --
+0 DISC, 1 CHAT, 2 AWAY, 3 XA, 4 DND, 5 PASS -- but on the wire a console sends
+the **name**, not the index: an observed ``PSET`` carried ``SHOW=CHAT``. The
+mapping below is the client's table, not the wire encoding.
 """
 
 from __future__ import annotations

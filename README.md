@@ -46,12 +46,24 @@ consoles cannot yet reach each other.
   version of this list had both the wrong way round.)
 - an EA account and a persona were created and are reloaded on reconnect.
 
-**Built and unit-tested, but never yet exercised by a console:** rooms, the user
-list, chat, matchmaking, the buddy stub, and the roster checksum. No transcript
-contains a single `room`, `chat`, `mesg` or `move` message, because the console
-has so far always stalled earlier. Treat these as unproven.
+**Exercised by a console since (2026-08-01):** roster download over HTTP, room
+creation (`C.NEW ROOM`, id 79), `move` in and out of a lobby, quickmatch
+(`KIND=-24256204`) paired to a `+ses`, the buddy service answering `AUTH`,
+`PSET` and `RGET`, and the console dialling a peer on UDP 3658.
 
-**No game has ever been played online.** Phase 4 has not been attempted.
+**Built and unit-tested, still never exercised by a console:** chat. No
+transcript contains a `chat` or `mesg` message.
+
+**No game has been played online**, and it cannot be yet: the peer link needs
+two hosts with distinct addresses, and every PCSX2 guest reports 192.0.2.100.
+Note also that the one pairing observed introduced a console to a second socket
+of *itself* -- it proves the `+ses` path through the real client, not that two
+separate players can meet.
+
+**A roster download reaches the console; whether it INSTALLS is unproven.** The
+install call is gated on both the transfer status and the CRC, and serving the
+disc's own member back makes the outcome unobservable. `tools/mark_roster.py`
+builds a payload differing by one player name so it can be seen.
 
 **Dead ends, so nobody re-walks them:**
 

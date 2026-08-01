@@ -105,10 +105,15 @@ assert len(FIELDS) * 4 == BUFFER_SIZE
 def collect_rows(container: "madden_tdb.Container") -> List[List[int]]:
     """Every player the query would see, in the order it would see them.
 
-    The disc splits the league across container members -- one per team, plus a
-    free-agent pool and a long tail of historical squads. The runtime merges
-    them into a single ``LEAG`` database, so the ``TGID`` filter is what selects
-    the 32 current teams no matter which member a player physically lives in.
+    ``DB_TEAMS.DAT`` splits the league across container members -- one per team,
+    plus a free-agent pool and a long tail of historical squads -- so the
+    ``TGID`` filter selects the 32 current teams out of all of them.
+
+    Note this file is **not** what backs ``LEAG`` at runtime: that is member 0
+    of ``template.dat``, registered by the single call at 0x002fa148. Both carry
+    the same shipped roster and both yield the same 1743 rows and the same
+    checksum, which is why reading it from here works and why the mistaken
+    belief that the runtime "merges" these members went unnoticed.
     """
     rows: List[List[int]] = []
     team_index = FIELDS.index("TGID")

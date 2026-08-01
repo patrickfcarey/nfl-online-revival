@@ -206,9 +206,22 @@ line disabled, and see whether the console still claims its rosters are out of
 date. Re-enabling that line distinguishes a wrong checksum from an unrelated
 regression.
 
-## Still open: delivery
+## Delivery -- solved
 
-Knowing the checksum does not yet mean a roster can be *sent*. When the console
-was offered a mismatch it opened no new connection and resolved no new hostname,
-so the transport for the download itself is still unidentified. That is the next
-piece, and it is now the only thing between here and serving real rosters.
+The `news` category-2 reply carries a manifest naming a URL and a CRC, and the
+console fetches the file over plain HTTP. See `docs/protocol-notes.md`. What
+remains unproven is only whether an install *completes*, which is unobservable
+while the payload equals the disc's own member.
+
+## Correction: LEAG is template.dat, not DB_TEAMS.DAT
+
+An earlier version of this document said the runtime "merges the members into
+one `LEAG` database". It does not. `0x003b6c48` has exactly one caller,
+registering `("template.dat", index 0)`, and `0x004c54d0` loads that single
+member as `GAEL`. `DB_TEAMS.DAT` is a different archive, loaded a member at a
+time and never bound to `LEAG`.
+
+The checksum is right anyway -- both files carry the same shipped roster, and
+both yield 1743 filtered rows and `0x8108963c` -- which is exactly why the wrong
+mechanism survived so long. A conclusion that comes out right for the wrong
+reason is the hardest kind to catch.

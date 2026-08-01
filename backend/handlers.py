@@ -1111,7 +1111,7 @@ ROSTER_LABEL = "Roster"
 
 
 def _news_list(ctx: Context, kind: int, records) -> bytes:
-    """A `news` LIST reply -- one record per LINE, fields space-separated.
+    """A `news` LIST reply -- one record per LINE, fields separated by TAB.
 
     This is not how the rest of the protocol encodes a body, and the difference
     is the whole point. Ordinary replies put one ``KEY=VALUE`` per line, and the

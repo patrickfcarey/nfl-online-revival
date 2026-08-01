@@ -7,8 +7,14 @@ something deliberately wrote to memory.
 
 PINE is PCSX2's instrumentation socket. With it, any EE address can be read or
 written while the game runs -- no patch, no savestate, no reboot. It is enabled
-in `PCSX2.ini` via ``EnablePINE`` and listens on a Unix socket
-(``$XDG_RUNTIME_DIR/pcsx2.sock``); ``PINESlot`` only matters for TCP.
+in `PCSX2.ini` via ``EnablePINE`` and listens on a Unix socket.
+
+Two details about that path, both wrong in an earlier version of this note and
+both able to connect you to the wrong emulator or to nothing at all: the
+fallback when ``XDG_RUNTIME_DIR`` is unset is ``/tmp``, not
+``/run/user/<uid>`` -- which is the ordinary case over SSH -- and ``PINESlot``
+is not TCP-only, since any slot but the default appends ``.<slot>`` to the
+filename (PINE.cpp:296-314).
 
 Protocol, both directions:
 
@@ -20,8 +26,15 @@ Writes take address then value. Everything is one command per round trip here --
 PINE supports batching, but a batch that fails tells you less about which part
 failed, and these calls are not hot.
 
-**This writes to a live game.** Reads are always safe. A write lands in EE RAM
-immediately with no validation, so a wrong address corrupts whatever is there.
+**This writes to a live game, and there is no undo.** Reads are always safe. A
+write lands in EE RAM immediately -- no validation, no bounds check, no
+confirmation, and no check that the emulator on the other end is running the
+game you think it is.
+
+On a shared rig that is the whole risk: someone may be in a session right now.
+Before any write, run the live-session check and read the result, and satisfy
+yourself the connection is the instance you meant -- :meth:`Pine.title` and
+:meth:`Pine.game_id` are there for exactly that and cost one round trip.
 """
 
 from __future__ import annotations
@@ -33,11 +46,17 @@ import struct
 import sys
 from typing import List, Optional
 
-#: Where PCSX2 puts the socket on Linux. XDG_RUNTIME_DIR is per-user, so this
-#: resolves per-user without configuration.
-def default_socket_path() -> str:
-    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
-    return os.path.join(runtime, "pcsx2.sock")
+#: PCSX2's own default slot. Any other value suffixes the socket name.
+DEFAULT_SLOT = 28011
+
+
+def default_socket_path(slot: int = DEFAULT_SLOT) -> str:
+    """Where PCSX2 puts the socket, following its own rule exactly."""
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    name = "pcsx2.sock"
+    if slot != DEFAULT_SLOT:
+        name += ".%d" % slot
+    return os.path.join(runtime, name)
 
 
 # Opcodes, from PCSX2's PINE server.
@@ -132,7 +151,12 @@ class Pine:
         return struct.unpack(_UNPACK[size], data[:size])[0]
 
     def write(self, address: int, value: int, size: int = 4) -> None:
-        """Write EE memory. No validation happens anywhere -- be sure."""
+        """Write EE memory.
+
+        Nothing validates this -- not the address, not the size, not which game
+        is loaded. Check :meth:`game_id` first if the process on the other end
+        is not one you started yourself.
+        """
         if size not in _WRITE_OPS:
             raise ValueError("size must be 1, 2, 4 or 8, got %r" % (size,))
         packed = struct.pack(_UNPACK[size], value & ((1 << (size * 8)) - 1))

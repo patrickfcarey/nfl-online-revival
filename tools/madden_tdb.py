@@ -7,7 +7,8 @@ neither is the ``DB``-magic layout that later Madden titles use directly.
 ``(offset, size)`` pair per member. Offsets are relative to the *end* of the
 directory block, not to the file, which is the one detail that makes the whole
 thing decode. The 2004 disc ships 232 members: index 0 is the free-agent pool,
-1-32 are the NFL teams in order, and the rest are historical squads.
+1-32 are the NFL teams -- not quite in order, members 30/31/32 hold
+team ids 32/30/31 -- and the rest are historical squads.
 
 **Inner: a standard Madden TDB.** ``DB`` magic, a table directory of 4-character
 names and offsets, then per-table headers, field definitions and bit-packed

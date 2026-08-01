@@ -16,8 +16,11 @@ with
 
 which writes the console's own computed checksum into the slot that normally
 holds the value we announced (gp is 0x006056f0, so the slot is 0x00600b2c).
-Nothing else reads that slot, and the next ``news`` reply refills it, so the
-overwrite is harmless.
+The next ``news`` reply refills it. The overwrite is not quite free, though: an
+earlier version of this note said "nothing else reads that slot", and that is
+false -- 0x0012a990 is a getter for the same word, called from 0x00354674, which
+serialises it into an outgoing buffer. So the patch also makes the console
+transmit a wrong checksum. Harmless for a measurement run; worth knowing.
 
 A PCSX2 savestate is a ZIP holding a raw 32 MB ``eeMemory.bin``, so EE address
 0x00600b2c is simply offset 0x00600b2c in that file.

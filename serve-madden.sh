@@ -52,9 +52,7 @@ TRANSCRIPT="${TRANSCRIPT:-captures/madden-$(date +%Y%m%d-%H%M%S).jsonl}"
 # rather than the obvious "you already have one running" -- and the previous
 # instance is easy to lose track of when it was started with nohup.
 #
-# The bracket in the pattern stops pgrep matching its own command line. That
-# self-match has killed a live SSH session on this project four times.
-# Who owns the ports, from the lock the server itself takes. This is the
+# Who owns the ports, read from the lock the server itself takes. This is the
 # authority, not pgrep: a `pgrep -f` for the server's command line also matches
 # any shell whose own command line happens to contain that text -- including the
 # ssh invocations used to drive this rig, which has killed a live session four
@@ -62,7 +60,10 @@ TRANSCRIPT="${TRANSCRIPT:-captures/madden-$(date +%Y%m%d-%H%M%S).jsonl}"
 #
 # The kernel drops the flock when the holder dies, so a crashed server cannot
 # leave a lock that blocks the next one.
-LOCK="${TMPDIR:-/tmp}/nfl-backend-10000-10001.lock"
+# Must match the name backend/__main__.py derives from its --port set, so a
+# run with different ports checks the right lock rather than a stale default.
+PORTS="${PORTS:-10000-10001}"
+LOCK="${TMPDIR:-/tmp}/nfl-backend-${PORTS}.lock"
 existing=""
 if [ -s "$LOCK" ]; then
     lock_pid=$(sed -n "s/^PID \([0-9]*\):.*/\1/p" "$LOCK" | head -1)
