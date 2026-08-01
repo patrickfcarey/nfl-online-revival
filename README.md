@@ -86,6 +86,22 @@ Madden's text framing transfers.
 Xbox versions are ever attempted — reimplementing Kerberos/IPsec is months of
 wasted effort. That one still holds.
 
+## Where to start reading
+
+Four documents carry the substance, and they are worth reading in this order:
+
+- **`docs/ea-protocol.md`** — the wire format. Nothing else makes sense first.
+- **`docs/roster-delivery.md`** — how a roster reaches a console and how to
+  build a real one. This is the part that does something useful.
+- **`docs/lobby-and-matchmaking.md`** — rooms, chat, matchmaking, the peer link.
+- **`docs/method.md`** — how to investigate this system, and a catalogue of
+  every conclusion here that turned out to be wrong. Read it if you plan to add
+  to any of the above; the failures are more instructive than the findings.
+
+`docs/protocol-notes.md` is the running log those four were distilled from. It
+is kept because it records when things were learned and what they replaced, but
+its earlier sections describe a world that later sections correct.
+
 ## Phase 1 harness (`recon/`)
 
 Standard-library Python 3.9+, so it drops onto the rig with a file copy — no
@@ -166,9 +182,13 @@ tools/
                        checks what comes back, so mistakes cost seconds rather
                        than a console boot
 docs/
+  ea-protocol.md       the wire format: framing, status tags, message vocabulary
+  roster-delivery.md   how a roster reaches a console, and how to build one
+  lobby-and-matchmaking.md   rooms, chat, quickmatch, the peer link
+  method.md            the tools, and every wrong conclusion and how it was caught
+  roster-checksum.md   the CSUM derivation in detail
+  protocol-notes.md    the running log of findings, oldest first
   emulator-capture.md  rig-side runbook: DNS redirect, plaintext vs NIC, tcpdump
-  protocol-notes.md    living per-title findings (fill during capture)
-  roster-checksum.md   how the CSUM was reversed, and what is still unproven
 captures/              transcripts and pcaps land here (contents gitignored)
 ```
 
