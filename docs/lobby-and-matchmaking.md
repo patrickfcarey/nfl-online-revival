@@ -102,33 +102,30 @@ client-but-not-re-verified-here rather than freshly confirmed:
 `F` is not a number the server can pick freely -- it indexes a 256-entry
 table at `0x005f56f0`, one 32-bit mask per possible byte value, used
 identically by `+rom` `F`, `+usr` `F`, and (see Chat, below) `+msg` `F`. Every
-entry was read out of the ELF for this document, not sampled:
+entry was read out of the ELF for this document, not sampled: `@` maps to bit
+0, `A`-`Z` map to bits 1-26 in order, and `0`-`3` map to bits 27-30 -- every
+other byte, including every other digit and punctuation character, maps to
+zero. Lowercase mirrors uppercase exactly (`a` gives the same bit as `A`,
+through `z`/`Z`), so the flag letters are case-insensitive in practice even
+though nothing about the wire format announces that.
 
-| Char | Bit | Char | Bit | Char | Bit |
-|---|---|---|---|---|---|
-| `@` | 0 | `L` | 12 | `X` | 24 |
-| `A` | 1 | `M` | 13 | `Y` | 25 |
-| `B` | 2 | `N` | 14 | `Z` | 26 |
-| `C`..`K` | 3-11 | `O` | 15 | `0` | 27 |
-| | | `P` | **16** | `1` | 28 |
-| | | `Q`-`W` | 17-23 | `2` | 29 |
-| | | | | `3` | 30 |
+The letters this document actually cares about:
 
-Every byte outside `@`, `A`-`Z`/`a`-`z` and `0`-`3` maps to zero. Lowercase
-mirrors uppercase exactly (`a` gives the same bit as `A`, through `z`/`Z`),
-so the flag letters are case-insensitive in practice even though nothing
-about the wire format announces that.
+| Letter | Bit | Meaning |
+|---|---|---|
+| `B` | 2 | chat: broadcast line |
+| `P` | 16 | room: password-protected; chat: private line (same bit, different message) |
+| `U` | 21 | user: "this record is me" |
 
-Two letters carry meaning the client acts on: room flag `P` (bit 16) marks a
-room password-protected, and user flag `U` (bit 21) marks "this record is
-me". The self-flag check is a branch-*likely* at `0x00449d0c`
+`U`'s self-flag check is a branch-*likely* at `0x00449d0c`
 (`lui v0,0x0020` / `and v0,a0,v0` / `bnel v0,zero,0x00449d64`), and because a
 branch-likely's delay slot runs only when the branch is taken, the write it
 guards -- `sw a0, 436(s2)`, the client's own self-identity slot -- happens
 **only** when bit 21 is set. Miss that and every occupant looks like nobody
-in particular to the client's own "which row is me" logic. Chat reuses the
-same table: `B` (bit 2) marks a broadcast line and `P` (bit 16, the *same*
-bit as room-privacy) marks a private one -- one mechanism, three contexts.
+in particular to the client's own "which row is me" logic. That `P` means
+the same bit for a room's password flag and a chat message's privacy flag is
+not a coincidence worth reading into -- it's the same converter and the same
+table doing unrelated jobs in three different messages.
 
 ### Deletion and ids
 
