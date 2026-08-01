@@ -738,3 +738,49 @@ It means the confirmed parts earned that status by surviving exactly the kind
 of check described above, and the parts that haven't yet been checked that
 way are marked as such rather than written with the same confidence. Do the
 same for whatever you add next.
+
+## Part 4 -- what the tests do and do not cover
+
+A coverage audit on 2026-08-01 found roughly 2,000 lines with no test at all.
+Two were closed because of what they underwrite rather than their size:
+
+**`tools/build_year_roster.py`** produced the roster that ships on the USB kit.
+Its failure mode is not a crash but a file the console cheerfully installs with
+the wrong men on the wrong teams -- or with a geometry that fails the checksum
+*after* the install path has already wiped the league database. Now covered by
+`tests/test_build_year_roster.py` against a synthetic TDB, since no game data
+belongs in this repository.
+
+**`recon/mipsdis.py`** underwrites every address in every document here. A bug
+in it produces a plausible listing, and the wrong conclusion is then written
+down as fact and built on -- which has already happened once, when a
+disassembler written by another tool had BEQL at 0x13 instead of 0x14.
+`tests/test_mipsdis.py` pins the R5900 traps: branch-likely encodings,
+conditional moves, the three-operand `mult`, sign-extended branch offsets, and
+the `lui`/`addiu` high-half adjustment.
+
+Both suites were checked by mutation rather than by passing: reintroducing the
+0x13 bug fails three tests, trusting the scraped `tgId` over the game's TEAM
+table fails two, and dropping the `PWGT` −160 offset fails two.
+
+### Still uncovered, deliberately or otherwise
+
+`tools/fake_console.py` (the emulated client -- untested test tooling proves
+nothing), `tools/pine.py`, `tools/patch_iso_roster.py` and
+`tools/read_roster_checksum.py`. The middle two touch a live game and a 3.2 GB
+ISO respectively, and `patch_iso_roster.py` has already failed silently once by
+exiting 0 having patched nothing.
+
+Beyond code coverage, three categories no test here can reach:
+
+* **Never exercised by a console.** Chat end to end, `quik`/`chal`/`+ses`, the
+  peer link, and the verb stubs. Console-verified today is login, the `news`
+  manifest, the HTTP download and the install -- nothing further.
+* **Load-bearing assumptions read rather than observed.** The idle timeout
+  rests on "the client echoes every `~png`", which comes from `0x00448C58` and
+  not from a transcript. Whether the console closes its `@dir` connection is
+  likewise unestablished. Both would produce disconnections of real players if
+  wrong, which is why neither earns a ban strike.
+* **Wrong-scope wiring.** Two of the six defects found in the same review were
+  code that did exactly what it said while connected to the wrong object. No
+  unit test finds that; only reading the wiring does.

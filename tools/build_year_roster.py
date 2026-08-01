@@ -379,8 +379,16 @@ def _set_text(record: bytearray, table, column: str, text: str) -> None:
     record[start:start + width] = encoded + b"\x00" * (width - len(encoded))
 
 
-def rewrite(blob: bytes, by_team: Dict[int, List[dict]]) -> Tuple[bytes, int, int]:
-    """Replace every team player in place, leaving the rest untouched."""
+def rewrite(blob: bytes, by_team: Dict[int, List[dict]]
+            ) -> Tuple[bytes, int, int, int, int]:
+    """Replace every team player in place, leaving the rest untouched.
+
+    Returns ``(sealed, written, skipped, written_published, free_written)``.
+    ``skipped`` spans both kinds of untouched record -- a team record with no
+    player left to place, and a pool record with no leftover -- which is why
+    ``main`` reports it as "records unchanged". The three counts partition the
+    table.
+    """
     database = madden_tdb.Database(blob, 0)
     table = database.table("PLAY")
     out = bytearray(blob)
