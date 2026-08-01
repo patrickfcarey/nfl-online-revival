@@ -1137,8 +1137,18 @@ class NewsTests(unittest.TestCase):
         self.assertEqual(fields["BUDDY_URL"], "192.168.68.85")
         self.assertEqual(fields["BUDDY_PORT"], "10002")
 
-    def test_the_requested_index_is_echoed(self):
-        self.assertEqual(self._news("2")[0].fields["NAME"], "2")
+    def test_a_list_reply_carries_no_stray_fields(self):
+        """The category is in the status; the body must hold records only.
+
+        Echoing NAME here was a real bug: the client counts records out of this
+        body, so that one field became a roster update on offer. Measured live,
+        gp+17660 read 1 and the console prompted for an update it could not be
+        given.
+        """
+        reply = self._news("2")[0]
+        self.assertEqual(reply.status_tag, "new2")
+        self.assertEqual(reply.fields, {})
+        self.assertEqual(reply.raw_payload, b"\x00")
 
     def test_the_roster_version_is_always_populated(self):
         """Sent even though the checksum is a placeholder, so the field exists

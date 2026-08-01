@@ -986,7 +986,9 @@ def service_news(ctx: Context) -> List[bytes]:
     if kind == NEWS_ROSTERS:
         return _roster_manifest(ctx)
     if kind == NEWS_HEADLINES:
-        return [_news_message(ctx, kind, {"NAME": str(kind)})]
+        # Empty for the same reason as the roster list: any field here becomes
+        # a headline record.
+        return [_news_message(ctx, kind, {})]
 
     fields = {
         "NAME": str(kind),
@@ -1110,7 +1112,16 @@ def _roster_manifest(ctx: Context) -> List[bytes]:
     url = ctx.config.get("roster_url")
     crc = ctx.config.get("roster_file_crc")
     if not url or crc is None:
-        return [_news_message(ctx, NEWS_ROSTERS, {"NAME": str(NEWS_ROSTERS)})]
+        # A **completely empty body**. Not even NAME, which the request carries
+        # but the reply must not: the list parser counts records out of this
+        # body, so a single stray field becomes one roster update on offer.
+        #
+        # Measured live over PINE with `NAME=2` present: gp+17660, the kind-2
+        # list count, read 1 and the console had materialised a record. That is
+        # what drives the "your rosters are out of date" prompt -- not the
+        # checksum, which by then matched exactly. We were advertising an update
+        # that consisted of nothing, then failing to deliver it.
+        return [_news_message(ctx, NEWS_ROSTERS, {})]
     return [_news_message(ctx, NEWS_ROSTERS, {
         "NAME": str(NEWS_ROSTERS),
         "URL": str(url),
