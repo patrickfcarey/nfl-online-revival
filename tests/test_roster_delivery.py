@@ -124,6 +124,28 @@ class RosterManifest(unittest.TestCase):
         self.store.close()
         os.unlink(self.path)
 
+    @staticmethod
+    def _records(reply):
+        """Split a list reply into records: one per LINE, fields by space.
+
+        Deliberately not protocol.parse_fields, which is for ordinary replies
+        and would read a whole record line as a single field. The two layouts
+        are genuinely different, and conflating them is what produced three
+        roster records out of one entry.
+        """
+        text = reply.raw_payload.split(b"\x00", 1)[0].decode("latin-1")
+        out = []
+        for line in text.split("\n"):
+            if not line.strip():
+                continue
+            fields = {}
+            for part in line.split(" "):
+                if "=" in part:
+                    key, value = part.split("=", 1)
+                    fields[key] = value
+            out.append(fields)
+        return out
+
     def _manifest(self, **extra):
         config = dict(CONFIG); config.update(extra)
         msg = protocol.decode(protocol.encode("news", 0, {"NAME": "2"}))
@@ -134,23 +156,43 @@ class RosterManifest(unittest.TestCase):
     def test_empty_when_no_roster_is_configured(self):
         reply = self._manifest()
         self.assertEqual(reply.status_tag, "new2")
-        self.assertNotIn("URL", reply.fields)
+        self.assertEqual(self._records(reply), [])
 
     def test_carries_url_and_crc_when_configured(self):
         reply = self._manifest(roster_url="http://10.0.0.1:10080/roster.dat",
                                roster_file_crc=12345)
-        self.assertEqual(reply.fields["URL"], "http://10.0.0.1:10080/roster.dat")
-        self.assertEqual(reply.fields["CRC"], "12345")
+        records = self._records(reply)
+        self.assertEqual(len(records), 1, "one entry must be ONE record")
+        self.assertEqual(records[0]["URL"], "http://10.0.0.1:10080/roster.dat")
+        self.assertEqual(records[0]["CRC"], "12345")
+
+    def test_one_entry_is_one_line(self):
+        """The bug this format exists for.
+
+        Encoding the three fields one-per-line made the console see three
+        records -- measured live at gp+17660 -- the first of which had no URL.
+        It selected that one and reported a failed download.
+        """
+        reply = self._manifest(roster_url="http://10.0.0.1:10080/roster.dat",
+                               roster_file_crc=12345)
+        body = reply.raw_payload.split(b"\x00", 1)[0]
+        self.assertEqual(body.count(b"\n"), 1)
+
+    def test_a_value_with_a_space_is_refused(self):
+        # Fields inside a record are space-separated, so a space in a value
+        # would silently become a new field.
+        with self.assertRaises(protocol.ProtocolError):
+            handlers._news_list(None, 2, [{"NAME": "two words"}])
 
     def test_a_url_without_a_crc_is_not_advertised(self):
         # A record with a URL the client cannot verify is worse than no record:
         # it downloads, fails the check, and reports a corrupt transfer.
         reply = self._manifest(roster_url="http://10.0.0.1:10080/roster.dat")
-        self.assertNotIn("URL", reply.fields)
+        self.assertEqual(self._records(reply), [])
 
     def test_crc_is_decimal_not_hex(self):
         reply = self._manifest(roster_url="http://x/y", roster_file_crc=0xDEADBEEF)
-        self.assertEqual(reply.fields["CRC"], str(0xDEADBEEF))
+        self.assertEqual(self._records(reply)[0]["CRC"], str(0xDEADBEEF))
 
 
 class PayloadChecksum(unittest.TestCase):

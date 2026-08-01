@@ -1050,6 +1050,41 @@ def _news_message(ctx: Context, kind: int, fields) -> bytes:
     return protocol.encode("news", news_status(kind), fields)
 
 
+#: A record label. No spaces: fields inside a record are space-separated, so a
+#: space in a value would start a new field.
+ROSTER_LABEL = "Roster"
+
+
+def _news_list(ctx: Context, kind: int, records) -> bytes:
+    """A `news` LIST reply -- one record per LINE, fields space-separated.
+
+    This is not how the rest of the protocol encodes a body, and the difference
+    is the whole point. Ordinary replies put one ``KEY=VALUE`` per line, and the
+    field lookup at 0x0044acc8 scans the whole text, so the layout does not
+    matter. A list reply is split into records by newline first, and only then
+    are fields looked up inside each record.
+
+    Encoding a single roster entry the ordinary way therefore produced **three**
+    records rather than one -- measured live: gp+17660 read 3, and the record at
+    index 0 was the bare ``NAME=2`` line with no URL at all. The console picked
+    that one, found an empty URL, and reported a failed download. It had opened
+    the connection and everything.
+    """
+    lines = []
+    for record in records:
+        parts = []
+        for key, value in record.items():
+            text = protocol.percent_escape(str(value))
+            if " " in text:
+                raise ProtocolError(
+                    "%s=%r contains a space; fields within a record are "
+                    "space-separated, so it would split into two" % (key, text))
+            parts.append("%s=%s" % (key, text))
+        lines.append(" ".join(parts))
+    body = ("\n".join(lines) + "\n").encode("latin-1") + b"\x00" if lines else b"\x00"
+    return protocol.encode_raw("news", news_status(kind), body)
+
+
 def news_status(kind: int) -> str:
     """``new0``/``new1``/``new2`` -- the category tag, carried as the status."""
     if not 0 <= kind <= 9:
@@ -1122,11 +1157,9 @@ def _roster_manifest(ctx: Context) -> List[bytes]:
         # checksum, which by then matched exactly. We were advertising an update
         # that consisted of nothing, then failing to deliver it.
         return [_news_message(ctx, NEWS_ROSTERS, {})]
-    return [_news_message(ctx, NEWS_ROSTERS, {
-        "NAME": str(NEWS_ROSTERS),
-        "URL": str(url),
-        "CRC": str(crc),
-    })]
+    return [_news_list(ctx, NEWS_ROSTERS, [
+        {"URL": str(url), "CRC": str(crc), "NAME": ROSTER_LABEL},
+    ])]
 
 
 @handles("cusr")
