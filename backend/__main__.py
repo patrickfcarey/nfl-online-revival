@@ -13,6 +13,8 @@ import threading
 from typing import List, Optional
 
 from . import handlers  # noqa: F401  -- importing registers the handlers
+from . import hub, limits
+from . import service as service_module
 from .service import Service, ServiceError, Transcript
 from .store import Store, StoreError
 
@@ -84,6 +86,37 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--http-port", type=int, default=10080,
                         help="port for the roster download (default 10080)")
     parser.add_argument("--quiet", action="store_true")
+
+    group = parser.add_argument_group(
+        "limits",
+        "Bounds on what one host can make this process do. The defaults are "
+        "far above anything a real console produces; 0 disables a limit, which "
+        "is reasonable on a LAN and is not on a public address.")
+    group.add_argument("--max-connections", type=int,
+                       default=limits.DEFAULT_MAX_CONNECTIONS,
+                       help="concurrent connections across all game ports "
+                            "(default %(default)s, 0 for unlimited)")
+    group.add_argument("--max-connections-per-ip", type=int,
+                       default=limits.DEFAULT_MAX_PER_IP,
+                       help="concurrent connections from one address. A "
+                            "console holds two during the @dir redirect "
+                            "(default %(default)s, 0 for unlimited)")
+    group.add_argument("--send-timeout", type=float, default=hub.SEND_TIMEOUT,
+                       help="seconds one write may take before the peer is "
+                            "judged wedged and dropped. Writes are serialised "
+                            "per connection, so without this a peer that stops "
+                            "reading freezes its whole room "
+                            "(default %(default)s)")
+    group.add_argument("--idle-timeout", type=float,
+                       default=service_module.IDLE_TIMEOUT,
+                       help="seconds an established connection may go quiet. "
+                            "We ping every %ds and the client echoes, so this "
+                            "allows several missed echoes "
+                            "(default %%(default)s)" % int(hub.PING_AFTER))
+    group.add_argument("--first-byte-timeout", type=float,
+                       default=service_module.FIRST_BYTE_DEADLINE,
+                       help="seconds a connection may stay silent having sent "
+                            "nothing at all (default %(default)s)")
     return parser
 
 
@@ -269,14 +302,34 @@ def main(argv: Optional[List[str]] = None) -> int:
         # A separate endpoint. The client only learns its address after login,
         # so it cannot gate reaching a lobby -- the stub exists to keep the
         # buddy layer quiet rather than because anything depends on it.
+        from . import buddy as buddy_module
         from .buddy import BuddyService
-        buddy_service = BuddyService(verbose=not args.quiet,
-                                     transcript=transcript)
+        buddy_service = BuddyService(
+            verbose=not args.quiet, transcript=transcript,
+            # Its own counters, not the game service's: a console holds one
+            # buddy connection and two game ones, so sharing a per-address cap
+            # would make the two endpoints compete for the same budget.
+            limiter=limits.ConnectionLimiter(
+                total=min(args.max_connections,
+                          buddy_module.DEFAULT_MAX_CONNECTIONS)
+                if args.max_connections else 0,
+                per_ip=min(args.max_connections_per_ip,
+                           buddy_module.DEFAULT_MAX_PER_IP)
+                if args.max_connections_per_ip else 0),
+            send_timeout=args.send_timeout,
+            idle_timeout=args.idle_timeout,
+            first_byte_deadline=args.first_byte_timeout)
         threading.Thread(
             target=buddy_service.serve_forever,
             args=(args.bind, args.buddy_port), daemon=True).start()
 
-    service = Service(store, config, transcript, verbose=not args.quiet)
+    service = Service(
+        store, config, transcript, verbose=not args.quiet,
+        limiter=limits.ConnectionLimiter(total=args.max_connections,
+                                         per_ip=args.max_connections_per_ip),
+        send_timeout=args.send_timeout,
+        idle_timeout=args.idle_timeout,
+        first_byte_deadline=args.first_byte_timeout)
     try:
         service.serve_forever(args.bind, args.port)
     except ServiceError as exc:

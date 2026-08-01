@@ -50,6 +50,27 @@ from typing import Optional, Tuple
 #: readable.
 ROSTER_PATH = "/roster.dat"
 
+#: How many downloads may be in flight at once.
+#:
+#: This server used to be a plain ``HTTPServer``, which handles exactly one
+#: request at a time. Two consoles joining together therefore serialised their
+#: 253 KB downloads, and a single client that opened a socket without ever
+#: sending a request line blocked every other download indefinitely.
+#:
+#: That is worse than it sounds. The install path wipes the league database
+#: *before* it validates anything (0x004c9ee8), so a console left waiting
+#: behind a stalled transfer sits on an empty database until it is rebooted.
+#: Serving concurrently is a correctness fix, not only a throughput one.
+#:
+#: The cap exists because the opposite failure is just as real: unbounded
+#: threads each holding a 253 KB payload is a cheap way to exhaust the host.
+MAX_CONCURRENT_DOWNLOADS = 16
+
+#: A console finishes 253 KB in seconds even on a poor link. Anything holding a
+#: connection open longer than this is not downloading a roster, and without a
+#: timeout it would hold its slot forever.
+REQUEST_TIMEOUT = 30.0
+
 
 class RosterFileError(Exception):
     """The roster payload cannot be served as configured."""
@@ -72,10 +93,34 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     # Set by the server instance.
     payload = b""
     on_event = None
+    slots = None            # a BoundedSemaphore, installed by RosterServer
 
     # The console is not a browser; HTTP/1.0 with an explicit length and a
     # close is the least that can go wrong.
     protocol_version = "HTTP/1.0"
+
+    # socketserver applies this to the connection in setup(), so a client that
+    # connects and then says nothing is dropped instead of holding a slot.
+    timeout = REQUEST_TIMEOUT
+
+    def handle(self) -> None:
+        """Take a download slot, or hang up rather than queue.
+
+        Refusing immediately is deliberate. The console retries a failed
+        transfer, but it has no useful behaviour for a connection that is
+        accepted and then ignored -- it simply waits, which is the failure mode
+        this whole file exists to avoid.
+        """
+        if self.slots is not None and not self.slots.acquire(blocking=False):
+            self._announce("refused %s: %d downloads already in flight"
+                           % (self.client_address[0], MAX_CONCURRENT_DOWNLOADS))
+            self.close_connection = True
+            return
+        try:
+            super().handle()
+        finally:
+            if self.slots is not None:
+                self.slots.release()
 
     def do_GET(self) -> None:
         self._announce("GET %s" % self.path)
@@ -122,9 +167,14 @@ class RosterServer:
         handler = type("_BoundHandler", (_Handler,), {
             "payload": self.payload,
             "on_event": staticmethod(self._on_event) if self._on_event else None,
+            "slots": threading.BoundedSemaphore(MAX_CONCURRENT_DOWNLOADS),
         })
         try:
-            self._httpd = http.server.HTTPServer((bind, port), handler)
+            # Threading, so two consoles joining together do not serialise --
+            # see MAX_CONCURRENT_DOWNLOADS. daemon_threads keeps shutdown()
+            # from blocking on a transfer that is still running.
+            self._httpd = http.server.ThreadingHTTPServer((bind, port), handler)
+            self._httpd.daemon_threads = True
         except OSError as exc:
             raise RosterFileError("cannot serve roster on %s:%d: %s"
                                   % (bind, port, exc))

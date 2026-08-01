@@ -51,6 +51,19 @@ PING_AFTER = 25.0
 #: How often the keepalive thread looks for idle connections.
 PING_TICK = 5.0
 
+#: How long one write may take before the peer is judged wedged.
+#:
+#: Without this, ``sendall`` blocks forever on a peer that has stopped reading:
+#: its receive window fills, our kernel buffer fills, and the call never
+#: returns. Because writes are serialised per connection and ``broadcast``
+#: walks its targets one at a time, that single dead console froze chat and
+#: presence for everyone else in the room -- and nothing logged, because from
+#: the server's point of view a send was simply still in progress.
+#:
+#: Ten seconds is far above any real network stall for messages that average 27
+#: bytes, and far below "never".
+SEND_TIMEOUT = 10.0
+
 
 class PushError(RuntimeError):
     """An unsolicited send used a type that could be mistaken for a reply."""
@@ -60,32 +73,67 @@ class Connection:
     """One client socket, with its session and a lock over writes."""
 
     def __init__(self, sock: socket.socket, label: str, session,
-                 listen_port: int = 0) -> None:
+                 listen_port: int = 0,
+                 send_timeout: float = SEND_TIMEOUT) -> None:
         self.sock = sock
         self.label = label
         self.session = session
         self.listen_port = listen_port
+        self.send_timeout = send_timeout
         self._lock = threading.Lock()
         self.opened = time.time()
         self.last_sent = self.opened
         self.closed = False
+        #: Set when a write timed out rather than failed, so the disconnect
+        #: log can tell a wedged peer from one that simply hung up.
+        self.stalled = False
 
     def send(self, blob: bytes) -> bool:
-        """Write one whole message. False if the peer has gone.
+        """Write one whole message. False if the peer has gone or has stalled.
 
         The lock covers the entire message: the client cannot reassemble a torn
         one, so a half-written message is not a delay, it is a dead session.
+
+        The timeout comes from the socket, set once when the connection is
+        accepted, and ``sendall`` applies it to the whole operation. On expiry
+        there is no safe recovery -- an unknown number of bytes has already
+        gone, so the stream is torn whatever we do next -- which is why this
+        abandons the connection rather than retrying.
         """
         with self._lock:
             if self.closed:
                 return False
             try:
                 self.sock.sendall(blob)
+            except socket.timeout:
+                # Distinct from OSError below: the peer is still there, it has
+                # simply stopped reading. Left alone it would hold this lock,
+                # and therefore the room's whole fanout, indefinitely.
+                self.stalled = True
+                self._abort()
+                return False
             except OSError:
                 self.closed = True
                 return False
             self.last_sent = time.time()
             return True
+
+    def _abort(self) -> None:
+        """Wake the reader and mark this connection dead, without closing it.
+
+        ``shutdown`` rather than ``close`` on purpose. The thread that owns
+        this connection is blocked in ``recv``; shutting the socket down makes
+        that return, and the owning thread then closes the descriptor in its
+        own ``finally``. Closing it from here would free the descriptor while
+        another thread is about to read from it, and the number can be reused
+        by the next ``accept`` -- so the reader would resume against an
+        unrelated client's socket.
+        """
+        self.closed = True
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
 
     def close(self) -> None:
         with self._lock:

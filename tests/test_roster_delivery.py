@@ -10,8 +10,11 @@ server side looks wrong when that happens, so only a test can hold the line.
 from __future__ import annotations
 
 import os
+import socket
 import sys
 import tempfile
+import threading
+import time
 import unittest
 import urllib.request
 import zlib
@@ -286,6 +289,62 @@ class HttpDelivery(unittest.TestCase):
         url = "http://127.0.0.1:%d/anything" % self.port
         with urllib.request.urlopen(url, timeout=5) as response:
             self.assertEqual(response.read(), self.payload)
+
+
+class ConcurrentDelivery(unittest.TestCase):
+    """Two consoles joining together must not serialise.
+
+    This server was a plain ``HTTPServer`` until 2026-08-01, which handles one
+    request at a time. Both tests here failed then, and both mattered on
+    hardware rather than only under load: the install path wipes the league
+    database before it validates (0x004c9ee8), so a console left waiting behind
+    someone else's transfer sits on an empty database until it is rebooted.
+    """
+
+    def setUp(self):
+        self.payload = bytes(range(256)) * 8
+        self.server = rosterfile.RosterServer(self.payload)
+        self.port = self.server.start("127.0.0.1", 0)
+        self.url = "http://127.0.0.1:%d%s" % (self.port, rosterfile.ROSTER_PATH)
+
+    def tearDown(self):
+        self.server.stop()
+
+    def test_a_silent_peer_does_not_block_a_download(self):
+        # Connect and never send a request line -- the cheapest possible
+        # denial of service against a single-threaded server.
+        stalled = socket.create_connection(("127.0.0.1", self.port))
+        self.addCleanup(stalled.close)
+        with urllib.request.urlopen(self.url, timeout=5) as response:
+            self.assertEqual(response.read(), self.payload)
+
+    def test_downloads_actually_overlap(self):
+        # Assert overlap in time, not merely that all of them finished: a
+        # serialising server also returns every byte correctly, just one at a
+        # time, so correctness alone cannot tell the two apart.
+        spans, lock = [], threading.Lock()
+
+        def fetch():
+            start = time.time()
+            with urllib.request.urlopen(self.url, timeout=10) as response:
+                body = response.read()
+            with lock:
+                spans.append((start, time.time(), len(body)))
+
+        threads = [threading.Thread(target=fetch) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+
+        self.assertEqual(len(spans), 4, "a download did not finish")
+        for _start, _end, length in spans:
+            self.assertEqual(length, len(self.payload))
+        overlapping = sum(1 for a in spans for b in spans
+                          if a is not b and a[0] < b[1] and b[0] < a[1])
+        self.assertGreater(overlapping, 0,
+                           "no two downloads overlapped; the server is "
+                           "handling requests one at a time")
 
 
 class ManifestUrl(unittest.TestCase):

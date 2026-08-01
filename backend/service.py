@@ -20,10 +20,28 @@ import threading
 import time
 from typing import Dict, List, Optional
 
-from . import handlers, protocol
+from . import handlers, limits, protocol
 from .handlers import Context, Session
-from .hub import Connection, Hub, PushError
+from .hub import SEND_TIMEOUT, Connection, Hub, PushError
 from .store import Store
+
+#: How long a connection may stay silent having never said anything at all.
+#:
+#: A console connects in order to speak -- it sends `@dir` or `auth` at once --
+#: so silence here is not a slow player, it is a socket held open for the sake
+#: of holding it. Before this existed, `recv` had no timeout and one SYN
+#: consumed a thread permanently, which is the cheapest denial of service there
+#: is.
+FIRST_BYTE_DEADLINE = 30.0
+
+#: How long an established connection may go quiet.
+#:
+#: Grounded in the protocol rather than guessed: we ping every PING_AFTER (25 s)
+#: and the client echoes every `~png` it receives, so a healthy connection sends
+#: us something roughly every 25 seconds. This allows nearly five consecutive
+#: missed echoes before giving up, which keeps it firmly on the fail-open side
+#: for a real player while still bounding what an idle socket can hold.
+IDLE_TIMEOUT = 120.0
 
 
 class ServiceError(RuntimeError):
@@ -63,7 +81,11 @@ class Transcript:
 class Service:
     def __init__(self, store: Store, config: Dict[str, str],
                  transcript: Optional[Transcript] = None,
-                 verbose: bool = True) -> None:
+                 verbose: bool = True,
+                 limiter: Optional[limits.ConnectionLimiter] = None,
+                 send_timeout: float = SEND_TIMEOUT,
+                 idle_timeout: float = IDLE_TIMEOUT,
+                 first_byte_deadline: float = FIRST_BYTE_DEADLINE) -> None:
         self.store = store
         self.config = config
         self.transcript = transcript or Transcript(None)
@@ -71,6 +93,13 @@ class Service:
         self.hub = Hub(on_event=self._say,
                        pair_any=bool(config.get("pair_any")),
                        transcript=transcript)
+        #: Shared across every listening port on purpose: one console holds
+        #: :10000 and the advertised port at the same time during the redirect,
+        #: so a per-port count would be counting the wrong thing.
+        self.limiter = limiter or limits.ConnectionLimiter()
+        self.send_timeout = send_timeout
+        self.idle_timeout = idle_timeout
+        self.first_byte_deadline = first_byte_deadline
         self._next_user_id = 0
         self._id_lock = threading.Lock()
         self._listeners: List[socket.socket] = []
@@ -93,15 +122,40 @@ class Service:
             # Positive only: the client silently discards a record with a
             # negative id, so an occupant with id 0 would simply not appear.
             session.user_id = self._next_user_id
-        connection = Connection(conn, label, session, listen_port)
+        connection = Connection(conn, label, session, listen_port,
+                                send_timeout=self.send_timeout)
         self.hub.register(connection)
         buffer = b""
         self._say("\n[ea] %s %s connected" % (time.strftime("%H:%M:%S"), label))
+        # The socket timeout does double duty: it bounds `sendall` for every
+        # writer (see hub.Connection.send) and it paces this read loop so the
+        # deadlines below can be checked at all.
+        last_heard = time.time()
+        heard_anything = False
         try:
             while not self._stopping.is_set():
-                chunk = conn.recv(65535)
+                try:
+                    chunk = conn.recv(65535)
+                except socket.timeout:
+                    # Nested, and before the outer `except OSError`, because
+                    # socket.timeout is a subclass of it -- caught out there,
+                    # every poll would look like a socket error and drop a
+                    # perfectly healthy connection.
+                    quiet = time.time() - last_heard
+                    deadline = (self.idle_timeout if heard_anything
+                                else self.first_byte_deadline)
+                    if deadline and quiet >= deadline:
+                        self._say("[ea] %s closed: silent for %.0fs (%s)"
+                                  % (label, quiet, "idle" if heard_anything
+                                     else "never sent anything"))
+                        self.transcript.raw(label, "timeout", b"",
+                                            "silent for %.1fs" % quiet)
+                        break
+                    continue
                 if not chunk:
                     break
+                last_heard = time.time()
+                heard_anything = True
                 buffer += chunk
                 try:
                     messages, buffer = protocol.split_stream(buffer)
@@ -122,8 +176,16 @@ class Service:
                 self.transcript.raw(label, "unconsumed", buffer,
                                     "still buffered at disconnect")
             self.hub.unregister(connection)
-            self._say("[ea] %s disconnected (%s)" % (label, session.describe()))
+            self._say("[ea] %s disconnected (%s)%s"
+                      % (label, session.describe(),
+                         " -- stopped reading; writes timed out"
+                         if connection.stalled else ""))
             connection.close()
+            # Last, and outside every other failure path: a slot that is not
+            # given back is a slot lost for the lifetime of the process, and
+            # the symptom is a server that refuses everyone after a while for
+            # no visible reason.
+            self.limiter.release(addr[0])
 
     def _handle(self, connection: Connection,
                 message: protocol.Message) -> None:
@@ -217,6 +279,12 @@ class Service:
         self._say("[ea] handlers: %s" % " ".join(handlers.known_types()))
         self._say("[ea] listening on %s ports %s"
                   % (bind, ", ".join(str(p) for p in ports)))
+        self._say("[ea] limits: %s connections, %s per address; "
+                  "timeouts send %.0fs, idle %.0fs, first byte %.0fs"
+                  % (self.limiter.total or "unlimited",
+                     self.limiter.per_ip or "unlimited",
+                     self.send_timeout, self.idle_timeout,
+                     self.first_byte_deadline))
         self._say("[ea] advertising %s:%s to clients"
                   % (self.config["advertise_host"], self.config["advertise_port"]))
 
@@ -244,6 +312,23 @@ class Service:
                 conn, addr = sock.accept()
             except OSError:
                 return
+            # Gate before the thread exists. Spawning one and then discovering
+            # it is over the limit would make the limit describe how fast the
+            # box dies rather than whether it does.
+            refusal = self.limiter.acquire(addr[0])
+            if refusal is not None:
+                self._say("[ea] refused %s:%d on :%d -- %s"
+                          % (addr[0], addr[1], port, refusal))
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                continue
+            try:
+                conn.settimeout(self.send_timeout)
+            except OSError:
+                self.limiter.release(addr[0])
+                continue
             threading.Thread(target=self._serve, args=(conn, addr, port),
                              daemon=True).start()
 
