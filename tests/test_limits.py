@@ -365,6 +365,19 @@ class Bucket(unittest.TestCase):
         self.assertEqual([bucket.take() for _ in range(5)],
                          [True, True, True, False, False])
 
+    def test_a_rate_with_no_burst_is_refused_at_construction(self):
+        """It would otherwise refuse every message while reading as lenient.
+
+        Zero capacity with a positive refill rate can never hold a token long
+        enough to spend one, so `--rate 20 --rate-burst 0` was a total outage
+        dressed up as "no burst allowance".
+        """
+        with self.assertRaises(ValueError) as caught:
+            limits.TokenBucket(rate=20, burst=0)
+        self.assertIn("refuses every message", str(caught.exception))
+        # Both zero remains the way to say unlimited.
+        self.assertTrue(limits.TokenBucket(rate=0, burst=0).take())
+
 
 class Rates(unittest.TestCase):
     def test_per_connection_and_per_address_are_independent(self):
@@ -400,10 +413,37 @@ class Rates(unittest.TestCase):
     def test_peak_is_observed_even_when_nothing_is_refused(self):
         # The measurement log-only mode exists to produce.
         rates = limits.RateLimiter(rate=0, burst=0, ip_rate=0, ip_burst=0)
-        bucket = rates.new_bucket()
+        state = rates.new_bucket()
         for _ in range(25):
-            self.assertIsNone(rates.check(bucket, "10.0.0.1"))
-        self.assertGreaterEqual(rates.connection_peak.peak, 25)
+            self.assertIsNone(rates.check(state, "10.0.0.1"))
+        self.assertGreaterEqual(rates.peak, 25)
+
+    def test_peak_is_per_connection_not_a_total_across_them(self):
+        """The number the whole log-only design produces.
+
+        `rate` is spent by one connection, so the measurement calibrating it
+        has to be of one connection. Summing across them inflated the figure by
+        however many clients were online -- already about double with a single
+        console, which holds :10000 and the advertised port at once -- so the
+        limit derived from it would be that many times too loose.
+        """
+        rates = limits.RateLimiter(rate=0, burst=0, ip_rate=0, ip_burst=0)
+        first, second = rates.new_bucket(), rates.new_bucket()
+        for _ in range(5):
+            rates.check(first, "10.0.0.1")
+            rates.check(second, "10.0.0.2")
+        self.assertEqual(rates.peak, 5,
+                         "peak reads %d for two connections sending 5 each; "
+                         "it is summing them" % rates.peak)
+
+    def test_peak_tracks_the_busiest_connection(self):
+        rates = limits.RateLimiter(rate=0, burst=0, ip_rate=0, ip_burst=0)
+        quiet, busy = rates.new_bucket(), rates.new_bucket()
+        for _ in range(3):
+            rates.check(quiet, "10.0.0.1")
+        for _ in range(11):
+            rates.check(busy, "10.0.0.2")
+        self.assertEqual(rates.peak, 11)
 
     def test_describe_says_which_mode_it_is_in(self):
         self.assertIn("observing only", limits.RateLimiter().describe())
@@ -526,6 +566,39 @@ class RateEnforcement(_ServiceHarness, unittest.TestCase):
             time.sleep(0.2)
         self.assertTrue(self._is_closed(sock),
                         "a connection talked indefinitely without logging in")
+
+    def test_a_zero_send_timeout_is_refused(self):
+        """0 means "unlimited" for every other limit and non-blocking here.
+
+        settimeout(0) makes recv raise BlockingIOError -- an OSError but not
+        socket.timeout -- so it falls past the poll handler and every
+        connection is dropped on its first quiet moment. There is no sensible
+        value at or below zero, so it is refused rather than accepted and
+        silently catastrophic.
+        """
+        with self.assertRaises(ValueError) as caught:
+            Service(self.store, dict(CONFIG), verbose=False, send_timeout=0)
+        self.assertIn("non-blocking", str(caught.exception))
+
+    def test_a_connection_that_never_logs_in_is_not_banned(self):
+        """Closing it is the whole remedy.
+
+        Connections to the redirector port send `@dir` and legitimately never
+        authenticate, and nothing establishes that the console closes that
+        socket promptly. Striking here would cost a strike per login and ban a
+        real player after five, with no feedback they could act on.
+        """
+        port = self._start(pre_auth_deadline=0.5, idle_timeout=0.0,
+                           first_byte_deadline=0.0,
+                           bans=limits.BanList(threshold=2, window=60, ttl=60),
+                           limiter=limits.ConnectionLimiter(0, 0))
+        for _ in range(4):
+            sock = self._connect(port)
+            sock.sendall(protocol.encode("@dir", protocol.OK, {}))
+            self._is_closed(sock, timeout=3)
+            sock.close()
+        self.assertEqual(self.service.bans.active(), [],
+                         "a client that only ever asked @dir was banned")
 
     def test_repeated_framing_errors_earn_a_ban(self):
         port = self._start(bans=limits.BanList(threshold=3, window=60, ttl=60),

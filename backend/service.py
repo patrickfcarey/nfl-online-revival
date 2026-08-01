@@ -112,6 +112,16 @@ class Service:
         #: Shared across every listening port on purpose: one console holds
         #: :10000 and the advertised port at the same time during the redirect,
         #: so a per-port count would be counting the wrong thing.
+        if send_timeout <= 0:
+            # settimeout(0) means non-blocking, not "no timeout": recv would
+            # raise BlockingIOError -- an OSError but not socket.timeout -- and
+            # every connection would be dropped on its first quiet moment. An
+            # unlimited send timeout is also the wedge this exists to prevent,
+            # so there is no sensible value here at or below zero.
+            raise ValueError(
+                "send_timeout must be positive; 0 puts the socket in "
+                "non-blocking mode and drops every connection. Unlike the "
+                "connection caps, this limit cannot be disabled.")
         self.limiter = limiter or limits.ConnectionLimiter()
         self.rates = rates or limits.RateLimiter()
         self.bans = bans or limits.BanList()
@@ -158,16 +168,24 @@ class Service:
         declare("rate_enforced_total",
                 "Connections actually closed for exceeding a rate limit.")
         declare("bans_total", "Addresses that crossed the strike threshold.")
+        declare("bans_refused_total",
+                "Connections turned away because their address was banned.")
+        declare("accept_failures_total",
+                "Accepted connections that could not be given a worker.")
 
         self.metrics.gauge("connections_active", "Connections open now.",
                            lambda: self.limiter.active)
         self.metrics.gauge("bans_active", "Addresses currently refused.",
                            lambda: len(self.bans.active()))
         # The number the log-only mode exists to produce: set the limit from
-        # this, not from the guess in limits.py.
+        # this, not from the guess in limits.py. It is a maximum over
+        # connections, not a total across them, because `rate` is spent by one
+        # connection -- measuring the sum would inflate it by however many
+        # clients happened to be online.
         self.metrics.gauge("rate_peak_messages_per_second",
-                           "Busiest one-second window seen on any connection.",
-                           lambda: self.rates.connection_peak.peak)
+                           "Messages per second on the busiest single "
+                           "connection.",
+                           lambda: self.rates.peak)
         self.metrics.gauge("rate_limit_enforced",
                            "1 when rate limits close connections, 0 when only "
                            "observed.",
@@ -318,7 +336,14 @@ class Service:
         self.transcript.raw(connection.label, "pre-auth-timeout", b"",
                             "%.1fs without auth" % age)
         self.metrics.bump("timeouts_pre_auth_total")
-        self._strike(address, connection.label, "never authenticated")
+        # Deliberately no strike. Connections to the redirector port send
+        # `@dir` and legitimately never authenticate, and nothing establishes
+        # that the console closes that socket before this deadline -- the
+        # protocol notes say only that the session moves to a second
+        # connection. If it does hold the first one open, striking here would
+        # cost a strike per login and ban a real player after five, with no
+        # feedback they could act on. Closing the connection is the whole
+        # remedy; the connection cap bounds the rest.
         return True
 
     def _handle(self, connection: Connection,
@@ -467,6 +492,7 @@ class Service:
             refusal = None
             if remaining:
                 refusal = "banned, %.0fs remaining" % remaining
+                self.metrics.bump("bans_refused_total")
             else:
                 refusal = self.limiter.acquire(addr[0])
             if refusal is not None:
@@ -481,11 +507,23 @@ class Service:
             self.metrics.bump("connections_total")
             try:
                 conn.settimeout(self.send_timeout)
-            except OSError:
+                threading.Thread(target=self._serve, args=(conn, addr, port),
+                                 daemon=True).start()
+            except (OSError, RuntimeError) as exc:
+                # RuntimeError is "can't start new thread", which happens
+                # exactly under the exhaustion the cap exists for -- and under
+                # the --pids-limit the deployment notes recommend. Without this
+                # the slot and the descriptor both leak, and the symptom is a
+                # server that gradually refuses everyone for no visible reason.
+                self._say("[ea] could not serve %s:%d on :%d -- %s"
+                          % (addr[0], addr[1], port, exc))
+                self.metrics.bump("accept_failures_total")
                 self.limiter.release(addr[0])
+                try:
+                    conn.close()
+                except OSError:
+                    pass
                 continue
-            threading.Thread(target=self._serve, args=(conn, addr, port),
-                             daemon=True).start()
 
     def stop(self) -> None:
         self._stopping.set()

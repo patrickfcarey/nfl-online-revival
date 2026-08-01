@@ -158,6 +158,14 @@ class TokenBucket:
     def __init__(self, rate: float, burst: float) -> None:
         if rate < 0 or burst < 0:
             raise ValueError("rate and burst cannot be negative")
+        if rate > 0 and burst <= 0:
+            # Zero capacity with a positive refill rate can never hold a token
+            # long enough to spend one, so it refuses everything -- while
+            # reading like "a rate limit with no burst allowance". Both zero is
+            # the way to say unlimited.
+            raise ValueError(
+                "a rate of %g/s with a burst of 0 refuses every message. Set a "
+                "burst, or set both to 0 for unlimited." % rate)
         self.rate = float(rate)
         self.burst = float(burst)
         self._tokens = float(burst)
@@ -190,6 +198,13 @@ class _PeakObserver:
     This is the point of running in log-only mode: after a real session the
     peak is a measured number rather than the guess above, and the limit can be
     set from it instead of from an argument about what a console probably does.
+
+    **One of these per connection, never one shared.** An earlier version kept
+    a single observer on the RateLimiter, which made it count every connection's
+    messages together while `rate` is enforced per connection -- so the number
+    you calibrate from was inflated by however many clients happened to be
+    connected. Already about double with a single console, which holds :10000
+    and the advertised port at once.
     """
 
     def __init__(self) -> None:
@@ -209,6 +224,19 @@ class _PeakObserver:
             if current > self.peak:
                 self.peak = current
             return current
+
+
+class ConnectionRate:
+    """One connection's allowance and its own peak observation.
+
+    Both are per connection, which is what makes the peak comparable with the
+    limit: `rate` is spent by a single client, so the measurement that
+    calibrates it has to be of a single client too.
+    """
+
+    def __init__(self, rate: float, burst: float) -> None:
+        self.bucket = TokenBucket(rate, burst)
+        self.peak = _PeakObserver()
 
 
 class RateLimiter:
@@ -234,15 +262,24 @@ class RateLimiter:
         self._lock = threading.Lock()
         self._ip_buckets: Dict[str, TokenBucket] = {}
         self._ip_holders: Dict[str, int] = collections.defaultdict(int)
-        self.connection_peak = _PeakObserver()
+        #: The busiest single connection seen, in messages per second. This is
+        #: the number to calibrate `rate` from -- it is a maximum over
+        #: connections, not a total across them.
+        self._peak = 0
         self.violations = 0
         self.violations_per_ip = 0
 
     # -- per-connection ------------------------------------------------
 
-    def new_bucket(self) -> TokenBucket:
-        """A fresh bucket for one connection."""
-        return TokenBucket(self.rate, self.burst)
+    def new_bucket(self) -> ConnectionRate:
+        """A fresh allowance and observer for one connection."""
+        return ConnectionRate(self.rate, self.burst)
+
+    @property
+    def peak(self) -> int:
+        """Messages per second on the busiest single connection so far."""
+        with self._lock:
+            return self._peak
 
     # -- per-address ---------------------------------------------------
 
@@ -267,7 +304,7 @@ class RateLimiter:
 
     # -- the check -----------------------------------------------------
 
-    def check(self, bucket: Optional[TokenBucket],
+    def check(self, state: Optional[ConnectionRate],
               address: str) -> Optional[str]:
         """Charge one message. Returns None to allow, or a reason to refuse.
 
@@ -276,11 +313,16 @@ class RateLimiter:
         connection die for it" as separate questions, which is what makes
         log-only mode possible at all.
         """
-        self.connection_peak.record()
-        if bucket is not None and not bucket.take():
-            self.violations += 1
-            return ("over the per-connection limit of %.0f/s (burst %.0f)"
-                    % (self.rate, self.burst))
+        if state is not None:
+            seen = state.peak.record()
+            if seen > self._peak:
+                with self._lock:
+                    if seen > self._peak:
+                        self._peak = seen
+            if not state.bucket.take():
+                self.violations += 1
+                return ("over the per-connection limit of %.0f/s (burst %.0f)"
+                        % (self.rate, self.burst))
         with self._lock:
             ip_bucket = self._ip_buckets.get(address)
         if ip_bucket is not None and not ip_bucket.take():
@@ -291,10 +333,10 @@ class RateLimiter:
 
     def describe(self) -> str:
         return ("%.0f/s burst %.0f per connection, %.0f/s burst %.0f per "
-                "address, %s; peak seen %d msg/s"
+                "address, %s; busiest connection seen %d msg/s"
                 % (self.rate, self.burst, self.ip_rate, self.ip_burst,
                    "ENFORCING" if self.enforce else "observing only",
-                   self.connection_peak.peak))
+                   self.peak))
 
 
 # ---------------------------------------------------------------------------

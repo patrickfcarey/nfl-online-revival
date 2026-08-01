@@ -361,18 +361,57 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("            (the console will reject this unless its own "
                   "league database is exactly %d bytes)" % len(payload))
     transcript = Transcript(args.transcript)
+
+    if args.send_timeout <= 0:
+        # Unlike the connection caps, 0 here is not "unlimited": it puts the
+        # socket in non-blocking mode and every connection dies on its first
+        # quiet moment. Catch it at the boundary with an explanation rather
+        # than in a traceback.
+        print("error: --send-timeout must be greater than 0. It cannot be "
+              "disabled: 0 means non-blocking, which drops every connection, "
+              "and no timeout at all is the stalled-peer wedge it exists to "
+              "prevent.", file=sys.stderr)
+        return 2
+
+    if args.rate_limit == "off":
+        # Zero rate and zero burst is the limiter's "unlimited"; keep the
+        # object so every call site stays uniform.
+        rates = limits.RateLimiter(0, 0, 0, 0, enforce=False)
+    else:
+        try:
+            rates = limits.RateLimiter(
+                rate=args.rate, burst=args.rate_burst,
+                ip_rate=args.rate_per_ip, ip_burst=args.rate_per_ip_burst,
+                enforce=args.rate_limit == "enforce")
+        except ValueError as exc:
+            # A positive rate with a zero burst refuses every message, which
+            # reads like "no burst allowance" and behaves like a total outage.
+            print("error: %s Use --rate-limit off to disable rate limiting."
+                  % exc, file=sys.stderr)
+            return 2
+
+    counters = metrics.Metrics()
+    # One ban list and one rate limiter across both endpoints. A ban earned on
+    # the game ports has to keep that address off the buddy port too, or the
+    # endpoint with fewer controls becomes the one worth attacking.
+    shared_bans = limits.BanList(threshold=args.ban_threshold,
+                                 window=args.ban_window, ttl=args.ban_ttl)
+
     buddy_service = None
     if args.buddy_port:
         # A separate endpoint. The client only learns its address after login,
         # so it cannot gate reaching a lobby -- the stub exists to keep the
         # buddy layer quiet rather than because anything depends on it.
+        #
+        # It shares the rate limiter, the ban list and the counters, and keeps
+        # its own connection limiter. Sharing the first three is what stops it
+        # being the soft endpoint to attack; keeping the fourth separate is
+        # because a console holds one buddy socket and two game ones, which
+        # should not compete for a single per-address budget.
         from . import buddy as buddy_module
         from .buddy import BuddyService
         buddy_service = BuddyService(
             verbose=not args.quiet, transcript=transcript,
-            # Its own counters, not the game service's: a console holds one
-            # buddy connection and two game ones, so sharing a per-address cap
-            # would make the two endpoints compete for the same budget.
             limiter=limits.ConnectionLimiter(
                 total=min(args.max_connections,
                           buddy_module.DEFAULT_MAX_CONNECTIONS)
@@ -382,22 +421,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if args.max_connections_per_ip else 0),
             send_timeout=args.send_timeout,
             idle_timeout=args.idle_timeout,
-            first_byte_deadline=args.first_byte_timeout)
+            first_byte_deadline=args.first_byte_timeout,
+            rates=rates, bans=shared_bans, metrics=counters)
         threading.Thread(
             target=buddy_service.serve_forever,
             args=(args.bind, args.buddy_port), daemon=True).start()
-
-    if args.rate_limit == "off":
-        # Zero rate and zero burst is the limiter's "unlimited"; keep the
-        # object so every call site stays uniform.
-        rates = limits.RateLimiter(0, 0, 0, 0, enforce=False)
-    else:
-        rates = limits.RateLimiter(
-            rate=args.rate, burst=args.rate_burst,
-            ip_rate=args.rate_per_ip, ip_burst=args.rate_per_ip_burst,
-            enforce=args.rate_limit == "enforce")
-
-    counters = metrics.Metrics()
     service = Service(
         store, config, transcript, verbose=not args.quiet,
         limiter=limits.ConnectionLimiter(total=args.max_connections,
@@ -407,8 +435,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         first_byte_deadline=args.first_byte_timeout,
         pre_auth_deadline=args.pre_auth_timeout,
         rates=rates,
-        bans=limits.BanList(threshold=args.ban_threshold,
-                            window=args.ban_window, ttl=args.ban_ttl),
+        bans=shared_bans,
         metrics=counters)
 
     metrics_server = None

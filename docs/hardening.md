@@ -414,9 +414,16 @@ limit exists to bound.
 
 ### The calibration loop
 
-`nfl_rate_peak_messages_per_second` is the busiest one-second window seen on any
-connection. That gauge is the entire point of log-only mode — it turns the
-guess into a measurement:
+`nfl_rate_peak_messages_per_second` is the busiest one-second window on the
+busiest **single** connection — a maximum over connections, never a total
+across them. That distinction is the whole value of the gauge: `--rate` is
+spent by one connection, so a figure summed across all of them would be
+inflated by however many clients were online, and the limit derived from it
+would be that many times too loose. (It shipped summed on 2026-08-01 and was
+corrected the same day; see §10.)
+
+That gauge is the entire point of log-only mode — it turns the guess into a
+measurement:
 
 1. Run a full session with a real console, `--rate-limit observe`.
 2. Read the peak off `http://127.0.0.1:9109/`.
@@ -441,12 +448,24 @@ Five strikes in 120 s earns 600 s, in memory. Bans that expire on restart are
 acceptable at this scale, and persisting them would mean a mistake in the strike
 rules outlives the fix for it.
 
-**Only hard signals earn strikes**: malformed framing, a connection that never
-speaks, one that never authenticates. A rate violation counts *only when
-enforcing* — banning on an unmeasured threshold would take a real player off the
-service for ten minutes with no way to tell them why. The ban check runs before
-the connection limiter, so a banned address does not also consume a slot to be
-refused.
+**Only hard signals earn strikes**: malformed framing, and a connection that
+never speaks at all. A rate violation counts *only when enforcing* — banning on
+an unmeasured threshold would take a real player off the service for ten minutes
+with no way to tell them why. The ban check runs before the connection limiter,
+so a banned address does not also consume a slot to be refused.
+
+**Failing to authenticate is not a strike**, though it does close the
+connection. Connections to the redirector port send `@dir` and legitimately
+never authenticate, and nothing in `docs/ea-protocol.md` establishes that the
+console closes that socket promptly — it says only that the session moves to a
+second connection. If it holds the first one open, striking would cost a strike
+per login and ban a real player after five.
+
+**One ban list and one rate limiter span both endpoints.** A ban earned on the
+game ports keeps that address off the buddy port too; otherwise the endpoint
+with fewer controls is the one worth attacking. The *connection* limiters stay
+separate, because a console holds one buddy socket and two game ones and they
+should not compete for a single per-address budget.
 
 Both maps are keyed on attacker input, so both are bounded (`_MAX_TRACKED`)
 rather than relying on expiry running.
@@ -484,7 +503,47 @@ subclassing, which made unittest collect the parent's tests again through the
 child and run the whole accept-gate suite twice. The harness is now a plain
 mixin.
 
-## 9. What this does not cover
+## 9. Zero does not mean the same thing everywhere
+
+`0` disables `--max-connections`, `--max-connections-per-ip`,
+`--ban-threshold`, `--idle-timeout`, `--first-byte-timeout` and
+`--pre-auth-timeout`. It does **not** disable two others, and both are refused
+at startup rather than accepted and silently catastrophic:
+
+- **`--send-timeout 0`** would call `settimeout(0)`, which means *non-blocking*,
+  not *no timeout*. `recv` then raises `BlockingIOError` — an `OSError` but not
+  `socket.timeout` — so it falls past the poll handler and every connection is
+  dropped on its first quiet moment. There is also no safe "unlimited" value
+  here: that is the stalled-peer wedge the timeout exists to prevent.
+- **`--rate-burst 0` with a positive `--rate`** would refuse every message,
+  because zero capacity can never hold a token long enough to spend one. Use
+  `--rate-limit off`; both values zero is the internal "unlimited".
+
+## 10. Review corrections (2026-08-01)
+
+Six defects found reviewing the Phase A and C commits, all fixed the same day.
+Recorded because four of them are the kind that pass a test suite:
+
+| # | Defect | Why the tests missed it |
+|---|---|---|
+| 1 | Peak gauge summed across connections while `--rate` is per-connection | Wired to the wrong scope; every unit test used one connection |
+| 2 | `Thread.start()` unguarded in both accept loops — leaked a slot and an fd | Reachable only under thread exhaustion, which nothing simulated |
+| 3 | `--send-timeout 0` dropped every connection | Boundary value; only the happy path was tested |
+| 4 | Buddy endpoint had no Phase C controls at all | No test asserted coverage *across* endpoints |
+| 5 | Pre-auth timeout struck a strike, banning legitimate `@dir` clients | Rested on an unverified claim in a docstring |
+| 6 | `--rate-burst 0` refused everything | Boundary value |
+
+Each now has a regression test, including
+`test_peak_is_per_connection_not_a_total_across_them` and the whole of
+`tests/test_buddy_limits.py`. 380 pass.
+
+Finding 5 is the one worth remembering: the docstring asserted that a client
+which only asks `@dir` is "gone long before this expires". That was never
+verified and is not in the protocol notes. The lesson generalised into a rule
+here — a signal only earns a strike if a legitimate client provably cannot
+produce it — which is also why the buddy endpoint has no pre-auth deadline.
+
+## 11. What this does not cover
 
 - **Application-layer authentication is weak by design.** The client's `auth`
   exchange is what it is; we cannot add TLS or a modern credential flow without
