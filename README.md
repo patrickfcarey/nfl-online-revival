@@ -212,6 +212,31 @@ the address it reported rather than the one it connected from.
 It cannot prove the address *crossing*, because two clients on one host share an
 address. That part is covered in `tests/test_matchmaking.py`, with distinct ones.
 
+## Serving a current roster
+
+The point of all of it. Build a season and serve it:
+
+```bash
+python3 tools/build_year_roster.py --year 2025 \
+    --template extract/madden_TEMPLATE.DAT -o rosters/2025.dat
+ROSTER_PAYLOAD=rosters/2025.dat ./serve-madden.sh
+```
+
+`ROSTER_PAYLOAD` is required — serving nothing is a silent failure, where the
+console asks for a manifest, receives an empty one, and reports a vague error
+while the server looks perfectly healthy. An evening went that way once.
+
+Any season with a scraped roster works. Ratings come from whichever published
+Madden set is newest at or before that year, so a current roster carries real
+ratings for the players who were already in the league and estimates for the
+rest; the build prints the split rather than hiding it. For 2025 that is 70%
+real across the players actually written.
+
+The server announces the checksum of the roster it is **serving**, derived from
+the payload itself. That matters: the console recomputes over what it installed,
+so announcing some other roster's value would have it conclude the fresh install
+was already stale and offer the same update forever.
+
 ## Rosters
 
 The console computes a checksum over its own roster and compares it against the

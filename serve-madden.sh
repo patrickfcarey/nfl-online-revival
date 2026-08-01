@@ -52,6 +52,33 @@ TRANSCRIPT="${TRANSCRIPT:-captures/madden-$(date +%Y%m%d-%H%M%S).jsonl}"
 # rather than the obvious "you already have one running" -- and the previous
 # instance is easy to lose track of when it was started with nohup.
 #
+# ROSTER_PAYLOAD is REQUIRED. Serving no roster is a silent failure, not an
+# obvious one: the console asks for a manifest, gets an empty one, and reports
+# a vague error -- and an evening was lost to exactly that, with the server
+# looking healthy throughout. Making it mandatory means the mistake is
+# impossible rather than merely unlikely.
+#
+# Build one with:
+#   python3 tools/build_year_roster.py --year 2025 \
+#       --template extract/madden_TEMPLATE.DAT -o rosters/2025.dat
+if [ -z "${ROSTER_PAYLOAD:-}" ]; then
+    echo "error: ROSTER_PAYLOAD is required -- give the roster to serve." >&2
+    echo >&2
+    echo "  ROSTER_PAYLOAD=rosters/2025.dat $0 $*" >&2
+    echo >&2
+    echo "Build one for any season with a scraped roster:" >&2
+    echo "  python3 tools/build_year_roster.py --year 2025 \\" >&2
+    echo "      --template extract/madden_TEMPLATE.DAT -o rosters/2025.dat" >&2
+    echo >&2
+    echo "To run a lobby with no roster at all, call the server directly:" >&2
+    echo "  python3 -m backend --advertise-host \$RIG_IP --db $DB" >&2
+    exit 2
+fi
+if [ ! -f "$ROSTER_PAYLOAD" ]; then
+    echo "error: no roster at $ROSTER_PAYLOAD" >&2
+    exit 2
+fi
+
 # Who owns the ports, read from the lock the server itself takes. This is the
 # authority, not pgrep: a `pgrep -f` for the server's command line also matches
 # any shell whose own command line happens to contain that text -- including the

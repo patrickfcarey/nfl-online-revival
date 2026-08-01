@@ -223,7 +223,33 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("error: %s" % exc, file=sys.stderr)
             return 2
         config["roster_url"] = manifest_url(args.advertise_host, bound)
-        config["roster_file_crc"] = crc if args.roster_crc is None else args.roster_crc
+        config["roster_file_crc"] = crc
+
+        # Announce the checksum of the roster we are SERVING, not of some other
+        # file. After installing, the console recomputes over what it received;
+        # if we go on announcing a different roster's value it concludes the
+        # fresh install is already stale and offers the same update forever.
+        # Deriving it from the payload makes the two agree by construction.
+        if not args.roster_csum:
+            try:
+                from tools import madden_tdb, roster_checksum
+                table = madden_tdb.Database(payload, 0).table("PLAY")
+                team = roster_checksum.FIELDS.index("TGID")
+                rows = sorted(
+                    (r for r in table.rows(roster_checksum.FIELDS)
+                     if 1 <= r[team] <= 32), key=lambda r: r[0])
+                if rows:
+                    served = roster_checksum.checksum(rows)
+                    if str(served) != str(config.get("roster_csum", "")):
+                        if not args.quiet:
+                            print("roster: announcing the SERVED roster's "
+                                  "checksum %d (%d players)"
+                                  % (served, len(rows)))
+                        config["roster_csum"] = str(served)
+            except Exception as exc:            # not a LEAG database
+                if not args.quiet:
+                    print("roster: cannot read a checksum out of the payload "
+                          "(%s); announcing --roster-db's instead" % exc) if args.roster_crc is None else args.roster_crc
         if args.roster_crc is not None and not args.quiet:
             print("roster CRC OVERRIDDEN to %d -- the console will reject the "
                   "download at the checksum. Diagnostic only."
