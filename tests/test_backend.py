@@ -708,14 +708,22 @@ class LiveSessionTests(unittest.TestCase):
             target=self.service.serve_forever,
             args=("127.0.0.1", [self.first, self.second]), daemon=True)
         self.thread.start()
+        # Wait for EVERY port, not just the first. The service binds them in
+        # order, so probing only `first` can succeed while `second` -- the one
+        # these tests connect to -- is still closed. Same race that was fixed in
+        # TwoClientLobbyTests; this class was missed and flaked later.
         deadline = time.time() + 5
-        while time.time() < deadline:          # wait for the listener, don't guess
-            try:
-                probe = socket.create_connection(("127.0.0.1", self.first), 1)
-                probe.close()
-                break
-            except OSError:
-                time.sleep(0.05)
+        for port in (self.first, self.second):
+            while True:
+                try:
+                    probe = socket.create_connection(("127.0.0.1", port), 1)
+                    probe.close()
+                    break
+                except OSError:
+                    if time.time() > deadline:
+                        raise AssertionError(
+                            "service never began listening on port %d" % port)
+                    time.sleep(0.05)
 
     def tearDown(self):
         self.service.stop()

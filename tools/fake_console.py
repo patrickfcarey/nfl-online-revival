@@ -428,6 +428,50 @@ def run_pair(host: str, port: int, kind: str) -> int:
         b.close()
 
 
+def run_spar(host: str, port: int, account: str, persona: str, room: str,
+             kind: str, patience: float) -> int:
+    """Sit in the quickmatch queue so a real console has someone to match.
+
+    What this can and cannot show, stated up front because the difference
+    matters: it proves the console sends `quik`, that the server pairs it, and
+    that it accepts the resulting `+ses` and tries to dial its peer. It cannot
+    play a game -- the peer link is UDP on 3658 and is not implemented here --
+    so about ten seconds after the introduction the console will report that the
+    connection failed (its deadline is set at 0x0011c318). Reaching that point
+    IS the pass condition; the timeout after it is expected, not a regression.
+    """
+    console = FakeConsole(host, port)
+    try:
+        console.login(account, persona)
+        console.join(room)
+        console.quickmatch(kind)
+        print()
+        print("  standing by as an opponent for up to %.0f minutes." % (patience / 60))
+        print("  now take the real console into a quickmatch.")
+        invite = console.await_session(timeout=patience)
+        if invite is None:
+            print("\n  no +ses arrived. Either the console never queued, or the")
+            print("  server is not running with --pair-any so the two KIND")
+            print("  values never met.")
+            return 1
+        print("\n  MATCHED. The server introduced us:")
+        for key in ("NAME", "SELF", "HOST", "OPPO", "ADDR", "FROM", "SEED", "WHEN"):
+            print("    %-5s = %s" % (key, invite.get(key)))
+        mine = invite.get("SELF")
+        print()
+        print("  the console was told to dial %s at %s"
+              % (invite.get("OPPO") if mine == invite.get("HOST") else invite.get("HOST"),
+                 invite.get("ADDR") if mine == invite.get("HOST") else invite.get("FROM")))
+        print("  expect it to give up ~10s later: nothing here answers on 3658.")
+        console.collect(15.0)
+        return 0
+    except ConsoleError as exc:
+        print("\nFAIL: %s" % exc)
+        return 1
+    finally:
+        console.close()
+
+
 def run_single(host: str, port: int, account: str, persona: str,
                room: str, message: str, kind: str, linger: float) -> int:
     console = FakeConsole(host, port)
@@ -480,10 +524,18 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="send a chat line after joining")
     parser.add_argument("--quickmatch", dest="kind", default="",
                         help="queue for a match with this KIND")
+    parser.add_argument("--spar", action="store_true",
+                        help="stand in as an opponent for a real console: log "
+                             "in, join a room, queue for a match and wait. Needs "
+                             "the server started with --pair-any, because a "
+                             "console's KIND cannot be reproduced.")
     parser.add_argument("--linger", type=float, default=0.0,
                         help="keep listening for this many seconds")
     args = parser.parse_args(argv)
 
+    if args.spar:
+        return run_spar(args.host, args.port, args.account, args.persona,
+                        args.room, args.kind or "-1", args.linger or 900.0)
     if args.pair:
         return run_pair(args.host, args.port, args.kind or "-1234567")
     return run_single(args.host, args.port, args.account, args.persona,

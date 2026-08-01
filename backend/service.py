@@ -68,7 +68,8 @@ class Service:
         self.config = config
         self.transcript = transcript or Transcript(None)
         self.verbose = verbose
-        self.hub = Hub(on_event=self._say)
+        self.hub = Hub(on_event=self._say,
+                       pair_any=bool(config.get("pair_any")))
         self._next_user_id = 0
         self._id_lock = threading.Lock()
         self._listeners: List[socket.socket] = []

@@ -58,6 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="comma-separated candidate checksums; a different "
                              "one is announced on each login, so several can be "
                              "tested in one session instead of one per boot")
+    parser.add_argument("--pair-any", action="store_true",
+                        help="pair any two waiting quickmatch clients instead "
+                             "of requiring equal KIND. TESTING ONLY: a console "
+                             "computes KIND from its own build and settings, so "
+                             "a stand-in client cannot otherwise meet it in the "
+                             "queue.")
     parser.add_argument("--roster-payload",
                         help="league database to SERVE as an update. Published "
                              "over HTTP and named in the `new2` manifest; the "
@@ -140,6 +146,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                   % len(candidates))
             for i, c in enumerate(candidates, 1):
                 print("   %d. %s" % (i, c))
+
+    if args.pair_any:
+        config["pair_any"] = True
+        if not args.quiet:
+            print("matchmaking: PAIR-ANY is on -- any two waiting clients are "
+                  "matched regardless of KIND. Testing only.")
 
     roster_server = None
     if args.roster_payload:

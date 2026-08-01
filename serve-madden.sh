@@ -60,6 +60,15 @@ else
     echo "      placeholder, so the console will consider its rosters stale."
 fi
 
+# Set SPAR=1 to also stand a test opponent in the quickmatch queue, so a real
+# console has someone to be matched against. Implies --pair-any, because a
+# console's KIND is a CRC over its own build and settings and nothing else can
+# reproduce it.
+spar_args=()
+if [ -n "${SPAR:-}" ]; then
+    spar_args=(--pair-any)
+fi
+
 payload_args=()
 if [ -n "$ROSTER_PAYLOAD" ] && [ -f "$ROSTER_PAYLOAD" ]; then
     payload_args=(--roster-payload "$ROSTER_PAYLOAD" --http-port "$HTTP_PORT")
@@ -67,11 +76,22 @@ fi
 
 echo "backend: db=$DB  advertise=$HOST  buddy=$BUDDY_PORT"
 echo "transcript: $TRANSCRIPT"
-exec python3 -m backend \
+python3 -m backend \
     --advertise-host "$HOST" \
     --db "$DB" \
     --buddy-port "$BUDDY_PORT" \
     --transcript "$TRANSCRIPT" \
     "${roster_args[@]}" \
     "${payload_args[@]}" \
-    "$@"
+    "${spar_args[@]}" \
+    "$@" &
+SERVER_PID=$!
+
+if [ -n "${SPAR:-}" ]; then
+    sleep 3
+    echo
+    echo "standing up a test opponent (see tools/fake_console.py --spar)"
+    python3 tools/fake_console.py --host 127.0.0.1 --spar \
+        --account sparbot --persona SparBot &
+fi
+wait "$SERVER_PID"

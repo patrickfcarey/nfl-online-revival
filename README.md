@@ -173,6 +173,25 @@ python3 tools/fake_console.py --host 127.0.0.1 --pair     # two clients, quickma
 python3 tools/fake_console.py --host 127.0.0.1 --persona alice --say hi
 ```
 
+To give a **real console** an opponent, stand a bot in the queue:
+
+```bash
+SPAR=1 ./serve-madden.sh          # server + a test opponent, together
+```
+
+That implies `--pair-any`, which relaxes matchmaking to pair any two waiting
+clients. It has to: a console derives its `KIND` from its own build stamp and
+game settings, so nothing else can reproduce the value it will send, and without
+the relaxation the two never meet in the queue. Real pairing stays exact-match —
+`KIND` equality is the only thing the client itself can verify about a match.
+
+Be clear about what that proves. It shows the console sends `quik`, that the
+server pairs it, and that it accepts the `+ses` and tries to dial its peer.
+It cannot play a game: the peer link is UDP on 3658 and nothing here answers,
+so about ten seconds after the introduction the console reports a failed
+connection. **Reaching the introduction is the pass condition; the timeout after
+it is expected.**
+
 `--pair` is the matchmaking test: it logs two clients in, queues both, and holds
 the resulting `+ses` records to the rules that matter -- only `SELF` differs,
 `HOST` agrees, `SEED` matches, `WHEN` is non-zero, and neither console is handed

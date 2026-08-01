@@ -103,7 +103,8 @@ class Connection:
 class Hub:
     """The set of live connections, and how to reach them."""
 
-    def __init__(self, on_event: Optional[Callable[[str], None]] = None) -> None:
+    def __init__(self, on_event: Optional[Callable[[str], None]] = None,
+                 pair_any: bool = False) -> None:
         self._connections: Dict[str, Connection] = {}
         self._lock = threading.RLock()
         self._stopping = threading.Event()
@@ -112,7 +113,7 @@ class Hub:
         #: connections, and because unregister() must evict a departing client
         #: from it -- a dead socket left in the queue gets paired with the next
         #: arrival, which the survivor experiences as a match that never starts.
-        self.matchmaker = matchmaking.Matchmaker()
+        self.matchmaker = matchmaking.Matchmaker(pair_any=pair_any)
 
     # -- membership ----------------------------------------------------
 

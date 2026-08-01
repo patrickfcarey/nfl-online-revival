@@ -39,7 +39,17 @@ CANCEL = "*"
 class Matchmaker:
     """The waiting room. One instance per server."""
 
-    def __init__(self) -> None:
+    def __init__(self, pair_any: bool = False) -> None:
+        #: Pair any two waiting clients regardless of KIND. **Test affordance,
+        #: off by default.** A real console computes KIND as a CRC over its
+        #: build stamp and game settings (0x00354630), so nothing else can
+        #: reproduce the value it will send -- which makes a stand-in client
+        #: unable to meet it in the queue. With this on, a sparring partner can.
+        #:
+        #: It is deliberately a server flag rather than a protocol trick: real
+        #: pairing must stay exact-match, because KIND equality is the only
+        #: thing the client itself can verify about a match.
+        self.pair_any = pair_any
         self._lock = threading.Lock()
         #: KIND -> connections waiting on it, oldest first.
         self._waiting: Dict[str, List] = {}
@@ -61,6 +71,16 @@ class Matchmaker:
         """
         with self._lock:
             self._forget(connection)
+            if self.pair_any:
+                for other_kind, waiting in list(self._waiting.items()):
+                    while waiting:
+                        other = waiting.pop(0)
+                        self._kind_of.pop(id(other), None)
+                        if not waiting:
+                            del self._waiting[other_kind]
+                        if other is connection or getattr(other, "closed", False):
+                            continue
+                        return (other, connection)
             queue = self._waiting.setdefault(kind, [])
             while queue:
                 other = queue.pop(0)

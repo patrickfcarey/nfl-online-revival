@@ -107,6 +107,29 @@ class Queueing(unittest.TestCase):
         dead.closed = True
         self.assertIsNone(self.maker.enqueue(live, "-17"))
 
+    def test_pair_any_matches_across_kinds(self):
+        # Testing affordance: a console's KIND is a CRC over its own build and
+        # settings, so a stand-in client cannot reproduce it.
+        maker = matchmaking.Matchmaker(pair_any=True)
+        a, b = FakeConnection("A"), FakeConnection("B")
+        self.assertIsNone(maker.enqueue(a, "-17"))
+        self.assertEqual(maker.enqueue(b, "totally-different"), (a, b))
+
+    def test_pair_any_is_off_by_default(self):
+        # Real pairing must stay exact: KIND equality is the only thing the
+        # client itself can verify about a match.
+        a, b = FakeConnection("A"), FakeConnection("B")
+        self.assertIsNone(self.maker.enqueue(a, "-17"))
+        self.assertIsNone(self.maker.enqueue(b, "-18"))
+        self.assertEqual(self.maker.waiting_count(), 2)
+
+    def test_pair_any_still_skips_dead_connections(self):
+        maker = matchmaking.Matchmaker(pair_any=True)
+        dead, live = FakeConnection("Dead"), FakeConnection("Live")
+        maker.enqueue(dead, "-17")
+        dead.closed = True
+        self.assertIsNone(maker.enqueue(live, "-99"))
+
     def test_forget_evicts_on_disconnect(self):
         a = FakeConnection("A")
         self.maker.enqueue(a, "-17")
