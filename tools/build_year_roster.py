@@ -13,7 +13,13 @@ walks the retail one record at a time and overwrites the players in place:
 
 * a record on a real team (``TGID`` 1-32) is replaced by the next-best current
   player for that team;
-* a record in the free-agent pool (``TGID`` 1009) is left exactly as it was.
+* a record in the free-agent pool (``TGID`` 1009) is filled from the players who
+  did not make a 53-man roster -- the leftovers, best first.
+
+Only the first group is in the roster checksum: the query behind it reads
+``where TGID >= 1 and TGID <= 32``, so the free-agent pool is outside it and
+filling it changes no announced value. It matters for franchise signings and for
+nothing else, which is why it is done last and cannot break anything.
 
 Nothing moves, nothing resizes, and the file the console demands is the file it
 gets. See ``docs/roster-delivery.md`` for why those constraints are absolute.
@@ -24,12 +30,16 @@ WHERE THE DATA COMES FROM
 names, teams, positions, jersey numbers, height, weight, age, years of service)
 and Madden's own published launch ratings for the seasons it has them.
 
-Ratings are the honest weak point. The newest published set is Madden 24
-(2023 season), so a current roster has no authoritative ratings for anyone who
-entered the league since. Players are matched by name where possible and given
-their real ratings; the rest are estimated from position, age and experience by
-:func:`estimate_ratings`, which is a plausible-looking model and nothing more.
-The build prints the split so the number is never hidden.
+Ratings only exist for seasons Madden published, and the newest of those is
+Madden 24, the 2023 season. Build a **matching** year -- 2023 against Madden 24
+-- and every player carries the ratings EA shipped for him.
+
+Build a later year and there is nothing authoritative for anyone who entered
+the league since, so ``--estimate-missing`` will invent ratings from position,
+age and experience. That is a plausible-looking model and nothing more, which is
+why it is off by default: without it, a player with no published ratings is
+simply left out. Every team has more than 54 rated players for 2023, so nothing
+is lost by refusing to guess.
 
 ENCODINGS, all confirmed against retail records rather than assumed:
 
@@ -223,7 +233,46 @@ def real_ratings(record: dict) -> Dict[str, int]:
     return out
 
 
-def build_players(year: int) -> Tuple[Dict[int, List[dict]], int, int, int]:
+def team_ids_from_game(blob: bytes) -> Dict[str, int]:
+    """Map a team abbreviation to the id THIS GAME uses, from its TEAM table.
+
+    Not from the scraped data's own ``tgId``. The two agree for twenty-nine
+    teams and disagree for the last three -- the game has 30 Titans, 31 Vikings,
+    32 Texans, while the scraped rosters have 30 Texans, 31 Titans, 32 Vikings.
+    Trusting the file would put three entire rosters on the wrong clubs, and the
+    twenty-nine that matched would make it look fine.
+
+    The game's own table is the authority, so read it.
+    """
+    table = madden_tdb.Database(blob, 0).table("TEAM")
+    short = table.fields.get("TSNA")          # the abbreviation, e.g. "CHI"
+    if short is None:
+        raise BuildError("the TEAM table has no TSNA column to map teams by")
+    start = short.offset_bits // 8
+    width = short.bits // 8
+    mapping: Dict[str, int] = {}
+    for index in range(table.record_count):
+        record = table.record(index)
+        team_id = table.value(record, "TGID")
+        if not 1 <= team_id <= 32:
+            continue
+        name = record[start:start + width].split(b"\x00")[0].decode("latin-1")
+        if name:
+            mapping[name.upper()] = team_id
+    return mapping
+
+
+#: Franchises that have moved or been renamed since 2003. The game knows them by
+#: where they played then.
+ABBREVIATION_ALIASES = {
+    "LV": "OAK", "LAC": "SD", "LAR": "STL", "WSH": "WAS", "ARZ": "ARI",
+    "BLT": "BAL", "CLV": "CLE", "HST": "HOU", "SL": "STL", "JAC": "JAX",
+}
+
+
+def build_players(year: int, estimate_missing: bool = False,
+                  team_ids: Optional[Dict[str, int]] = None
+                  ) -> Tuple[Dict[int, List[dict]], int, int, int]:
     """Every current player, per team, best first."""
     roster_path = DATA_REPO / "data" / "canonical" / ("roster-%d.json" % year)
     if not roster_path.exists():
@@ -234,7 +283,17 @@ def build_players(year: int) -> Tuple[Dict[int, List[dict]], int, int, int]:
     by_team: Dict[int, List[dict]] = {}
     matched = estimated = 0
     for team in roster["teams"]:
-        team_id = team["tgId"]
+        # The game's id for this abbreviation, never the file's own tgId.
+        abbreviation = (team.get("abbreviation") or "").upper()
+        abbreviation = ABBREVIATION_ALIASES.get(abbreviation, abbreviation)
+        if team_ids:
+            team_id = team_ids.get(abbreviation)
+            if team_id is None:
+                raise BuildError(
+                    "the game has no team %r; add it to ABBREVIATION_ALIASES"
+                    % abbreviation)
+        else:
+            team_id = team["tgId"]
         if not 1 <= team_id <= 32:
             continue
         players = []
@@ -250,11 +309,16 @@ def build_players(year: int) -> Tuple[Dict[int, List[dict]], int, int, int]:
                 ratings = real_ratings(published)
                 published_ratings = True
                 matched += 1
-            else:
+            elif estimate_missing:
                 ratings = estimate_ratings(position, entry.get("age") or 0,
                                            entry.get("yearsPro") or 0)
                 published_ratings = False
                 estimated += 1
+            else:
+                # No published ratings and no licence to invent any. Leaving
+                # him out is honest; a made-up rating is not.
+                estimated += 1
+                continue
             measurables = entry.get("measurables") or {}
             players.append({
                 "first": first, "last": last, "position": position,
@@ -287,6 +351,24 @@ def _set(record: bytearray, table, column: str, value: int) -> None:
             record[index] &= 0xFF ^ mask
 
 
+#: Players past this many on a team's depth chart go to the free-agent pool
+#: instead. Retail carries 53-55 per team, and the records are already
+#: allocated, so this only decides who is a leftover.
+FREE_AGENT_FROM = 55
+
+
+def _write_player(record: bytearray, table, player: dict) -> None:
+    """Overwrite one record with a player. Field values only; nothing moves."""
+    _set_text(record, table, "PFNA", player["first"])
+    _set_text(record, table, "PLNA", player["last"])
+    _set(record, table, "PPOS", POSITIONS.index(player["position"]))
+    _set(record, table, "PJEN", player["jersey"])
+    _set(record, table, "PHGT", player["height"])
+    _set(record, table, "PWGT", max(0, player["weight"] - 160))
+    for column, value in player["ratings"].items():
+        _set(record, table, column, value)
+
+
 def _set_text(record: bytearray, table, column: str, text: str) -> None:
     field = table.fields.get(column)
     if field is None:
@@ -303,7 +385,16 @@ def rewrite(blob: bytes, by_team: Dict[int, List[dict]]) -> Tuple[bytes, int, in
     table = database.table("PLAY")
     out = bytearray(blob)
     cursor = {team: 0 for team in by_team}
-    written = skipped = 0
+    # Everyone who did not make a 53-man roster, best first, for the free-agent
+    # pool. Ordering by rating means the pool is the next men up rather than an
+    # arbitrary tail.
+    leftovers: List[dict] = []
+    for team_id, queue in by_team.items():
+        leftovers.extend(queue[FREE_AGENT_FROM:])
+    leftovers.sort(key=lambda p: -p["ratings"]["POVR"])
+    free_cursor = 0
+
+    written = skipped = free_written = 0
     # Counted over the players actually WRITTEN, not over every candidate.
     # The written set is the top of each roster, so it carries published
     # ratings far more often than the pool as a whole -- reporting the pool
@@ -314,7 +405,17 @@ def rewrite(blob: bytes, by_team: Dict[int, List[dict]]) -> Tuple[bytes, int, in
         record = bytearray(table.record(index))
         team_id = table.value(bytes(record), "TGID")
         if not 1 <= team_id <= 32:
-            skipped += 1                       # free agents, historical squads
+            # The free-agent pool. Outside the checksum, so this is cosmetic
+            # for online play and useful only in franchise mode.
+            if free_cursor < len(leftovers):
+                player = leftovers[free_cursor]
+                free_cursor += 1
+                _write_player(record, table, player)
+                start = table._records + index * table.record_bytes
+                out[start:start + table.record_bytes] = record
+                free_written += 1
+            else:
+                skipped += 1
             continue
         queue = by_team.get(team_id) or []
         position = cursor.get(team_id, 0)
@@ -324,14 +425,7 @@ def rewrite(blob: bytes, by_team: Dict[int, List[dict]]) -> Tuple[bytes, int, in
         player = queue[position]
         cursor[team_id] = position + 1
 
-        _set_text(record, table, "PFNA", player["first"])
-        _set_text(record, table, "PLNA", player["last"])
-        _set(record, table, "PPOS", POSITIONS.index(player["position"]))
-        _set(record, table, "PJEN", player["jersey"])
-        _set(record, table, "PHGT", player["height"])
-        _set(record, table, "PWGT", max(0, player["weight"] - 160))
-        for column, value in player["ratings"].items():
-            _set(record, table, column, value)
+        _write_player(record, table, player)
 
         start = table._records + index * table.record_bytes
         out[start:start + table.record_bytes] = record
@@ -339,7 +433,7 @@ def rewrite(blob: bytes, by_team: Dict[int, List[dict]]) -> Tuple[bytes, int, in
         if player["published"]:
             written_published += 1
 
-    return reseal(bytes(out)), written, skipped, written_published
+    return reseal(bytes(out)), written, skipped, written_published, free_written
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -350,7 +444,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="a raw LEAG database (template.dat member 0). "
                              "Omit it and use --template instead.")
     parser.add_argument("-o", "--output", required=True)
-    parser.add_argument("--year", type=int, default=2025)
+    parser.add_argument("--year", type=int, default=2023,
+                        help="the season to build. 2023 is the newest year "
+                             "with published Madden ratings for everyone.")
+    parser.add_argument("--estimate-missing", action="store_true",
+                        help="invent ratings for players Madden never rated, "
+                             "instead of leaving them out. Off by default.")
     parser.add_argument("--data-repo",
                         help="where the scraped rosters and Madden ratings "
                              "live (default $NFL_DATA_REPO, or the checkout "
@@ -385,8 +484,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     try:
-        by_team, _pool_matched, _pool_estimated, season = build_players(args.year)
-        result, written, skipped, published = rewrite(blob, by_team)
+        team_ids = team_ids_from_game(blob)
+        by_team, _pool_matched, _pool_estimated, season = build_players(
+            args.year, estimate_missing=args.estimate_missing,
+            team_ids=team_ids)
+        result, written, skipped, published, free_written = rewrite(blob, by_team)
     except (BuildError, madden_tdb.TdbError, KeyError) as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 2
@@ -400,11 +502,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     import zlib
     print("%s: %d bytes, crc32 %d" % (args.output, len(result),
                                       zlib.crc32(result) & 0xFFFFFFFF))
-    print("  %d players written, %d records left as they were" % (written, skipped))
-    print("  ratings: %d published (Madden %d), %d estimated -- %.0f%% of the "
-          "players actually written carry real ratings"
-          % (published, season, written - published,
-             100.0 * published / max(1, written)))
+    print("  %d players on teams, %d free agents, %d records unchanged"
+          % (written, free_written, skipped))
+    if written == published:
+        print("  ratings: all %d players carry the ratings EA published for "
+              "the %d season" % (published, season))
+    else:
+        print("  ratings: %d published (Madden %d), %d estimated -- %.0f%% real"
+              % (published, season, written - published,
+                 100.0 * published / max(1, written)))
 
     # The console recomputes this over the installed roster, so the server has
     # to announce the NEW value or every console will be told its fresh roster

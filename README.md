@@ -226,11 +226,17 @@ ROSTER_PAYLOAD=rosters/2025.dat ./serve-madden.sh
 console asks for a manifest, receives an empty one, and reports a vague error
 while the server looks perfectly healthy. An evening went that way once.
 
-Any season with a scraped roster works. Ratings come from whichever published
-Madden set is newest at or before that year, so a current roster carries real
-ratings for the players who were already in the league and estimates for the
-rest; the build prints the split rather than hiding it. For 2025 that is 70%
-real across the players actually written.
+**2023 is the year to build.** It is the newest season EA published ratings for,
+so every player carries the ratings EA shipped for him and nothing is invented.
+Build a later year and there is no authority for anyone who has entered the
+league since; those players are left out unless you pass `--estimate-missing`,
+which invents ratings from position, age and experience and is off for a reason.
+
+Teams are keyed off the game's own `TEAM` table, not the scraped file's team
+ids. The two agree for twenty-nine clubs and disagree for three -- the game has
+30 Titans, 31 Vikings, 32 Texans where the scraped rosters have Texans, Titans,
+Vikings -- so trusting the file puts three entire rosters on the wrong teams
+while the other twenty-nine make it look correct.
 
 The server announces the checksum of the roster it is **serving**, derived from
 the payload itself. That matters: the console recomputes over what it installed,
