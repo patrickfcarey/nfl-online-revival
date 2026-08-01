@@ -981,8 +981,19 @@ def news_subblock(kind: int, payload: bytes) -> bytes:
     matched against the pending head by type (0x00446d20, with ``DQUE`` as the
     only wildcard). So ``news`` is required for delivery, and the word at
     ``reply+8`` is something other than the message type. What sets it is still
-    unknown; measured with a plain ``news`` reply the whole 16-byte struct reads
-    [0x00001ac0, 0, 0, 0].
+    unknown.
+
+    A previous note here claimed to have measured that struct as
+    [0x00001ac0, 0, 0, 0]. That reading was worthless and is withdrawn: the
+    struct lives on NewsRequest's own stack (0x0034f4dc passes ``t0 = sp``,
+    which 0x0034f30c stores as state[8]), so by the time a savestate is taken
+    the function has returned and the memory has been reused. Only the
+    completion code at 0x00560af4 is in static storage and survives.
+
+    One thing the callback does establish: ``reply+12`` is a ``char *``. It is
+    passed to strlen (0x0034ead4), a buffer of len+1 is allocated, and the text
+    is copied in -- which is why NewsRequest's return value can be handed
+    straight to the field lookup at 0x0044acc8.
 
     Kept only so the experiment is repeatable and the dead end is recorded.
     """
