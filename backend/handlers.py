@@ -540,10 +540,16 @@ def move_room(ctx: Context) -> List[bytes]:
         match, so the client sees no change and keeps its list.
         """
         room = session.room
+        # IDENT verbatim, NOT `or -1`. A session with no room has room_id 0, and
+        # the client's own field (conn+0x1B8) is also 0 -- the whole struct is
+        # memset at 0x0044754c. Substituting -1 makes the comparison at
+        # 0x0044a35c miss, so the client adopts room -1 and drains its user list:
+        # precisely the wipe this function exists to prevent, in precisely the
+        # cases it is called for.
         return [protocol.encode("move", tag, {
-            "LIDENT": str(session.room_id or -1),
+            "LIDENT": str(session.room_id),
             "LCOUNT": str(_occupancy(ctx, room) if room else 0),
-            "IDENT": str(session.room_id or -1),
+            "IDENT": str(session.room_id),
             "COUNT": str(_occupancy(ctx, room) if room else 0),
             "NAME": room or "",
             "FLAGS": "",
@@ -721,8 +727,15 @@ def challenge(ctx: Context) -> List[bytes]:
 #:
 #: ``onln`` matters most -- it goes through the *modal* path (0x0034f6c8), so
 #: the client blocks on it rather than carrying on.
+#: ``ping`` is the CLIENT's own latency probe (queued at 0x004483d8 from
+#: 0x00448340, reachable from the lobby latency feature via 0x004e2dc0). It is
+#: not ``~png``, which is our keepalive that the client echoes at 0x00448c58.
+#: Leaving it unanswered puts a `ping` at the head of the pending queue, and
+#: head-matching at 0x00446d20 then drops every later reply until the 10-second
+#: sweep at 0x00446e30 expires it -- so replies vanish mid-session for ten
+#: seconds at a time.
 UNIMPLEMENTED_VERBS = ("rank", "snap", "peek", "flag", "lost", "edit",
-                       "user", "onln")
+                       "user", "onln", "ping")
 
 
 def _acknowledge(ctx: Context) -> List[bytes]:

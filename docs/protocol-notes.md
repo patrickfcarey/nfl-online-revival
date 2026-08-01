@@ -106,7 +106,7 @@ extracted, `strings` run per file rather than over the whole 4 GB image.
 
 | Fact | Evidence |
 |---|---|
-| Network SDK is **EA DirtySock (DirtySDK)** | `Dirtysock`, `DirtyClut` in `SLUS_207.52` |
+| Network SDK is **EA DirtySock (DirtySDK)** | `DirtyClut` in `SLUS_207.52` (file 0x487048), plus the `DirtyDnasRel*` exports in `ONLINE.DAT`. **Correction:** an earlier row cited `Dirtysock` as evidence; that string does not occur in any of the five files. The attribution is right, the cited evidence was not. |
 | DNAS is wrapped by EA, not called raw | `DirtyDnasRelInit`, `DirtyDnasRelAuthStart`, `DirtyDnasRelUpdateDnas`, `DirtyDnasRelUpdateHttp`, `DirtyDnasRelExit` |
 | **Two hooks worth their weight in gold** | `DirtyDnasRelSimError` (simulate an error) and `DirtyDnasRelSetProxy` (redirect) |
 | Sony DNAS API used underneath | `sceDNAS2AuthNetStart`, `sceDNAS2AuthGetUniqueID`, `sceDNAS2AuthDataDownload`, `sceDNAS2AuthInstall` |
@@ -121,7 +121,7 @@ unlike GameSpy, this is a *documented family* with prior reverse-engineering
 work on later EA titles, so the "reusable prior art" hope is not entirely dead —
 it just moved from GameSpy to DirtySDK.
 
-`/DATA/ONLINE.DAT` is almost entirely EULA text, plus `bio_gethostbyname`.
+~~`/DATA/ONLINE.DAT` is almost entirely EULA text~~ — **wrong, corrected below.** It is a TERF container of four members holding the whole `DirtyDnasRel` relocatable module, the `sceDNAS2*` API, RSA SSL-C 2.1.0 and ~50 socket symbols. The EULA is only one member.
 `/NETGUI/NTGUI.ELF` is Sony's stock network-config GUI, not EA code.
 
 ### ESPN NFL 2K5 — not hidden at all; the scan was wrong
@@ -255,7 +255,7 @@ needs a served DNAS endpoint:
 
 25 cipher specs including `0x000a` (3DES-SHA), `0x0005`/`0x0004` (RC4),
 `0x0009` (DES) and the `0x0062`-`0x0066` export set -- that range is OpenSSL's
-`export1024` group, so the client is an **OpenSSL 0.9.x** stack asking for
+`export1024` group, so the client is an **RSA SSL-C 2.1.0** stack (*not* OpenSSL, despite `EVP_*`/`SHA1_*` symbol names — `SSL-C 2.1.0 06-Mar-2001` appears five times in ONLINE.DAT and no OpenSSL/SSLeay string appears anywhere) asking for
 TLS 1.0 behind a legacy hello. Ordinary TLS above the framing, which is why
 translating the hello and relaying through stdlib `ssl` would be viable if
 serving DNAS ever becomes necessary.
@@ -394,7 +394,7 @@ according to its `NAME` parameter — see `docs/roster-checksum.md`.
 
 ### Error vocabulary
 
-`.data` at `0x0056d4dc` holds sixteen 12-byte triples of
+`.data` at `0x0056d4dc` holds **24** 12-byte triples (an earlier note said sixteen) of
 `(request type, internal tag, wire tag)`:
 
 | Request | | |
@@ -619,9 +619,15 @@ server announce it. The pnach line that bypassed the comparison is therefore
 disabled -- leaving it on would suppress a *legitimate* update, which is the
 mechanism a roster download has to hang off.
 
-**Not yet confirmed by a console.** The algorithm is verified against the
-executable and the extraction is verified against real player data, but no
-hardware run has reached the comparison.
+**Confirmed.** The console computes `0x8108963c`, the same value
+`tools/roster_checksum.py` derives — measured by patching the compare at
+`0x0012a978` into a store and reading the slot out of a savestate. The value
+appeared at exactly one address in 32 MB while the value being announced at the
+time appeared nowhere.
+
+The prompt that persisted was never arithmetic: the `news` reply carrying `CSUM`
+was not being consumed, so the console compared against zero. That is fixed —
+the category tag rides in the reply's **status** word, which is what `msg+8` is.
 
 ---
 
@@ -648,8 +654,10 @@ That is by design, not a gap.
 12:33:20  recv cusr      12:33:50  recv news      12:34:40  recv news
 ```
 
-— 30-50 seconds apart, which is the client retrying, and exactly the "it sits
-for about a minute" symptom reported from the sofa. After the fix, in the same
+— 30-50 seconds apart. **Correction:** those three records are `cusr`,
+`news NAME=0` and `news NAME=2`, three different requests, not retries of one.
+The gaps are the client waiting on each unanswered request in turn, which
+produces the same "it sits for about a minute" symptom by a different mechanism. After the fix, in the same
 capture file:
 
 ```

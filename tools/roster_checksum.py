@@ -119,8 +119,16 @@ def collect_rows(container: "madden_tdb.Container") -> List[List[int]]:
         for row in table.rows(FIELDS):
             if TEAM_ID_MIN <= row[team_index] <= TEAM_ID_MAX:
                 rows.append(row)
-    # `order by PGID`, with no direction given; every other query in the
-    # executable spells `asc` explicitly, so the default is ascending.
+    # `order by PGID` gives no direction, and ascending is correct -- proven at
+    # the parser, not argued from a head-count. 0x004ce688 handles the token
+    # after a sort key: `asc` (keyword id 33) stores 0 at 0x004ce7c4, `desc`
+    # stores 1 at 0x004ce7e0, and an omitted direction falls through to
+    # 0x004ce7a0, which stores the same 0. Omitted is byte-identical to `asc`.
+    #
+    # An earlier comment here claimed "every other query in the executable
+    # spells asc explicitly". That was false and load-bearing: of 526 sort keys,
+    # 326 say asc, 68 say desc, 118 take the direction from a runtime vararg,
+    # and 14 omit it as this one does.
     rows.sort(key=lambda r: r[0])
     return rows
 

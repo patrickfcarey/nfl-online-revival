@@ -17,8 +17,9 @@ an error:
   (0x00449b50), ``+who`` ``F``/``RF`` and ``move`` ``FLAGS`` all default to 0,
   so there the field is optional.
 * **A negative or missing ``I`` discards the record silently** (``bltz``, so 0
-  is accepted). The ids-start-at-1 rule comes from ``+pop``, which terminates
-  its list on an id of 0.
+  is accepted; ``I`` defaults to -1 at 0x004496ac and 0x00449a88, so *missing*
+  is discarded too). The ids-start-at-1 rule comes from ``+pop``, which
+  terminates its list on an id of 0.
 
 ``F`` is a letter bitmask, not a number: the converter maps ``@`` to bit 0 and
 then ``A``-``Z`` to bits 1-26, case-insensitively, with ``0``-``3`` covering
@@ -65,7 +66,7 @@ def room_record(room_id: int, name: str, occupants: int = 0, limit: int = 0,
     shows blank, zero shows ``---``, and a positive value shows ``~Nms``.
     """
     if room_id < 0:
-        # bltz at 0x004696b4 -- only NEGATIVE ids are discarded. Zero is a
+        # bltz at 0x004496b4 -- only NEGATIVE ids are discarded. Zero is a
         # legal room id here; it is `+pop` that terminates on 0.
         raise ValueError("room id must not be negative; the client discards it")
     fields = {

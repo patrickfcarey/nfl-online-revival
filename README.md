@@ -33,12 +33,17 @@ persistence) that only ever existed on machines that are gone.
 Recon is done, and it overturned the plan this file used to describe. Keeping
 the old bets around would send the next reader after the wrong things, so:
 
-**Confirmed on hardware** (Madden 2004, PS2 — every item below appears in a
-capture transcript, not just in tests):
+**Confirmed against a running console** — Madden 2004, `SLUS-20752`, under
+**PCSX2 in Sockets mode**, not a physical PS2. Every item below appears in a
+capture transcript rather than only in tests. The distinction matters: under
+Sockets mode every guest reports `ADDR=192.0.2.100`, which is why two emulated
+consoles cannot yet reach each other.
 
 - the DNAS gate is passed, by a one-word patch;
-- the login chain runs end to end: `@dir` → `skey` → `addr` → `auth` → `acct` →
-  `cper` → `pers` → `sele` → `cusr` → `news`, plus `~png` keepalives;
+- the login chain runs end to end: `@dir` → `addr` → `skey` → `auth`/`acct` →
+  `cper` → `pers` → `sele` → `cusr` → `news`, plus `~png` keepalives.
+  (`addr` precedes `skey`, and on a first run `acct` precedes `auth`; an earlier
+  version of this list had both the wrong way round.)
 - an EA account and a persona were created and are reloaded on reconnect.
 
 **Built and unit-tested, but never yet exercised by a console:** rooms, the user
@@ -111,7 +116,7 @@ learn ports, then `sink` those ports and `classify` the result.
 Tests (offline — no sockets, no capture, no game data):
 
 ```bash
-python3 tests/test_recon.py          # 55 tests
+python3 tests/test_recon.py          # 105 tests
 ```
 
 Failure modes that would otherwise look like "the game never phoned home" are
@@ -203,6 +208,5 @@ generic error for every one of these, so the transcript is the only place the
 actual failure is visible.
 
 No game data lives in this repository; point these at your own extracted disc.
-The value has not yet been confirmed against a console — see
-`docs/roster-checksum.md` for the algorithm and for exactly what remains
-unproven.
+The console computes the same value — measured out of a savestate, see
+`docs/roster-checksum.md`.

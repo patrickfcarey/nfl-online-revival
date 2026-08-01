@@ -167,13 +167,39 @@ him at 96.
 None of that survives a wrong bit order or wrong offsets; the fields would
 scatter. The extraction is sound.
 
-## What is still unproven
+## Confirmed against a console
 
-**No console has confirmed this value.** What remains is not the parse but the
-assumption that a freshly booted console's `LEAG` holds exactly these 1743 rows
-— rather than something a save, or an earlier roster update, has altered. The
-disc is the right source for a default boot; it need not be the right source for
-*this* console.
+**The console computes `0x8108963c` — the same value.** Measured directly: a
+patch replacing the compare at `0x0012a978` with a store put the console's own
+computed checksum in memory, and a savestate read it back. That value appeared
+at exactly one address in 32 MB, while the value the server was announcing at
+the time appeared nowhere.
+
+So the algorithm, the field order, the row-count seed and the extraction are all
+correct. The prompt that persisted was a delivery problem, not an arithmetic
+one: the `news` reply carrying `CSUM` was never consumed, so the console was
+comparing against zero. See `docs/protocol-notes.md`.
+
+Two things remain inferences rather than readings:
+
+- **That the runtime merges the container's members into one `LEAG` database.**
+  The whole 1743-row set rests on it. It is circumstantially strong — a
+  `where TGID between 1 and 32` filter is pointless unless the table holds
+  out-of-range TGIDs, and so is the `create index on PLAY order by TGID` found
+  alongside it — but it was not read out of the binary.
+- Whether a save or a prior roster update can alter what a booted console holds.
+
+## The sort direction, settled
+
+`order by 'DIGP'` gives no direction. Ascending is right, and it is provable
+rather than assumed: at `0x004ce688` the parser inspects the token after a sort
+key, `asc` (keyword 33) stores 0 at `0x004ce7c4`, `desc` stores 1 at
+`0x004ce7e0`, and an omitted direction falls through to `0x004ce7a0`, which
+stores **the same 0**. Omitted is byte-identical to `asc`.
+
+That branch sat behind a `beql` at `0x004ce794` that the bundled disassembler
+printed as `.word`, which is why this stayed open long enough to cost five
+hardware tests of checksum candidates that were never the problem.
 
 The test is direct: run the server with `--roster-db`, leave the pnach's roster
 line disabled, and see whether the console still claims its rosters are out of
