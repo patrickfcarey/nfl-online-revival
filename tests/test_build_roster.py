@@ -121,22 +121,18 @@ class RealRoster(unittest.TestCase):
             self.skipTest("set MADDEN_DB_TEAMS to DB_TEAMS.DAT to run this")
         self.source = Path(path).read_bytes()
 
-    def test_a_full_roster_does_not_fit_the_registered_budget(self):
-        """The finding that matters: 409600 cannot hold 32 teams.
+    def test_a_container_is_not_a_servable_payload(self):
+        """A TERF container can never be installed as a roster.
 
-        Either that figure is not the real ceiling, or a roster update is not a
-        whole LEAG database. Pinned so the assumption is not quietly made again.
+        0x004c9e90 requires the first word to be 0x08004244 -- "DB" plus version
+        0x0800 -- so a container header is refused outright. The payload is a
+        single raw TDB, which is what member 0 of template.dat is. This is
+        pinned because an earlier attempt served a container and the failure
+        looked like a size problem.
         """
-        with self.assertRaises(Exception):
-            blob = build_roster.build(self.source, list(range(1, 33)))
-            if len(blob) > 409600:
-                raise AssertionError("does not fit")
-
-    def test_what_does_fit_is_a_valid_container(self):
-        members = build_roster.members_within(self.source, 409600)
-        blob = build_roster.build(self.source, members)
-        self.assertLessEqual(len(blob), 409600)
-        build_roster.verify(blob, len(members))
+        blob = build_roster.build(self.source, [1, 2])
+        self.assertEqual(blob[:4], b"TERF")
+        self.assertNotEqual(blob[:2], b"DB")
 
 
 if __name__ == "__main__":

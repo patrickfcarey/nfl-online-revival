@@ -1257,3 +1257,46 @@ class ObservedSessionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class RoomNameTests(unittest.TestCase):
+    """Room names are not persona names.
+
+    A real console -- the first ever to reach a lobby -- asked to create
+    `C.NEW ROOM` and we answered `inam`, because the name was being validated
+    with the persona rule, which forbids spaces. The client generates these
+    names itself (0x00119cc8), so refusing them refuses the client's own input.
+    """
+
+    def setUp(self):
+        self.store, self.path = make_store()
+        self.store.seed_defaults()
+
+    def tearDown(self):
+        self.store.close(); os.unlink(self.path)
+
+    def _create(self, name):
+        session = open_session()
+        session.account, session.persona = "alice", "AliceP"
+        _s, replies = run(self.store, "room", {"NAME": name, "MAX": "50"},
+                          session=session)
+        return replies[0]
+
+    def test_the_name_a_console_actually_sent_is_accepted(self):
+        reply = self._create("C.NEW ROOM")
+        self.assertTrue(reply.ok, "rejected the client's own generated name")
+        self.assertEqual(reply.fields["NAME"], "C.NEW ROOM")
+
+    def test_the_generated_prefix_shape_is_accepted(self):
+        for name in ("X.SOMETHING", "Z.Quickmatch", "C.NEW ROOM 2"):
+            self.assertTrue(self._create(name).ok, name)
+
+    def test_a_control_character_is_still_refused(self):
+        # The client's value copy stops below byte 32, so this would truncate.
+        self.assertFalse(self._create("bad\tname").ok)
+
+    def test_an_over_long_name_is_refused(self):
+        self.assertFalse(self._create("A" * 40).ok)
+
+    def test_an_empty_name_is_refused(self):
+        self.assertFalse(self._create("   ").ok)

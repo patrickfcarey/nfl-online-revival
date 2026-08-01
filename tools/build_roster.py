@@ -1,4 +1,32 @@
-"""Build a LEAG container the console can install, within a size budget.
+"""Build a LEAG payload the console can install.
+
+**The payload is NOT a TERF container.** It is a single raw Madden TDB, and it
+must be exactly the size of member 0 of ``template.dat`` -- 253,044 bytes on the
+retail disc. Both facts were established from the executable and then confirmed
+byte-for-byte:
+
+* ``0x004c9e90`` refuses anything whose first word is not ``0x08004244``
+  (``"DB"`` plus version 0x0800), so a container header is rejected outright.
+* ``0x00352738`` sizes its buffer from ``0x003b6cf0`` -- the on-disc size of
+  member ``gp+10800`` of archive ``gp+10796`` -- and ``0x00305f94`` refuses a
+  ``Content-Length`` larger than it, on the header alone.
+* ``0x003527c0`` CRCs *that whole buffer*, not the bytes received, so a short
+  payload hashes uninitialised heap and can never verify.
+
+The 409,600 at ``gp+10792`` is a red herring: it is read once at boot and the
+callee ignores it. It is the in-RAM database capacity, not the download size.
+
+There are also **two** checksum layers. Ours is the ``CRC`` field of the
+manifest, plain ``zlib.crc32`` seed 0 over the served bytes. Inside the TDB
+there are ten more, one 4-byte LE word after each block, CRC-32 with polynomial
+0x04C11DB7 MSB-first, init 0xFFFFFFFF and no final XOR (``0x004ca810``). Editing
+records means recomputing those too.
+
+----
+
+This module also builds TERF containers, which is what it was written for before
+any of the above was known. That is kept for inspecting and subsetting archives;
+it is **not** how a roster is delivered.
 
 The console will not accept an arbitrarily large roster download. Measured on
 hardware: 393,216 bytes transfers completely, while 2,723,072 and 8,439,360 are
@@ -146,9 +174,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "accept as a roster update.")
     parser.add_argument("source", help="a retail container, e.g. DB_TEAMS.DAT")
     parser.add_argument("output")
-    parser.add_argument("--max-bytes", type=lambda v: int(v, 0), default=409600,
-                        help="size budget (default 409600, the figure the "
-                             "runtime registers for the league database)")
+    parser.add_argument("--max-bytes", type=lambda v: int(v, 0), default=253044,
+                        help="size budget. The default is the size of "
+                             "template.dat member 0, which is what the console "
+                             "allocates and CRCs. 409600 was an earlier guess "
+                             "and is wrong -- that is the in-RAM capacity.")
+    parser.add_argument("--extract-member", type=int, metavar="N",
+                        help="write member N of the source out as a raw TDB. "
+                             "THIS is the servable roster payload: member 0 of "
+                             "template.dat is the LEAG database itself.")
     parser.add_argument("--members",
                         help="explicit comma-separated member indices; "
                              "0 is the free-agent pool, 1-32 the NFL teams")
@@ -159,6 +193,27 @@ def main(argv: Optional[List[str]] = None) -> int:
     except OSError as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 2
+
+    if args.extract_member is not None:
+        try:
+            container = madden_tdb.Container(source)
+            offset, size = container._members[args.extract_member]
+            blob = source[container._member_base + offset:][:size]
+        except (IndexError, madden_tdb.TdbError) as exc:
+            print("error: %s" % exc, file=sys.stderr)
+            return 2
+        if blob[:2] != b"DB":
+            print("error: member %d is not a TDB (magic %r); the loader "
+                  "requires 'DB'" % (args.extract_member, blob[:2]),
+                  file=sys.stderr)
+            return 2
+        Path(args.output).write_bytes(blob)
+        import zlib
+        print("%s: %d bytes, crc32 %d (0x%08x)"
+              % (args.output, len(blob), zlib.crc32(blob) & 0xFFFFFFFF,
+                 zlib.crc32(blob) & 0xFFFFFFFF))
+        print("serve with --roster-payload; the server derives the CRC itself.")
+        return 0
 
     try:
         if args.members:

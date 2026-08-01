@@ -54,6 +54,18 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,31}$")
 _PERSONA_RE = re.compile(r"^[A-Za-z0-9_.-]{1,%d}$" % MAX_PERSONA_LEN)
 _MAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+#: Room names are NOT persona names and must not be validated as such.
+#:
+#: The client generates its own, and they contain spaces: a real console asked
+#: to create ``C.NEW ROOM``. Rejecting that with ``inam`` is what stopped the
+#: first console ever to reach a lobby from creating a game. The generator at
+#: 0x00119cc8 emits a letter, a dot and a suffix, so the shape varies.
+#:
+#: Printable ASCII only, and no longer than the client's 32-byte buffer allows.
+#: Control characters are excluded because the client's own value copy stops at
+#: any byte below 32, so one would silently truncate the name.
+_ROOM_NAME_RE = re.compile(r"^[ -~]{1,%d}$" % lobby.MAX_NAME)
+
 #: Registration sends MINAGE as 13 or 18 depending on a checkbox; a birth date
 #: below it is what the `tooy` screen exists for.
 DEFAULT_MIN_AGE = 13
@@ -777,7 +789,7 @@ def create_room(ctx: Context) -> List[bytes]:
         return ctx.fail(ERR_MISSING)
 
     name = ctx.message.get("NAME").strip()
-    if not name or not _NAME_RE.match(name):
+    if not name or not _ROOM_NAME_RE.match(name):
         return ctx.fail(ERR_BAD_NAME)
 
     ignore_existing = ctx.message.get("IGNEXIST", "0") not in ("", "0")
