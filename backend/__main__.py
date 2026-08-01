@@ -75,6 +75,12 @@ def build_parser() -> argparse.ArgumentParser:
                              "console downloads it and installs it as LEAG. "
                              "Its length must equal the console's own league "
                              "file or the client refuses it.")
+    parser.add_argument("--roster-crc", type=lambda v: int(v, 0),
+                        help="override the CRC advertised for the payload. "
+                             "Diagnostic: a deliberately wrong value lets the "
+                             "transfer run to completion and fail at the "
+                             "checksum instead, which tests whether the size "
+                             "was acceptable without installing anything.")
     parser.add_argument("--http-port", type=int, default=10080,
                         help="port for the roster download (default 10080)")
     parser.add_argument("--quiet", action="store_true")
@@ -217,7 +223,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("error: %s" % exc, file=sys.stderr)
             return 2
         config["roster_url"] = manifest_url(args.advertise_host, bound)
-        config["roster_file_crc"] = crc
+        config["roster_file_crc"] = crc if args.roster_crc is None else args.roster_crc
+        if args.roster_crc is not None and not args.quiet:
+            print("roster CRC OVERRIDDEN to %d -- the console will reject the "
+                  "download at the checksum. Diagnostic only."
+                  % args.roster_crc)
         if not args.quiet:
             print("roster payload: %d bytes, CRC %d (0x%08x)"
                   % (len(payload), crc, crc))
