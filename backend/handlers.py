@@ -969,8 +969,22 @@ def news_subblock(kind: int, payload: bytes) -> bytes:
       reply+8 is zero, and NewsRequest keeps the body only when that word equals
       ``'new0' + kind`` (0x0034f500).
 
-    So the type belongs on the wire as ``news`` and ``new0`` belongs *inside* the
-    body, as the sub-block selector the walker at 0x0044f400 looks for.
+    **This wrapping is a REFUTED guess. Do not rely on it.** It was built on an
+    agent's claim that ``new0`` is one of the sub-block selectors walked by
+    0x0044f400. Two checks say otherwise: all nine callers of that walker are in
+    the tournament module (0x0044f000-0x00452000) and none is in the news path,
+    and ``new0`` appears nowhere in the file as data, in either byte order -- it
+    exists only as the lui/ori immediate pair inside NewsRequest.
+
+    What *is* established: 0x0034f2a0 enqueues the request with type ``news``
+    (0x0034f308 passes the caller's type straight to 0x004df3d8), and replies are
+    matched against the pending head by type (0x00446d20, with ``DQUE`` as the
+    only wildcard). So ``news`` is required for delivery, and the word at
+    ``reply+8`` is something other than the message type. What sets it is still
+    unknown; measured with a plain ``news`` reply the whole 16-byte struct reads
+    [0x00001ac0, 0, 0, 0].
+
+    Kept only so the experiment is repeatable and the dead end is recorded.
     """
     header = struct.pack(">4sII", news_subblock_type(kind).encode("latin-1"),
                          0, SUBBLOCK_HEADER + len(payload))
