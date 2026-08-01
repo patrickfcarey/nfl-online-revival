@@ -212,10 +212,23 @@ python3 tools/roster_checksum.py /path/to/DB_TEAMS.DAT
 REPLACE=1 ./serve-madden.sh        # ...taking over from one already running
 ```
 
-It refuses to start on top of a running instance and names the PID, rather than
-letting Python report `[Errno 98] Address already in use` — which reads like a
-bug in the server instead of the obvious cause, especially when the previous
-instance was backgrounded and forgotten.
+**Only one backend can run at a time, and that is enforced by the server, not by
+remembering to use the script.** It takes an exclusive `flock` on the port set
+at startup; a second one exits with the holder's PID and command line however it
+was launched. The kernel drops the lock if the holder dies, so a crash cannot
+leave one stranded.
+
+This is not fussiness. Two servers on the same ports is a silent failure, not a
+loud one: the second cannot bind while the first keeps answering, so a console
+goes on talking to whatever configuration the *old* one had. That is exactly how
+a hardware test spent an evening on an empty roster manifest — the server had
+been "restarted" several times and the console never once spoke to the new one.
+
+`REPLACE=1` takes over, and it identifies the holder by reading the lock rather
+than by `pgrep`. A `pgrep -f` for the server's own command line also matches any
+shell whose command line contains that text — including the ssh invocations used
+to drive the rig, which has both killed live sessions and produced a false
+"already running".
 
 **Use the script rather than assembling the command by hand.** Four flags matter
 and none of them announce themselves when wrong — every mistake below produces

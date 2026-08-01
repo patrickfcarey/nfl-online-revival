@@ -54,29 +54,40 @@ TRANSCRIPT="${TRANSCRIPT:-captures/madden-$(date +%Y%m%d-%H%M%S).jsonl}"
 #
 # The bracket in the pattern stops pgrep matching its own command line. That
 # self-match has killed a live SSH session on this project four times.
-# ALL of them, not just the first. Killing one of two leaves the ports held,
-# and the replacement then fails to bind while still looking like it started --
-# which is exactly how a stale server ended up answering a hardware test with
-# the wrong configuration.
-existing=$(pgrep -f "m backen[d]" || true)
+# Who owns the ports, from the lock the server itself takes. This is the
+# authority, not pgrep: a `pgrep -f` for the server's command line also matches
+# any shell whose own command line happens to contain that text -- including the
+# ssh invocations used to drive this rig, which has killed a live session four
+# times and produced a false "already running" once.
+#
+# The kernel drops the flock when the holder dies, so a crashed server cannot
+# leave a lock that blocks the next one.
+LOCK="${TMPDIR:-/tmp}/nfl-backend-10000-10001.lock"
+existing=""
+if [ -s "$LOCK" ]; then
+    lock_pid=$(sed -n "s/^PID \([0-9]*\):.*/\1/p" "$LOCK" | head -1)
+    if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+        existing="$lock_pid"
+    fi
+fi
+
 if [ -n "$existing" ]; then
-    echo "A backend is already running:" >&2
-    for pid in $existing; do
-        printf "  PID %s: " "$pid" >&2
-        ps -o args= -p "$pid" 2>/dev/null | sed "s/^/  /" >&2
-    done
+    echo "A backend already owns ports 10000,10001:" >&2
+    sed "s/^/    /" "$LOCK" >&2
     echo >&2
     if [ -n "${REPLACE:-}" ]; then
-        echo "REPLACE is set -- stopping it." >&2
-        for pid in $existing; do kill "$pid" 2>/dev/null || true; done
+        echo "REPLACE is set -- stopping PID $existing." >&2
+        kill "$existing" 2>/dev/null || true
         for _ in 1 2 3 4 5 6 7 8 9 10; do
-            still=$(pgrep -f "m backen[d]" || true)
-            [ -z "$still" ] && break
+            kill -0 "$existing" 2>/dev/null || break
             sleep 0.5
         done
-        still=$(pgrep -f "m backen[d]" || true)
-        if [ -n "$still" ]; then
-            echo "error: still running: $still -- kill them yourself." >&2
+        if kill -0 "$existing" 2>/dev/null; then
+            kill -9 "$existing" 2>/dev/null || true
+            sleep 1
+        fi
+        if kill -0 "$existing" 2>/dev/null; then
+            echo "error: PID $existing will not die; stop it yourself." >&2
             exit 1
         fi
     else

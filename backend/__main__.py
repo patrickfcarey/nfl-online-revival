@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import atexit
+import errno
+import fcntl
+import os
 import sys
+import tempfile
 import threading
 from typing import List, Optional
 
@@ -76,6 +81,46 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: Held for the lifetime of the process, so a second server cannot start on the
+#: same ports. The file is only a handle for the lock -- the kernel releases it
+#: automatically if we are killed, so a crash cannot leave a stale one behind.
+_LOCK_HANDLE = None
+
+
+def _claim_ports(ports: List[int]) -> Optional[str]:
+    """Take an exclusive lock on this port set, or say who already has it.
+
+    Returns None on success, or a description of the holder.
+
+    This is enforced here rather than in serve-madden.sh because the script only
+    protects the people who use it. Two servers on the same ports is not a
+    harmless mistake: the second fails to bind while the first keeps answering,
+    so a console goes on talking to whatever configuration the *old* one had.
+    That produced an empty roster manifest during a hardware test and cost an
+    evening, because everything looked like it had restarted.
+    """
+    global _LOCK_HANDLE
+    name = "nfl-backend-%s.lock" % "-".join(str(p) for p in sorted(ports))
+    path = os.path.join(tempfile.gettempdir(), name)
+    handle = open(path, "a+")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        if exc.errno not in (errno.EACCES, errno.EAGAIN):
+            raise
+        handle.seek(0)
+        holder = handle.read().strip() or "an unknown process"
+        handle.close()
+        return holder
+    handle.seek(0)
+    handle.truncate()
+    handle.write("PID %d: %s\n" % (os.getpid(), " ".join(sys.argv)))
+    handle.flush()
+    _LOCK_HANDLE = handle          # keep it open; closing releases the lock
+    atexit.register(handle.close)
+    return None
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -89,6 +134,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             or args.advertise_host.count(".") != 3:
         print("error: --advertise-host must be a dotted quad like 192.168.1.10; "
               "the client parses it octet by octet.", file=sys.stderr)
+        return 2
+
+    holder = _claim_ports(args.port)
+    if holder is not None:
+        print("error: a backend already owns ports %s.\n  %s\n"
+              "Stop it first, or run serve-madden.sh with REPLACE=1."
+              % (", ".join(str(p) for p in args.port), holder), file=sys.stderr)
         return 2
 
     try:
