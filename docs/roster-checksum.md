@@ -206,12 +206,27 @@ line disabled, and see whether the console still claims its rosters are out of
 date. Re-enabling that line distinguishes a wrong checksum from an unrelated
 regression.
 
-## Delivery -- solved
+## Delivery -- solved, and the install is PROVEN (2026-08-01)
 
 The `news` category-2 reply carries a manifest naming a URL and a CRC, and the
-console fetches the file over plain HTTP. See `docs/protocol-notes.md`. What
-remains unproven is only whether an install *completes*, which is unobservable
-while the payload equals the disc's own member.
+console fetches the file over plain HTTP. See `docs/protocol-notes.md`.
+
+**A modified roster has been installed on a console and observed.** Serving the
+disc's own member back could never demonstrate this -- the bytes in memory are
+identical either way -- so `tools/mark_roster.py` built a payload differing by
+one player name, resealed against the TDB's own block checksums.
+
+Before, live: `......Olin.......Kreutz......`
+After, live:  `......Olin.......ZZTEST......`
+
+And the byte comparison that removes all doubt: 1,296 bytes of live console
+memory (twelve whole `PLAY` records) are **identical to the payload served** and
+differ from the disc version by exactly the twelve bytes edited.
+
+That closes the chain end to end: checksum announced, manifest delivered, file
+fetched over HTTP, CRC verified, database installed. It is also the first
+modified roster this project has delivered to a console, which was the point of
+the exercise.
 
 ## Correction: LEAG is template.dat, not DB_TEAMS.DAT
 

@@ -724,12 +724,14 @@ no new hostname".** That was an artefact of the manifest being empty at the
 time. With a real manifest the console connects to the HTTP port immediately --
 observed twice in one session.
 
-**Still open:** whether an install completes. A download demonstrably reaches
-the console, but the install call at 0x00352828 is gated by a branch
-(0x00352814) on both the transfer status and the CRC, and serving the disc's own
-member back makes the result unobservable -- the bytes in memory are identical
-either way. `tools/mark_roster.py` builds a payload that differs by one player
-name so the outcome can be seen rather than inferred.
+**Proven end to end (2026-08-01).** A payload differing from the disc by one
+player name was served, and afterwards twelve whole `PLAY` records read out of
+live console memory were byte-identical to what was served, differing from the
+disc version by exactly the twelve edited bytes. The install at 0x00352828 runs,
+and the whole chain -- manifest, URL, HTTP fetch, CRC, install -- works.
+
+Editing a roster therefore needs the TDB's own block checksums as well as the
+manifest CRC; `tools/mark_roster.py` handles both.
 
 ## Slice decision log
 

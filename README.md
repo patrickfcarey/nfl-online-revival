@@ -60,10 +60,10 @@ Note also that the one pairing observed introduced a console to a second socket
 of *itself* -- it proves the `+ses` path through the real client, not that two
 separate players can meet.
 
-**A roster download reaches the console; whether it INSTALLS is unproven.** The
-install call is gated on both the transfer status and the CRC, and serving the
-disc's own member back makes the outcome unobservable. `tools/mark_roster.py`
-builds a payload differing by one player name so it can be seen.
+**A modified roster has been installed on a console and observed.** A payload
+differing from the disc by one player name was served, downloaded, verified and
+installed; twelve whole `PLAY` records read out of live console memory are
+byte-identical to what was served. Roster delivery works end to end.
 
 **Dead ends, so nobody re-walks them:**
 
