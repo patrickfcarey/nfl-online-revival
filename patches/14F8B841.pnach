@@ -173,3 +173,60 @@ patch=1,EE,00305258,word,10000003
 // Do not enable this at the same time as MEASUREMENT PATCH 1 -- they write the
 // same slot, and the last writer wins.
 //patch=1,EE,00350960,word,AF84B43C
+
+// ---------------------------------------------------------------------------
+// CUSTOM PLAYBOOK: raise the 100-play cap
+//
+// Create-A-Playbook refuses a 101st play with "there are too many plays in
+// this playbook." That message is index 3 of an error table at 0x00599d88:
+//
+//     0x00599d88  "no error found."
+//     0x00599d8c  "this information already exists."
+//     0x00599d90  "there are too many formations in this playbook."
+//     0x00599d94  "there are too many plays in this playbook."   <- index 3
+//
+// The string is reached through that table, not a lui/addiu pair, which is
+// why searching for a direct reference to it finds nothing.
+//
+// The chain, from the message back to the decision:
+//
+//     0x002c3870  error_message(index)      sll a0,a0,2 over the table above
+//     0x0029d178  wrapper, returns 0x002c2a88's result as the index
+//     0x002c2a88  playbook writer
+//     0x002c2c30    s1 = 3                  ("too many plays")
+//     0x002c2c34    movn s1, zero, v0       cleared when the gate SUCCEEDS
+//     0x002c31e0  gate wrapper, calls the gate below with a1 = 1
+//     0x002c32f0  the gate itself
+//
+// `movn` is conditional -- read as a plain move, 0x002c2c34 looks like it
+// always clears the error and the whole chain reads backwards.
+//
+// The gate, at 0x002c32f0:
+//
+//     002c3324  lw    v0, 0(sp)      current play count (from the 'PLBP' chunk)
+//     002c3328  addu  v0, v0, s0     + a1, the number being added (1)
+//     002c332c  sltiu s1, v0, 101    succeed only if count + 1 < 101
+//
+// So the cap is 100 plays, enforced at exactly one instruction. `a1` is a
+// count, not a flag: a1 = 0 returns "no room" via the early branch at
+// 0x002c3304, which is why the formations path does not come through here.
+//
+// 101 is the only such constant in the whole playbook module (0x002be000 to
+// 0x002c4000), and the gate has three callers -- 0x00294d0c and 0x00294e68
+// (the UI, which greys out "add play") and 0x002c31e8 (the writer). Patching
+// this one instruction moves all three together, so the menu and the save
+// path cannot disagree about what fits.
+//
+// TO USE: uncomment ONE line. The immediate is the limit PLUS ONE, and it is
+// sign-extended, so keep it under 32767.
+//
+//   patch=1,EE,002c332c,word,2c510097   // 150 plays
+//   patch=1,EE,002c332c,word,2c5100c9   // 200 plays
+//   patch=1,EE,002c332c,word,2c510191   // 400 plays
+//
+// UNVERIFIED, AND THE REASON THESE ARE COMMENTED OUT: the cap has only been
+// shown to be a *check*, not to match the storage behind it. The play list is
+// reached through a chunk query ('PLBP' via 0x004cb8c8) rather than a fixed
+// array, which is a good sign, but nothing here proves the memory-card save
+// has room for more than 100. Raise it on a spare memory card, add plays past
+// 100, save, reboot and reload before trusting a playbook you care about.

@@ -21,3 +21,6 @@ htmlcov/
 
 # Built roster payloads and PS2 saves (game data; rebuild with tools/build_year_roster.py)
 rosters/
+
+# Extracted game executables (not ours to redistribute)
+extract/
