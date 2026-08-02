@@ -101,6 +101,10 @@ POSITION_ALIASES = {
 }
 
 #: Madden's published rating names -> the TDB columns that hold them.
+#:
+#: These are the *canonical* spellings, which is what Madden 24's file uses.
+#: Every other year spells them differently, so nothing is matched literally --
+#: see :func:`_rating_key`.
 RATING_COLUMNS = {
     "Overall Rating": "POVR", "Speed": "PSPD", "Acceleration": "PACC",
     "Strength": "PSTR", "Agility": "PAGI", "Awareness": "PAWR",
@@ -111,6 +115,70 @@ RATING_COLUMNS = {
     "Injury": "PINJ", "Stamina": "PSTA", "Toughness": "PTGH",
     "Impact Blocking": "PIMP",
 }
+
+#: Accepted spellings per column, already normalised by :func:`_rating_key`.
+#:
+#: **Sixteen ratings files, six spellings of "overall" between them**:
+#: ``OVERALL``, ``OVERALL RATING``, ``Overall``, ``Overall Rating``,
+#: ``OverallRating`` -- and two years with no overall column at all. Matching
+#: only the newest spelling is not a small miss: `real_ratings` finds nothing,
+#: every value falls back to the COMMON defaults, and the build cheerfully
+#: reports "all N players carry the ratings EA published" because that message
+#: counts players matched *by name*, not values actually read.
+#:
+#: The symptom was a 2018 roster where the highest-rated player in the league
+#: was 60 -- the default -- and 100% of players sat on it. Measured across the
+#: set, only five of eighteen years had any rating spread at all.
+#:
+#: Where a family of related columns exists (``THROW ACCURACY`` alongside
+#: ``THROW ACCURACY DEEP/MID/SHORT``, ``RUN BLOCK`` alongside ``RUNBLOCK
+#: FOOTWORK``), only the plain one is listed: the variants are separate
+#: attributes the 2004-era TDB has no column for, and matching them by prefix
+#: would write a footwork score into the run-block field.
+RATING_ALIASES = {
+    "POVR": ("overall", "ovr"), "PSPD": ("speed",),
+    "PACC": ("acceleration",),
+    "PSTR": ("strength",), "PAGI": ("agility",), "PAWR": ("awareness",),
+    "PCTH": ("catching", "catch"), "PCAR": ("carrying",),
+    "PTHP": ("throwpower",), "PTHA": ("throwaccuracy",),
+    "PKPR": ("kickpower",), "PKAC": ("kickaccuracy",),
+    "PRBK": ("runblock",), "PPBK": ("passblock",), "PTAK": ("tackle",),
+    "PBTK": ("breaktackle",), "PJMP": ("jumping",), "PKRT": ("kickreturn",),
+    "PINJ": ("injury",), "PSTA": ("stamina",), "PTGH": ("toughness",),
+    "PIMP": ("impactblocking", "impactblock"),
+}
+
+#: Columns rebuilt from the several ratings that replaced them.
+#:
+#: Madden split throw accuracy into deep/mid/short around 2015, and the
+#: 2004-era TDB has one column. Every input here is still a published EA
+#: rating for that player -- this reconstitutes the single number they were
+#: split from, it does not invent one. Used only when the plain rating is
+#: absent, so a file that still carries it wins.
+#:
+#: Without this a 2015 quarterback keeps the COMMON default of 20, which is the
+#: value meant for players who never throw.
+DERIVED_RATINGS = {
+    "PTHA": ("throwaccuracydeep", "throwaccuracymid", "throwaccuracymed",
+             "throwaccuracyshort"),
+}
+
+#: normalised spelling -> TDB column.
+_RATING_BY_KEY = {alias: column
+                  for column, aliases in RATING_ALIASES.items()
+                  for alias in aliases}
+
+
+def _rating_key(name: str) -> str:
+    """Fold one file's spelling of a rating onto a canonical key.
+
+    Case, spaces and underscores go, and a trailing ``rating`` is dropped so
+    ``OverallRating``, ``OVERALL RATING`` and ``Overall`` all land together.
+    """
+    folded = name.lower().replace("_", " ").replace(" ", "")
+    if folded.endswith("rating") and folded != "rating":
+        folded = folded[:-len("rating")]
+    return folded
 
 #: Rough positional baselines for players with no published ratings. Deliberately
 #: unexciting: the point is a roster that plays sensibly, not invented stars.
@@ -220,17 +288,57 @@ def estimate_ratings(position: str, age: int, years_pro: int) -> Dict[str, int]:
 
 
 def real_ratings(record: dict) -> Dict[str, int]:
-    """Pull the published ratings out of a Madden record."""
+    """Pull the published ratings out of a Madden record.
+
+    Matched on the folded key rather than the literal one, because each year's
+    file spells them differently. Anything unrecognised is left at its COMMON
+    default -- which is correct for a column this file does not carry, and is
+    also why :func:`rated_fraction` exists: a record that matched by name but
+    contributed no values is indistinguishable from a real one unless somebody
+    counts.
+    """
     out = dict(COMMON)
-    for madden_name, column in RATING_COLUMNS.items():
-        raw = record.get(madden_name)
+    folded = {}
+    for name, raw in record.items():
         if raw in (None, "", "N/A"):
+            continue
+        key = _rating_key(str(name))
+        folded[key] = raw
+        column = _RATING_BY_KEY.get(key)
+        if column is None:
             continue
         try:
             out[column] = max(0, min(99, int(float(raw))))
         except (TypeError, ValueError):
             continue
+    # Only where the plain rating was absent: a file that still carries it wins.
+    for column, parts in DERIVED_RATINGS.items():
+        if any(_RATING_BY_KEY.get(k) == column for k in folded):
+            continue
+        values = []
+        for part in parts:
+            try:
+                values.append(float(folded[part]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        if values:
+            out[column] = max(0, min(99, int(sum(values) / len(values))))
     return out
+
+
+def rated_fraction(record: dict) -> float:
+    """How much of this record actually carried readable ratings, 0.0 to 1.0.
+
+    The build reports "all N players carry the ratings EA published", and that
+    message counts players matched *by name*. A file whose columns are spelled
+    in a way nothing recognises still matches every name and still reports
+    100%, while writing the default 60 to everyone. This is the number that
+    catches it.
+    """
+    seen = {_RATING_BY_KEY.get(_rating_key(str(k)))
+            for k, v in record.items() if v not in (None, "", "N/A")}
+    seen.discard(None)
+    return len(seen) / float(len(RATING_ALIASES))
 
 
 def team_ids_from_game(blob: bytes) -> Dict[str, int]:
@@ -262,12 +370,46 @@ def team_ids_from_game(blob: bytes) -> Dict[str, int]:
     return mapping
 
 
-#: Franchises that have moved or been renamed since 2003. The game knows them by
-#: where they played then.
+#: Other names the same franchise goes by, tried in order when the scraped
+#: abbreviation is not one the game itself uses.
+#:
+#: **The era of the template decides which way this points, so it cannot be a
+#: one-way map.** Madden NFL 2004 knows the Raiders as OAK, the Chargers as SD
+#: and the Rams as STL. A Madden 09 Deluxe template -- rebuilt by the community
+#: against a modern roster -- knows them as LVR, LAC and LAR. Rewriting LAC to
+#: SD unconditionally was correct for one and wrong for the other, and the
+#: symptom was not a wrong roster but a hard refusal, because the game had no
+#: team called SD.
+#:
+#: So :func:`resolve_team` tries the scraped name first and only then these,
+#: which lets one table serve both without knowing which disc it is looking at.
 ABBREVIATION_ALIASES = {
-    "LV": "OAK", "LAC": "SD", "LAR": "STL", "WSH": "WAS", "ARZ": "ARI",
-    "BLT": "BAL", "CLV": "CLE", "HST": "HOU", "SL": "STL", "JAC": "JAX",
+    "LV": ("LVR", "OAK", "RAI"), "LVR": ("LV", "OAK", "RAI"),
+    "OAK": ("LVR", "LV"),
+    "LAC": ("SD", "SDG"), "SD": ("LAC", "SDG"),
+    "LAR": ("STL", "RAM"), "STL": ("LAR", "RAM"), "SL": ("STL", "LAR"),
+    "WSH": ("WAS",), "WAS": ("WSH",),
+    "ARZ": ("ARI",), "BLT": ("BAL",), "CLV": ("CLE",), "HST": ("HOU",),
+    "JAC": ("JAX",), "JAX": ("JAC",),
+    "GNB": ("GB",), "GB": ("GNB",), "KAN": ("KC",), "KC": ("KAN",),
+    "NWE": ("NE",), "NE": ("NWE",), "NOR": ("NO",), "NO": ("NOR",),
+    "SFO": ("SF",), "SF": ("SFO",), "TAM": ("TB",), "TB": ("TAM",),
 }
+
+
+def resolve_team(abbreviation: str, team_ids: Dict[str, int]) -> Optional[int]:
+    """The game's id for a scraped abbreviation, or None if it has no such team.
+
+    Direct match first. Only when the game does not use that name at all do the
+    aliases get a turn, which is what lets the same table serve a 2003-era
+    template and a modern one.
+    """
+    if abbreviation in team_ids:
+        return team_ids[abbreviation]
+    for candidate in ABBREVIATION_ALIASES.get(abbreviation, ()):
+        if candidate in team_ids:
+            return team_ids[candidate]
+    return None
 
 
 def build_players(year: int, estimate_missing: bool = False,
@@ -285,13 +427,16 @@ def build_players(year: int, estimate_missing: bool = False,
     for team in roster["teams"]:
         # The game's id for this abbreviation, never the file's own tgId.
         abbreviation = (team.get("abbreviation") or "").upper()
-        abbreviation = ABBREVIATION_ALIASES.get(abbreviation, abbreviation)
         if team_ids:
-            team_id = team_ids.get(abbreviation)
+            team_id = resolve_team(abbreviation, team_ids)
             if team_id is None:
                 raise BuildError(
-                    "the game has no team %r; add it to ABBREVIATION_ALIASES"
-                    % abbreviation)
+                    "the game has no team %r, and none of its aliases %s are "
+                    "in the TEAM table (which has: %s). Add it to "
+                    "ABBREVIATION_ALIASES."
+                    % (abbreviation,
+                       list(ABBREVIATION_ALIASES.get(abbreviation, ())),
+                       " ".join(sorted(team_ids))))
         else:
             team_id = team["tgId"]
         if not 1 <= team_id <= 32:

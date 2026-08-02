@@ -18,3 +18,6 @@ captures/*
 # coverage.py
 .coverage
 htmlcov/
+
+# Built roster payloads and PS2 saves (game data; rebuild with tools/build_year_roster.py)
+rosters/

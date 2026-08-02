@@ -383,10 +383,40 @@ class TeamIds(unittest.TestCase):
                                                            1009: "FA"})
         self.assertEqual(byr.team_ids_from_game(blob), {"CHI": 1})
 
-    def test_moved_franchises_resolve_to_where_they_played_in_2003(self):
-        for modern, historic in (("LV", "OAK"), ("LAC", "SD"), ("LAR", "STL"),
+    def test_moved_franchises_reach_a_2003_era_table(self):
+        """Madden NFL 2004 knows them by where they played then."""
+        era2003 = {"OAK": 1, "SD": 2, "STL": 3, "WAS": 4, "JAX": 5}
+        for modern, expected in (("LV", "OAK"), ("LAC", "SD"), ("LAR", "STL"),
                                  ("WSH", "WAS"), ("JAC", "JAX")):
-            self.assertEqual(byr.ABBREVIATION_ALIASES[modern], historic)
+            self.assertEqual(byr.resolve_team(modern, era2003),
+                             era2003[expected], modern)
+
+    def test_the_same_names_reach_a_modern_table(self):
+        """A Madden 09 Deluxe template calls them LVR, LAC and LAR.
+
+        Rewriting LAC to SD unconditionally was right for one era and a hard
+        refusal in the other, because that game has no team called SD. The
+        scraped name has to be tried first.
+        """
+        modern = {"LVR": 1, "LAC": 2, "LAR": 3, "WAS": 4, "JAX": 5}
+        for scraped, expected in (("LV", "LVR"), ("LAC", "LAC"),
+                                  ("LAR", "LAR"), ("WSH", "WAS")):
+            self.assertEqual(byr.resolve_team(scraped, modern),
+                             modern[expected], scraped)
+
+    def test_a_direct_match_always_wins_over_an_alias(self):
+        # Both names present: the game's own spelling must not be overridden.
+        both = {"LAC": 1, "SD": 2}
+        self.assertEqual(byr.resolve_team("LAC", both), 1)
+
+    def test_an_unknown_team_resolves_to_nothing(self):
+        self.assertIsNone(byr.resolve_team("XXX", {"CHI": 1}))
+
+    def test_aliases_are_symmetric_for_the_moved_franchises(self):
+        # Whichever spelling the data uses, the other era must be reachable.
+        for a, b in (("LV", "OAK"), ("LAC", "SD"), ("LAR", "STL")):
+            self.assertIn(b, byr.ABBREVIATION_ALIASES[a], "%s -> %s" % (a, b))
+            self.assertIn(a, byr.ABBREVIATION_ALIASES[b], "%s -> %s" % (b, a))
 
 
 class Rewrite(unittest.TestCase):
