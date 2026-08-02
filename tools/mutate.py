@@ -115,10 +115,17 @@ REGRESSIONS: List[Regression] = [
         "and those readings go into the documentation as facts."),
     Regression(
         "roster-team-from-file", "tools/build_year_roster.py",
-        "            team_id = team_ids.get(abbreviation)",
+        "            team_id = resolve_team(abbreviation, team_ids)",
         "            team_id = team['tgId']",
         "The scraped tgId disagrees with the game for ids 30/31/32. The "
         "twenty-nine that agree make a wrong build look correct."),
+    Regression(
+        "nickname-claim-arbitration", "tools/build_year_roster.py",
+        "            and not (claimed and key in claimed)]",
+        "            ]",
+        "Without it a nickname takes a record another player owns outright: "
+        "Green Bay's Tony Brown wearing Anthony Brown's ratings. Seven such "
+        "pairs of different men across eighteen years."),
     Regression(
         "weight-offset", "tools/build_year_roster.py",
         '_set(record, table, "PWGT", max(0, player["weight"] - 160))',

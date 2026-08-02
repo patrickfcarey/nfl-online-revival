@@ -553,21 +553,50 @@ _NICKNAME_PAIRS = frozenset(
 
 def nickname_match(first: str, last: str, position: str,
                    ratings: Dict[str, dict],
-                   by_surname: Dict[str, list]) -> Optional[dict]:
+                   by_surname: Dict[str, list],
+                   claimed: Optional[set] = None) -> Optional[dict]:
     """Ratings for a player whose first name is a nickname, or None.
 
     Same discipline as the prefix rule: accept only when exactly one
     same-surname candidate fits, and reject a clear position mismatch (Dimitri
     Patterson the corner is not Mike Patterson the tackle). The initials family
     is the reason this is not a prefix check -- ``tj`` is a prefix of nothing.
+
+    ``claimed`` holds the ratings records some other player already owns by
+    exact name, and a nickname may never take one. **Without that check this
+    rule assigns real people each other's ratings**: Green Bay carried both
+    Tony Brown and Anthony Brown in 2018, and the nickname link handed Tony the
+    record Anthony owns outright. Seven such pairs exist across the eighteen
+    years -- Nick/Nicholas Williams, Joe/Joseph Walker, Mike/Michael Jordan --
+    and every one is two different men. A weaker match never outranks a
+    stronger one's claim.
     """
     first_key, last_key = normalise(first), normalise(last)
     hits = [key for candidate, key in by_surname.get(last_key, ())
-            if (first_key, candidate) in _NICKNAME_PAIRS]
+            if (first_key, candidate) in _NICKNAME_PAIRS
+            and not (claimed and key in claimed)]
     if len(hits) != 1:
         return None
     record = ratings[hits[0]]
     return record if _same_person(position, record) else None
+
+
+def claimed_records(roster: dict, ratings: Dict[str, dict],
+                    by_surname: Dict[str, list]) -> set:
+    """Ratings keys that some scraped player owns by exact or prefix match.
+
+    A whole-roster pre-pass, because the owner may be on another team: the
+    weaker rules below must see every strong claim before any of them fires,
+    or the answer depends on which team happens to be processed first.
+    """
+    claimed = set()
+    for team in roster.get("teams", ()):
+        for entry in team.get("players", ()):
+            record = match_player(entry["name"]["first"], entry["name"]["last"],
+                                  ratings, by_surname)
+            if record is not None:
+                claimed.add(normalise(player_name(record)))
+    return claimed
 
 
 #: A recovered rating from a neighbouring season is approximate -- typically
@@ -632,7 +661,8 @@ def adjacent_season_ratings(first: str, last: str, position: str,
 
 def find_ratings(first: str, last: str, position: str,
                  ratings: Dict[str, dict], by_surname: Dict[str, list],
-                 year: int, season: int, seasons: "SeasonRatings"
+                 year: int, season: int, seasons: "SeasonRatings",
+                 claimed: Optional[set] = None
                  ) -> Tuple[Optional[dict], Optional[str]]:
     """Resolve a player's ratings, returning ``(record, source)``.
 
@@ -644,7 +674,8 @@ def find_ratings(first: str, last: str, position: str,
     """
     record = match_player(first, last, ratings, by_surname)
     if record is None:
-        record = nickname_match(first, last, position, ratings, by_surname)
+        record = nickname_match(first, last, position, ratings, by_surname,
+                                claimed)
     if record is not None:
         return record, "same"
     hit = adjacent_season_ratings(first, last, position, year, seasons,
@@ -670,6 +701,8 @@ def build_players(year: int, estimate_missing: bool = False,
     ratings_index, ratings_season = load_ratings(year)
     by_surname = surname_index(ratings_index)
     seasons = SeasonRatings()
+    # Whole-roster pre-pass: which ratings records are already owned outright.
+    claimed = claimed_records(roster, ratings_index, by_surname)
 
     by_team: Dict[int, List[dict]] = {}
     matched = adjacent = estimated = 0
@@ -700,7 +733,7 @@ def build_players(year: int, estimate_missing: bool = False,
                 continue                      # a position the game cannot hold
             published, source = find_ratings(
                 first, last, entry.get("position", ""), ratings_index,
-                by_surname, year, ratings_season, seasons)
+                by_surname, year, ratings_season, seasons, claimed)
             if published is not None:
                 ratings = real_ratings(published)
                 published_ratings = True

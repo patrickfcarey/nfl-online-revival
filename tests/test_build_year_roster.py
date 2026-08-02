@@ -470,6 +470,64 @@ class Nicknames(unittest.TestCase):
                                              idx, by_surname))
 
 
+class ClaimArbitration(unittest.TestCase):
+    """A weaker match may never take a record a stronger one owns.
+
+    Green Bay carried both Tony Brown and Anthony Brown in 2018 -- two
+    different men -- and the nickname link handed Tony the record Anthony owns
+    by exact name. Seven such pairs existed across the eighteen years
+    (Nick/Nicholas Williams, Joe/Joseph Walker, Mike/Michael Jordan), each one
+    a real player wearing another real player's ratings.
+    """
+
+    def setUp(self):
+        self.idx = {
+            byr.normalise("Anthony Brown"): {"Full Name": "Anthony Brown",
+                                             "Overall Rating": 75},
+            byr.normalise("Tony Brown"): {"Full Name": "Tony Brown",
+                                          "Overall Rating": 60},
+        }
+        self.by_surname = byr.surname_index(self.idx)
+
+    def test_an_unclaimed_record_is_still_matched(self):
+        idx = {byr.normalise("Anthony Brown"): {"Full Name": "Anthony Brown",
+                                                "Overall Rating": 75}}
+        by_surname = byr.surname_index(idx)
+        self.assertIsNotNone(
+            byr.nickname_match("Tony", "Brown", "CB", idx, by_surname,
+                               claimed=set()))
+
+    def test_a_claimed_record_is_refused(self):
+        claimed = {byr.normalise("Anthony Brown")}
+        self.assertIsNone(
+            byr.nickname_match("Tony", "Brown", "CB", self.idx,
+                               self.by_surname, claimed))
+
+    def test_claims_are_gathered_across_the_whole_roster(self):
+        """The owner may be on a different team.
+
+        Gathering claims per team would make the answer depend on which team
+        happened to be processed first.
+        """
+        roster = {"teams": [
+            {"abbreviation": "DAL",
+             "players": [{"name": {"first": "Anthony", "last": "Brown"}}]},
+            {"abbreviation": "GB",
+             "players": [{"name": {"first": "Tony", "last": "Brown"}}]},
+        ]}
+        claimed = byr.claimed_records(roster, self.idx, self.by_surname)
+        self.assertIn(byr.normalise("Anthony Brown"), claimed)
+        self.assertIsNone(
+            byr.nickname_match("Tony", "Brown", "CB", self.idx,
+                               self.by_surname, claimed))
+
+    def test_no_claims_leaves_matching_unchanged(self):
+        # Passing None must behave exactly as before the guard existed.
+        self.assertIsNotNone(
+            byr.nickname_match("Tony", "Brown", "CB", self.idx,
+                               self.by_surname, None))
+
+
 class PositionGuard(unittest.TestCase):
     """The defence against the name-keyed index collapsing two players."""
 
