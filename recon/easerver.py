@@ -179,19 +179,28 @@ def _serve_connection(conn: socket.socket, addr, replies, transcript,
                 if on_message is not None:
                     on_message(message)
 
-                reply = _reply_for(message, replies, host, redirect_port)
-                if reply is None:
+                # Both halves of this were stale against `_replies_for`: the
+                # name (it was `_reply_for`, which no longer exists, so the
+                # thread died with NameError on the first message any client
+                # sent) and the shape. It returns a *list* -- empty for
+                # silence -- because this protocol needs a follow-up push:
+                # the server both answers and volunteers, and a client can be
+                # waiting on the second message rather than the first.
+                outgoing = _replies_for(message, replies, host, redirect_port)
+                if not outgoing:
                     print("[ea] -> (no reply configured for %s; the client's next "
                           "move tells us whether one was needed)" % message.type,
                           flush=True)
                     continue
-                conn.sendall(reply)
-                decoded = eaproto.decode(reply)
-                print("[ea] -> %s  %s (txn %d)  %s"
-                      % (peer, decoded.type, decoded.txn,
-                         ", ".join("%s=%s" % kv for kv in decoded.fields.items())),
-                      flush=True)
-                transcript.record("send", peer, decoded, reply)
+                for reply in outgoing:
+                    conn.sendall(reply)
+                    decoded = eaproto.decode(reply)
+                    print("[ea] -> %s  %s (txn %d)  %s"
+                          % (peer, decoded.type, decoded.txn,
+                             ", ".join("%s=%s" % kv
+                                       for kv in decoded.fields.items())),
+                          flush=True)
+                    transcript.record("send", peer, decoded, reply)
     except OSError as exc:
         print("[ea] %s socket error: %s" % (peer, exc), flush=True)
     finally:

@@ -347,6 +347,134 @@ class ConcurrentDelivery(unittest.TestCase):
                            "handling requests one at a time")
 
 
+class DeliveryEdges(unittest.TestCase):
+    """The paths a healthy download never takes."""
+
+    def setUp(self):
+        self.payload = bytes(range(256)) * 8
+        self.events = []
+        self.server = rosterfile.RosterServer(self.payload,
+                                              on_event=self.events.append)
+        self.port = self.server.start("127.0.0.1", 0)
+        self.url = "http://127.0.0.1:%d%s" % (self.port, rosterfile.ROSTER_PATH)
+
+    def tearDown(self):
+        self.server.stop()
+
+    def test_head_reports_the_length_without_a_body(self):
+        request = urllib.request.Request(self.url, method="HEAD")
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertEqual(int(response.headers["Content-Length"]),
+                             len(self.payload))
+            self.assertEqual(response.read(), b"")
+
+    def test_requests_are_announced_through_the_callback(self):
+        # The lobby owns stdout; BaseHTTPRequestHandler would otherwise write
+        # straight to stderr and interleave with it.
+        urllib.request.urlopen(self.url, timeout=5).read()
+        self.assertTrue(any("GET" in event for event in self.events),
+                        self.events)
+
+    def test_a_client_that_hangs_up_mid_transfer_is_survived(self):
+        """The console does this whenever a download is cancelled.
+
+        An unhandled write error here would kill the serving thread and, before
+        the server was threaded, the whole endpoint with it.
+        """
+        big = rosterfile.RosterServer(b"\x00" * (4 << 20),
+                                      on_event=self.events.append)
+        port = big.start("127.0.0.1", 0)
+        self.addCleanup(big.stop)
+        sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+        sock.sendall(b"GET /roster.dat HTTP/1.0\r\n\r\n")
+        sock.recv(64)                      # take the headers, then leave
+        sock.close()
+        # The endpoint must still answer afterwards.
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(
+                        "http://127.0.0.1:%d/roster.dat" % port,
+                        timeout=2) as response:
+                    self.assertEqual(len(response.read()), 4 << 20)
+                    return
+            except OSError:
+                time.sleep(0.1)
+        self.fail("the endpoint stopped answering after a cancelled transfer")
+
+    def test_downloads_past_the_cap_are_refused_not_queued(self):
+        """Refusing immediately is deliberate.
+
+        The console retries a failed transfer; it has no useful behaviour for a
+        connection accepted and then ignored.
+        """
+        saved = rosterfile.MAX_CONCURRENT_DOWNLOADS
+        rosterfile.MAX_CONCURRENT_DOWNLOADS = 1
+        try:
+            server = rosterfile.RosterServer(b"\x00" * (8 << 20),
+                                             on_event=self.events.append)
+            port = server.start("127.0.0.1", 0)
+            self.addCleanup(server.stop)
+            held = socket.create_connection(("127.0.0.1", port), timeout=5)
+            self.addCleanup(held.close)
+            held.sendall(b"GET /roster.dat HTTP/1.0\r\n\r\n")
+            held.recv(16)                  # occupy the only slot
+            refused = socket.create_connection(("127.0.0.1", port), timeout=5)
+            self.addCleanup(refused.close)
+            refused.sendall(b"GET /roster.dat HTTP/1.0\r\n\r\n")
+            refused.settimeout(5)
+            self.assertEqual(refused.recv(64), b"",
+                             "the second download was served rather than refused")
+        finally:
+            rosterfile.MAX_CONCURRENT_DOWNLOADS = saved
+
+    def test_a_port_already_in_use_is_reported(self):
+        other = rosterfile.RosterServer(self.payload)
+        with self.assertRaises(rosterfile.RosterFileError) as caught:
+            other.start("127.0.0.1", self.port)
+        self.assertIn("cannot serve roster", str(caught.exception))
+
+    def test_stop_is_idempotent(self):
+        self.server.stop()
+        self.server.stop()
+
+
+class PayloadLoading(unittest.TestCase):
+    def test_a_missing_file_is_reported(self):
+        with self.assertRaises(rosterfile.RosterFileError) as caught:
+            rosterfile.load("/nonexistent/roster.dat")
+        self.assertIn("cannot read", str(caught.exception))
+
+    def test_an_empty_file_is_refused(self):
+        handle, path = tempfile.mkstemp(suffix=".dat")
+        os.close(handle)
+        self.addCleanup(os.unlink, path)
+        with self.assertRaises(rosterfile.RosterFileError) as caught:
+            rosterfile.load(path)
+        self.assertIn("is empty", str(caught.exception))
+
+    def test_the_crc_is_seed_zero_over_the_bytes(self):
+        # Deliberately NOT the roster checksum, which seeds from the row count.
+        # Swapping them fails the download with the same error as corruption.
+        handle, path = tempfile.mkstemp(suffix=".dat")
+        os.write(handle, b"payload bytes")
+        os.close(handle)
+        self.addCleanup(os.unlink, path)
+        payload, crc = rosterfile.load(path)
+        self.assertEqual(payload, b"payload bytes")
+        self.assertEqual(crc, zlib.crc32(b"payload bytes") & 0xFFFFFFFF)
+
+
+class LocalAddresses(unittest.TestCase):
+    def test_it_returns_a_tuple_of_strings(self):
+        # Diagnostics only, so it must never raise -- a host with no resolvable
+        # name is normal on a rig.
+        addresses = rosterfile.local_addresses()
+        self.assertIsInstance(addresses, tuple)
+        for address in addresses:
+            self.assertIsInstance(address, str)
+
+
 class ManifestUrl(unittest.TestCase):
     def test_is_absolute_and_numeric(self):
         url = rosterfile.manifest_url("192.168.68.85", 10080)

@@ -773,10 +773,19 @@ test is not a module that is tested:
     python3 -m coverage run --source=backend,tools,recon -m unittest discover -s tests
     python3 -m coverage report --sort=cover
 
-**686 tests, 84% of statements.** Everything under `backend/` and `tools/` is
-above 80% except `backend/rosterfile.py` and `backend/protocol.py`, both at 81%.
+**794 tests, 90% of statements.** Every module is above 80%; `protocol.py` is
+at 100%.
 
-Five bugs surfaced from writing those tests rather than from reading the code:
+Six bugs surfaced from writing those tests rather than from reading the code:
+
+* `recon/easerver.py` called `_reply_for`, which does not exist -- the function
+  is `_replies_for` -- so **the replay server died with `NameError` on the
+  first message any client sent it**. The call site was stale in shape as well
+  as name: it treated the result as a single reply when a list is returned, and
+  the list is the point (this protocol needs a follow-up push, because the
+  server both answers and volunteers, and a client can be waiting on the second
+  message). Nothing caught it because nothing had ever driven a message through
+  that path in a test.
 
 * `read_roster_checksum.py` rejected the last word of EE RAM (`< EE_SIZE - 4`
   where the last valid address *is* `EE_SIZE - 4`), and leaked a `zstd`
@@ -792,16 +801,29 @@ Five bugs surfaced from writing those tests rather than from reading the code:
 * `backend/__main__.py` had a stray conditional expression wrapping a `print`,
   which suppressed a roster diagnostic whenever `--roster-crc` was passed.
 
+### Testing a loop that runs until Ctrl-C
+
+`sinkd.serve` and `easerver.serve` end in `while True: time.sleep(3600)`. The
+tests swap the module's `time` for a proxy whose `sleep` is a rendezvous: the
+test waits until the listeners are up, drives traffic through them, then
+releases the proxy, which raises `KeyboardInterrupt` and lets the real shutdown
+path run. Only the module under test sees the substitution, so nothing else in
+the suite is affected by a patched clock.
+
+`tlssink.serve` blocks in `accept()` instead, and there is no equivalent way to
+interrupt that from another thread, so its handler is tested directly. That is
+why it sits at 80% while the other two are at 90%.
+
+Worth recording, because two tests were written against it before it was
+checked: on Linux, closing a socket that another thread is already blocked in
+`accept()` on does **not** wake it. Asserting that a loop exits on close is
+testing the kernel, not the loop. Passing an already-closed socket tests the
+same branch and is deterministic.
+
 ### Still uncovered, and why
 
-The `recon/` capture tools: `easerver.py` (34%), `tlssink.py` (55%),
-`sinkd.py` (62%), `__main__.py` (62%). Their parsers and reply tables are
-covered; what is not is the `serve()` loops, which bind listeners and run until
-interrupted. Those are exercised by using them, and they are diagnostic
-instruments rather than anything a console depends on.
-
-The same is true of the last stretch of `backend/__main__.py`: what remains is
-the call into `serve_forever` itself.
+What remains is the last stretch of `backend/__main__.py` -- the call into
+`serve_forever` itself -- and `tlssink.serve`'s accept loop.
 
 Beyond code coverage, three categories no test here can reach:
 
