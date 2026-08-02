@@ -423,6 +423,164 @@ class NameMatching(unittest.TestCase):
         self.assertEqual(len(self.by_surname[byr.normalise("Williams")]), 2)
 
 
+class Nicknames(unittest.TestCase):
+    """First-name nicknames the prefix rule cannot reach."""
+
+    def _index(self, *names):
+        # No Position: these cases exercise the nickname logic, not the guard
+        # (which has its own test class and passes on an unknown position).
+        idx = {byr.normalise(n): {"Full Name": n, "Overall Rating": 80}
+               for n in names}
+        return idx, byr.surname_index(idx)
+
+    def test_the_initials_family_matches(self):
+        # tj is a prefix of nothing, which is why the prefix rule misses it.
+        idx, by_surname = self._index("T.J. Lang")
+        self.assertIsNotNone(byr.nickname_match("Thomas", "Lang", "LG",
+                                                idx, by_surname))
+
+    def test_a_classic_nickname_matches_both_directions(self):
+        idx, by_surname = self._index("Mike Williams")
+        self.assertIsNotNone(byr.nickname_match("Michael", "Williams", "WR",
+                                                idx, by_surname))
+        idx, by_surname = self._index("Michael Williams")
+        self.assertIsNotNone(byr.nickname_match("Mike", "Williams", "WR",
+                                                idx, by_surname))
+
+    def test_an_ambiguous_expansion_is_refused(self):
+        # Joe and Joey Porter both present -> neither may be chosen.
+        idx, by_surname = self._index("Joe Porter", "Joey Porter")
+        self.assertIsNone(byr.nickname_match("Joseph", "Porter", "LOLB",
+                                             idx, by_surname))
+
+    def test_a_position_mismatch_is_rejected(self):
+        """Dimitri Patterson the corner is not Mike Patterson the tackle."""
+        idx = {byr.normalise("Mike Patterson"): {"Full Name": "Mike Patterson",
+                                                 "Position": "DT",
+                                                 "Overall Rating": 80}}
+        by_surname = byr.surname_index(idx)
+        # Dimitri -> would need a nickname link; use a real one: the guard is
+        # what we are testing, so match Michael->Mike but with a CB roster pos.
+        self.assertIsNone(byr.nickname_match("Michael", "Patterson", "CB",
+                                             idx, by_surname))
+
+    def test_an_unrelated_first_name_does_not_match(self):
+        idx, by_surname = self._index("Greg Olsen")
+        self.assertIsNone(byr.nickname_match("Zebulon", "Olsen", "TE",
+                                             idx, by_surname))
+
+
+class PositionGuard(unittest.TestCase):
+    """The defence against the name-keyed index collapsing two players."""
+
+    def _rec(self, position):
+        return {"Full Name": "X", "Position": position}
+
+    def test_matching_buckets_pass(self):
+        self.assertTrue(byr._same_person("CB", self._rec("DB")))
+        self.assertTrue(byr._same_person("HB", self._rec("RB")))
+
+    def test_a_clear_mismatch_fails(self):
+        self.assertFalse(byr._same_person("DT", self._rec("HB")))
+        self.assertFalse(byr._same_person("QB", self._rec("CB")))
+
+    def test_a_centre_is_exempt(self):
+        # Long-snappers are labelled C here and TE/LB in the ratings.
+        self.assertTrue(byr._same_person("C", self._rec("LB")))
+
+    def test_an_unknown_position_passes(self):
+        # The guard catches collisions; it does not second-guess missing data.
+        self.assertTrue(byr._same_person("", self._rec("DT")))
+        self.assertTrue(byr._same_person("CB", {"Full Name": "X"}))
+
+
+class AdjacentSeason(unittest.TestCase):
+    """A miss's ratings from the nearest OTHER season."""
+
+    class _FakeSeasons:
+        def __init__(self, per_season):
+            self._data = {}
+            for season, names in per_season.items():
+                idx = {byr.normalise(n): {"Full Name": n, "Overall Rating": ovr,
+                                          "Position": pos}
+                       for n, ovr, pos in names}
+                self._data[season] = (idx, byr.surname_index(idx))
+
+        def get(self, season):
+            return self._data.get(season)
+
+    def test_the_nearest_season_wins(self):
+        seasons = self._FakeSeasons({
+            2012: [("Joe Flacco", 88, "QB")],
+            2010: [("Joe Flacco", 80, "QB")]})
+        hit = byr.adjacent_season_ratings("Joe", "Flacco", "QB", 2011, seasons)
+        self.assertIsNotNone(hit)
+        # 2012 and 2010 are equidistant; the season ahead is preferred.
+        self.assertEqual(hit[1], 2012)
+
+    def test_it_prefers_the_closer_season_over_a_farther_one(self):
+        # Distance 1 (2014) must beat distance 2 (2017) for a 2015 target.
+        seasons = self._FakeSeasons({
+            2014: [("Sam Bradford", 78, "QB")],
+            2017: [("Sam Bradford", 82, "QB")]})
+        hit = byr.adjacent_season_ratings("Sam", "Bradford", "QB", 2015, seasons)
+        self.assertEqual(hit[1], 2014)
+
+    def test_nothing_within_the_span_returns_none(self):
+        seasons = self._FakeSeasons({2019: [("Old Timer", 70, "QB")]})
+        self.assertIsNone(
+            byr.adjacent_season_ratings("Old", "Timer", "QB", 2015, seasons))
+
+    def test_a_position_collision_across_seasons_is_rejected(self):
+        # A different Michael Bennett (RB) in the adjacent file, not the DT.
+        seasons = self._FakeSeasons({
+            2008: [("Michael Bennett", 74, "HB")]})
+        self.assertIsNone(
+            byr.adjacent_season_ratings("Michael", "Bennett", "DT", 2009,
+                                        seasons))
+
+
+class FindRatings(unittest.TestCase):
+    """The cascade: same-year always beats an adjacent season."""
+
+    def _index(self, *names):
+        idx = {byr.normalise(n): {"Full Name": n, "Overall Rating": 90,
+                                  "Position": "QB"} for n in names}
+        return idx, byr.surname_index(idx)
+
+    def test_a_same_year_exact_match_is_tagged_same(self):
+        idx, by_surname = self._index("Aaron Rodgers")
+        seasons = AdjacentSeason._FakeSeasons({})
+        rec, source = byr.find_ratings("Aaron", "Rodgers", "QB", idx,
+                                       by_surname, 2013, 2013, seasons)
+        self.assertIsNotNone(rec)
+        self.assertEqual(source, "same")
+
+    def test_a_nickname_still_counts_as_same_year(self):
+        idx, by_surname = self._index("Mike Vick")
+        seasons = AdjacentSeason._FakeSeasons({})
+        _rec, source = byr.find_ratings("Michael", "Vick", "QB", idx,
+                                        by_surname, 2013, 2013, seasons)
+        self.assertEqual(source, "same")
+
+    def test_the_adjacent_fallback_only_runs_when_same_year_misses(self):
+        idx, by_surname = self._index("Somebody Else")   # target has not him
+        seasons = AdjacentSeason._FakeSeasons({
+            2014: [("Nick Foles", 85, "QB")]})
+        rec, source = byr.find_ratings("Nick", "Foles", "QB", idx, by_surname,
+                                       2013, 2013, seasons)
+        self.assertIsNotNone(rec)
+        self.assertEqual(source, "adjacent:2014")
+
+    def test_the_target_season_is_never_re_searched_as_adjacent(self):
+        # exclude={season} keeps the fallback off the file the baseline missed.
+        idx, by_surname = self._index("Present Player")
+        seasons = AdjacentSeason._FakeSeasons({})
+        _rec, source = byr.find_ratings("Absent", "Player", "QB", idx,
+                                        by_surname, 2013, 2013, seasons)
+        self.assertIsNone(source)
+
+
 class BitWriting(unittest.TestCase):
     """`_set` and `_set_text` write the bytes the console reads back."""
 
@@ -714,7 +872,7 @@ class BuildPlayers(unittest.TestCase):
                     [self._team("CHI", 5, [self._entry("Justin", "Fields"),
                                            self._entry("Nobody", "Known")])],
                     [{"Full Name": "Justin Fields", "Overall Rating": 88}])
-        by_team, matched, estimated, season = byr.build_players(
+        by_team, matched, adjacent, estimated, season = byr.build_players(
             2023, team_ids={"CHI": 5})
         self.assertEqual([p["last"] for p in by_team[5]], ["Fields"])
         self.assertEqual((matched, estimated, season), (1, 1, 2023))
@@ -724,7 +882,7 @@ class BuildPlayers(unittest.TestCase):
                     [self._team("CHI", 5, [self._entry("Justin", "Fields"),
                                            self._entry("Nobody", "Known")])],
                     [{"Full Name": "Justin Fields", "Overall Rating": 88}])
-        by_team, _m, _e, _s = byr.build_players(
+        by_team, _m, _adj, _e, _s = byr.build_players(
             2023, estimate_missing=True, team_ids={"CHI": 5})
         marks = {p["last"]: p["published"] for p in by_team[5]}
         self.assertEqual(marks, {"Fields": True, "Known": False})
@@ -734,7 +892,7 @@ class BuildPlayers(unittest.TestCase):
         self._write(2023,
                     [self._team("CHI", 32, [self._entry("Justin", "Fields")])],
                     [{"Full Name": "Justin Fields", "Overall Rating": 88}])
-        by_team, _m, _e, _s = byr.build_players(2023, team_ids={"CHI": 5})
+        by_team, _m, _adj, _e, _s = byr.build_players(2023, team_ids={"CHI": 5})
         self.assertEqual(list(by_team), [5])
 
     def test_an_unknown_abbreviation_fails_loudly(self):
@@ -753,7 +911,7 @@ class BuildPlayers(unittest.TestCase):
                     [{"Full Name": "Third Man", "Overall Rating": 60},
                      {"Full Name": "First Man", "Overall Rating": 95},
                      {"Full Name": "Second Man", "Overall Rating": 80}])
-        by_team, _m, _e, _s = byr.build_players(2023, team_ids={"CHI": 5})
+        by_team, _m, _adj, _e, _s = byr.build_players(2023, team_ids={"CHI": 5})
         self.assertEqual([p["first"] for p in by_team[5]],
                          ["First", "Second", "Third"])
 
@@ -764,7 +922,7 @@ class BuildPlayers(unittest.TestCase):
                         self._entry("Odd", "Job", position="WILDCAT")])],
                     [{"Full Name": "Justin Fields", "Overall Rating": 88},
                      {"Full Name": "Odd Job", "Overall Rating": 88}])
-        by_team, _m, _e, _s = byr.build_players(2023, team_ids={"CHI": 5})
+        by_team, _m, _adj, _e, _s = byr.build_players(2023, team_ids={"CHI": 5})
         self.assertEqual([p["last"] for p in by_team[5]], ["Fields"])
 
     def test_ratings_fall_back_to_the_newest_season_at_or_before(self):
@@ -772,7 +930,7 @@ class BuildPlayers(unittest.TestCase):
                     [self._team("CHI", 5, [self._entry("Justin", "Fields")])],
                     [{"Full Name": "Justin Fields", "Overall Rating": 88}],
                     ratings_year=2023)
-        _by_team, _m, _e, season = byr.build_players(2025, team_ids={"CHI": 5})
+        _by_team, _m, _adj, _e, season = byr.build_players(2025, team_ids={"CHI": 5})
         self.assertEqual(season, 2023)
 
     def test_a_missing_roster_year_is_a_clear_error(self):

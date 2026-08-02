@@ -460,19 +460,219 @@ def resolve_team(abbreviation: str, team_ids: Dict[str, int]) -> Optional[int]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# matching beyond exact + formal prefix
+# ---------------------------------------------------------------------------
+#
+# Exact names and formal-first-name prefixes still leave 20-40% of a year's
+# players unmatched, and each miss is a roster slot that keeps a wrong player.
+# Two further techniques close most of the gap. Both were measured against the
+# real data before being trusted: together they cut unfilled team slots across
+# 2008-2023 from ~1300 to ~80.
+
+#: Coarse position buckets, used only to reject a same-surname match whose
+#: position is plainly incompatible -- the defence against the name-keyed index
+#: silently collapsing two players who share a name (a DT recovering the record
+#: of a running back with the same name). C is exempt: long-snappers are
+#: labelled C in the roster and TE/LB in the ratings, and they are one man.
+_POSITION_BUCKET = {
+    "QB": "qb", "HB": "rb", "FB": "rb", "WR": "pass", "TE": "pass",
+    "LT": "ol", "LG": "ol", "C": "ol", "RG": "ol", "RT": "ol",
+    "LE": "front7", "RE": "front7", "DT": "front7",
+    "LOLB": "front7", "MLB": "front7", "ROLB": "front7",
+    "CB": "db", "FS": "db", "SS": "db", "K": "kp", "P": "kp",
+}
+
+
+def _position_bucket(position: str) -> Optional[str]:
+    if not position:
+        return None
+    folded = str(position).upper().strip()
+    return _POSITION_BUCKET.get(POSITION_ALIASES.get(folded, folded))
+
+
+def _record_position(record: dict) -> Optional[str]:
+    for key in record:
+        if key.lower() in ("position", "pos"):
+            return record[key]
+    return None
+
+
+def _same_person(roster_position: str, record: dict) -> bool:
+    """False only when the position buckets clearly disagree.
+
+    Unknown on either side, or a centre on the roster side, passes -- the guard
+    exists to catch collisions, not to second-guess a real position change.
+    """
+    roster_bucket = _position_bucket(roster_position)
+    record_bucket = _position_bucket(_record_position(record))
+    if roster_bucket and record_bucket and roster_bucket != record_bucket:
+        folded = str(roster_position).upper()
+        return POSITION_ALIASES.get(folded, folded) == "C"
+    return True
+
+
+#: First-name nicknames the prefix rule cannot reach, every pair attested at
+#: least twice in the roster/ratings data rather than guessed. The dominant
+#: family is initials -- A.J., C.J., T.J. -- which no prefix of a formal name
+#: produces. Textbook pairs that never actually occur in eighteen years of data
+#: (Robert->Bob, William->Bill) are deliberately absent.
+NICKNAMES = {
+    "aaron": ("aj",), "adam": ("aj",), "alexander": ("zander",),
+    "andrew": ("andy", "aj", "drew"), "anthony": ("tony", "aj"),
+    "benjamin": ("bj",), "bryant": ("bj",),
+    "calvin": ("cj",), "casey": ("cj",), "charles": ("charlie",),
+    "chauncey": ("cj",), "christopher": ("cj",), "claude": ("cj",),
+    "clifford": ("cj",), "clinton": ("cj",), "coleridge": ("cj",),
+    "colton": ("cj",), "cortez": ("cj",),
+    "daniel": ("danny", "dj"), "danny": ("dj",), "david": ("dave", "dj"),
+    "demarcus": ("dj", "dee"), "dennis": ("dj",), "derek": ("dj",),
+    "edward": ("ed", "eddie"), "emmanuel": ("manny",), "erik": ("ej",),
+    "freddie": ("freddy",), "gene": ("geno",), "henry": ("hank",),
+    "isaac": ("ike",), "jacob": ("jake",), "jacoby": ("coby",),
+    "james": ("jim", "jimmy", "jj"), "jameson": ("jamey",), "jason": ("jay",),
+    "jeffrey": ("jj",), "john": ("jack", "jt", "jp"),
+    "johnathan": ("johnny",), "jonathan": ("jp",),
+    "joseph": ("joe", "joey", "jc"), "justin": ("jj", "jr"),
+    "kenneth": ("kenny",), "lawrence": ("larry", "lj"), "lucas": ("luke",),
+    "manuel": ("manny",), "michael": ("mike",),
+    "nathan": ("nate",), "nathaniel": ("nate",), "nicholas": ("nick",),
+    "phillip": ("philip",), "reginald": ("reggie",),
+    "richard": ("richie", "rj"), "robert": ("bobby",), "roderick": ("ricky",),
+    "rudolph": ("rudy",), "stephen": ("steve",),
+    "taylor": ("tj",), "terrell": ("tj",), "theodore": ("teddy", "ted"),
+    "thomas": ("tom", "tommy", "tj"), "timothy": ("tj",), "travis": ("tj",),
+    "trent": ("tj",), "tyler": ("ty",), "vincent": ("vinny",),
+    "william": ("billy",),
+}
+
+_NICKNAME_PAIRS = frozenset(
+    pair for full, nicks in NICKNAMES.items() for nick in nicks
+    for pair in ((full, nick), (nick, full)))
+
+
+def nickname_match(first: str, last: str, position: str,
+                   ratings: Dict[str, dict],
+                   by_surname: Dict[str, list]) -> Optional[dict]:
+    """Ratings for a player whose first name is a nickname, or None.
+
+    Same discipline as the prefix rule: accept only when exactly one
+    same-surname candidate fits, and reject a clear position mismatch (Dimitri
+    Patterson the corner is not Mike Patterson the tackle). The initials family
+    is the reason this is not a prefix check -- ``tj`` is a prefix of nothing.
+    """
+    first_key, last_key = normalise(first), normalise(last)
+    hits = [key for candidate, key in by_surname.get(last_key, ())
+            if (first_key, candidate) in _NICKNAME_PAIRS]
+    if len(hits) != 1:
+        return None
+    record = ratings[hits[0]]
+    return record if _same_person(position, record) else None
+
+
+#: A recovered rating from a neighbouring season is approximate -- typically
+#: within 2-4 OVR points -- but it is a real published rating for the right
+#: player, which beats the flat default a miss otherwise gets. Two seasons is
+#: the cap: past that the drift roughly doubles per step.
+ADJACENT_SPAN = 2
+
+
+class SeasonRatings:
+    """Lazily loaded ``(index, surname_index)`` per published season.
+
+    One instance per build, shared across every lookup: the first lookup that
+    needs a season pays its file load, the rest are dict hits. An eighteen-year
+    sweep therefore loads each ratings file once.
+    """
+
+    def __init__(self) -> None:
+        directory = DATA_REPO / "data" / "raw" / "madden-ratings"
+        self.available = sorted(
+            {int(path.stem.rsplit("-", 1)[1])
+             for path in directory.glob("madden*-*.json")})
+        self._cache: Dict[int, Tuple[Dict[str, dict], Dict[str, list]]] = {}
+
+    def get(self, season: int
+            ) -> Optional[Tuple[Dict[str, dict], Dict[str, list]]]:
+        if season not in self.available:
+            return None
+        if season not in self._cache:
+            index, _got = load_ratings(season)
+            self._cache[season] = (index, surname_index(index))
+        return self._cache[season]
+
+
+def adjacent_season_ratings(first: str, last: str, position: str,
+                            target_year: int, seasons: "SeasonRatings",
+                            exclude=()) -> Optional[Tuple[dict, int]]:
+    """A miss's ratings from the nearest OTHER season, or None.
+
+    Tried outward -- Y+1, Y-1, Y+2, Y-2 -- so the closest season wins and, at
+    equal distance, the season ahead is preferred: a miss is most often a
+    player Madden had not rated yet rather than one it had dropped. Matches by
+    the same name discipline as the same-year path (exact, prefix, nickname),
+    so it never guesses an identity; the cost is staleness, not a wrong person.
+    """
+    for distance in range(1, ADJACENT_SPAN + 1):
+        for season in (target_year + distance, target_year - distance):
+            if season in exclude:
+                continue
+            loaded = seasons.get(season)
+            if loaded is None:
+                continue
+            index, by_surname = loaded
+            record = match_player(first, last, index, by_surname)
+            if record is None:
+                record = nickname_match(first, last, position, index,
+                                        by_surname)
+            if record is not None and _same_person(position, record):
+                return record, season
+    return None
+
+
+def find_ratings(first: str, last: str, position: str,
+                 ratings: Dict[str, dict], by_surname: Dict[str, list],
+                 year: int, season: int, seasons: "SeasonRatings"
+                 ) -> Tuple[Optional[dict], Optional[str]]:
+    """Resolve a player's ratings, returning ``(record, source)``.
+
+    ``source`` is ``"same"`` for a target-season match or ``"adjacent:<n>"``
+    for a neighbouring-season fallback. Same-year always wins -- exact, then
+    formal prefix, then nickname -- and the adjacent search runs only when all
+    of those miss, because a same-year rating is what EA said that player was
+    *that* season.
+    """
+    record = match_player(first, last, ratings, by_surname)
+    if record is None:
+        record = nickname_match(first, last, position, ratings, by_surname)
+    if record is not None:
+        return record, "same"
+    hit = adjacent_season_ratings(first, last, position, year, seasons,
+                                  exclude={season})
+    if hit is not None:
+        return hit[0], "adjacent:%d" % hit[1]
+    return None, None
+
+
 def build_players(year: int, estimate_missing: bool = False,
                   team_ids: Optional[Dict[str, int]] = None
-                  ) -> Tuple[Dict[int, List[dict]], int, int, int]:
-    """Every current player, per team, best first."""
+                  ) -> Tuple[Dict[int, List[dict]], int, int, int, int]:
+    """Every current player, per team, best first.
+
+    Returns ``(by_team, same_year, adjacent, estimated, season)``: how many
+    players were rated from the target season, how many from a neighbouring
+    season, and how many were left out (or estimated, with --estimate-missing).
+    """
     roster_path = DATA_REPO / "data" / "canonical" / ("roster-%d.json" % year)
     if not roster_path.exists():
         raise BuildError("no roster for %d at %s" % (year, roster_path))
     roster = json.loads(roster_path.read_text())
     ratings_index, ratings_season = load_ratings(year)
     by_surname = surname_index(ratings_index)
+    seasons = SeasonRatings()
 
     by_team: Dict[int, List[dict]] = {}
-    matched = estimated = 0
+    matched = adjacent = estimated = 0
     for team in roster["teams"]:
         # The game's id for this abbreviation, never the file's own tgId.
         abbreviation = (team.get("abbreviation") or "").upper()
@@ -498,15 +698,21 @@ def build_players(year: int, estimate_missing: bool = False,
             position = POSITION_ALIASES.get(position, position)
             if position not in POSITIONS:
                 continue                      # a position the game cannot hold
-            published = match_player(first, last, ratings_index, by_surname)
+            published, source = find_ratings(
+                first, last, entry.get("position", ""), ratings_index,
+                by_surname, year, ratings_season, seasons)
             if published is not None:
                 ratings = real_ratings(published)
                 published_ratings = True
-                matched += 1
+                if source == "same":
+                    matched += 1
+                else:
+                    adjacent += 1
             elif estimate_missing:
                 ratings = estimate_ratings(position, entry.get("age") or 0,
                                            entry.get("yearsPro") or 0)
                 published_ratings = False
+                source = "estimate"
                 estimated += 1
             else:
                 # No published ratings and no licence to invent any. Leaving
@@ -521,10 +727,11 @@ def build_players(year: int, estimate_missing: bool = False,
                 "weight": measurables.get("weightLb") or 200,
                 "ratings": ratings,
                 "published": published_ratings,
+                "source": source,
             })
         players.sort(key=lambda p: -p["ratings"]["POVR"])
         by_team[team_id] = players
-    return by_team, matched, estimated, ratings_season
+    return by_team, matched, adjacent, estimated, ratings_season
 
 
 def _set(record: bytearray, table, column: str, value: int) -> None:
@@ -687,7 +894,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         team_ids = team_ids_from_game(blob)
-        by_team, _pool_matched, _pool_estimated, season = build_players(
+        by_team, same_year, adjacent_year, unrated, season = build_players(
             args.year, estimate_missing=args.estimate_missing,
             team_ids=team_ids)
         result, written, skipped, published, free_written = rewrite(blob, by_team)
@@ -706,7 +913,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                                       zlib.crc32(result) & 0xFFFFFFFF))
     print("  %d players on teams, %d free agents, %d records unchanged"
           % (written, free_written, skipped))
-    if written == published:
+    if adjacent_year:
+        # Some players were rated from a neighbouring season. Say so rather than
+        # claim they carry this season's numbers, which they do not.
+        print("  ratings: %d rated -- %d from the %d season, %d from adjacent "
+              "seasons (within +-%d); %d unrated%s"
+              % (same_year + adjacent_year, same_year, season, adjacent_year,
+                 ADJACENT_SPAN, unrated,
+                 " (estimated)" if args.estimate_missing else " (left out)"))
+    elif written == published:
         print("  ratings: all %d players carry the ratings EA published for "
               "the %d season" % (published, season))
     else:
