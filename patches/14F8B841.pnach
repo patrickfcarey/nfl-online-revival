@@ -217,16 +217,39 @@ patch=1,EE,00305258,word,10000003
 // this one instruction moves all three together, so the menu and the save
 // path cannot disagree about what fits.
 //
-// TO USE: uncomment ONE line. The immediate is the limit PLUS ONE, and it is
-// sign-extended, so keep it under 32767.
+// DOES PATCHING THIS ALONE WORK? NO. The 100 is not an arbitrary gate.
 //
-//   patch=1,EE,002c332c,word,2c510097   // 150 plays
-//   patch=1,EE,002c332c,word,2c5100c9   // 200 plays
-//   patch=1,EE,002c332c,word,2c510191   // 400 plays
+// The playbook lives in a TDB database -- the same format as the rosters --
+// queried with SQL built from fragments in the executable ('from', 'where',
+// byte-reversed table names). The fourcc the gate passes, 0x4C504250, is the
+// table 'LPBP' = PBPL, playbook plays. Its sibling PBFM = playbook formations
+// is the other error message.
 //
-// UNVERIFIED, AND THE REASON THESE ARE COMMENTED OUT: the cap has only been
-// shown to be a *check*, not to match the storage behind it. The play list is
-// reached through a chunk query ('PLBP' via 0x004cb8c8) rather than a fixed
-// array, which is a good sign, but nothing here proves the memory-card save
-// has room for more than 100. Raise it on a spare memory card, add plays past
-// 100, save, reboot and reload before trusting a playbook you care about.
+// That database is member 11 of /DATA/TEMPLATE.DAT, and the tables declare
+// their own capacity:
+//
+//     PBPL  capacity 100   8 bytes/record   <- the play cap
+//     PBFM  capacity  20  60 bytes/record   <- the formation cap
+//     PLYL  capacity 100  40 bytes/record   the play list itself
+//     PLRD  capacity 100 / PLPD capacity 100   parallel per-play tables
+//
+// A TDB data block is sized exactly field_count*16 + record_bytes*max_records
+// with no slack: PBPL's block is 864 bytes = 4*16 + 8*100, and the NEXT
+// table's header begins at the byte after it. Row 101 does not overflow into
+// padding, it overwrites the neighbouring table header.
+//
+// So `sltiu s1, v0, 101` is the table's capacity spelled out in code. Raising
+// it lets the UI accept a 101st play and then corrupts the database.
+//
+// TO ACTUALLY RAISE IT, the tables have to grow first: enlarge PBPL, PLYL,
+// PLRD and PLPD (and PLYS/PSAL/ARTL, which hold the route art a play points
+// at) in member 11, re-seal the block checksums -- tools/mark_roster.py
+// already does exactly this for the roster database -- and then patch this
+// instruction to match the new capacity. The save is written from that
+// template, so its size follows.
+//
+// The line below is left commented out because on its own it is harmful.
+// Uncomment only alongside an enlarged TEMPLATE.DAT, with the immediate set
+// to the new capacity PLUS ONE (sign-extended, so keep it under 32767):
+//
+//   patch=1,EE,002c332c,word,2c510191   // 400 plays -- needs enlarged tables
