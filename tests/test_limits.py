@@ -450,6 +450,27 @@ class Rates(unittest.TestCase):
         self.assertIn("ENFORCING",
                       limits.RateLimiter(enforce=True).describe())
 
+    def test_an_invalid_pair_is_refused_at_construction(self):
+        """Found by mutation testing, not by reading.
+
+        Buckets are built per connection, so validating only when one is built
+        means an invalid pair starts the server cleanly and then raises inside
+        each connection thread as it arrives -- every client dropping on
+        connect with a configuration banner that looks fine. Deleting the eager
+        check in __init__ left the whole suite passing.
+        """
+        with self.assertRaises(ValueError):
+            limits.RateLimiter(rate=20, burst=0)
+
+    def test_an_invalid_per_address_pair_is_refused_too(self):
+        with self.assertRaises(ValueError):
+            limits.RateLimiter(rate=0, burst=0, ip_rate=60, ip_burst=0)
+
+    def test_a_valid_pair_still_constructs(self):
+        limiter = limits.RateLimiter(rate=20, burst=60, ip_rate=60,
+                                     ip_burst=180)
+        self.assertEqual((limiter.rate, limiter.burst), (20, 60))
+
 
 class Bans(unittest.TestCase):
     def test_strikes_accumulate_to_a_ban(self):

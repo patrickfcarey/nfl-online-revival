@@ -825,6 +825,91 @@ same branch and is deterministic.
 What remains is the last stretch of `backend/__main__.py` -- the call into
 `serve_forever` itself -- and `tlssink.serve`'s accept loop.
 
+## Part 5 -- mutation testing
+
+Coverage records that a line ran. It does not record that anything depended on
+the result, and this project has shipped two defects that were fully covered
+and still wrong: a rate-limit guard that could never fire, and a peak gauge
+wired to the wrong scope. Both had passing tests over the exact lines.
+
+`tools/mutate.py` closes that gap. Change the source in a way that must alter
+behaviour, run the tests, and see whether they fail. A mutant that survives is
+a behaviour nothing checks.
+
+    python3 tools/mutate.py --regressions          # the shipped defects
+    python3 tools/mutate.py --file backend/limits.py
+
+**Regression mode replays the defects this project actually shipped** -- BEQL
+at 0x13, the roster keyed off the scraped `tgId`, the peak gauge summed across
+connections, the replay server's missing function, twelve in all. Each must be
+killed. This is the mode worth running often, because it is a regression suite
+for the *tests*: it pins the ones written to catch a real bug so they cannot
+quietly stop catching it.
+
+**Generated mode** rewrites the syntax tree -- comparison operators, boolean
+connectives, integer constants, returned booleans -- and reports survivors.
+Slower and noisier; survivors need reading rather than fixing, because some are
+equivalent mutants where the change genuinely cannot be observed.
+
+Running only the test modules that exercise a file is what makes this usable at
+all: the full suite takes minutes, so `TEST_MODULES` maps each source to its
+tests and a run takes seconds. A file missing from that map falls back to the
+whole suite, which is correct and slow.
+
+### What the first run found
+
+Twelve regressions, ten killed. Both survivors were real:
+
+* **`eager-rate-validation` survived.** Deleting the eager `TokenBucket` checks
+  from `RateLimiter.__init__` left the whole suite passing -- and that eager
+  check *is* the fix for the "guard that could never fire" bug. Nothing
+  constructed an invalid limiter. The mutation suite found a hole in the fix
+  written to close a hole.
+* **`news-status-tag` was stale**, naming a line that had since been reworded.
+  It applied nothing and reported SURVIVED: a false alarm indistinguishable
+  from a real gap. `tests/test_mutate.py` now checks every catalogue entry
+  against its source in a tenth of a second, so staleness is caught by the
+  suite rather than after a long mutation run.
+
+A generated pass over `backend/metrics.py` then found three more: nothing
+asserted the HTTP status code (any 2xx would have passed, and a scraper wants
+200), nothing pinned the documented default port, and nothing checked that the
+endpoint's threads are daemons -- a non-daemon metrics server turns a clean
+shutdown into a hang whose cause is invisible, because the game service has
+already stopped answering.
+
+### The bytecode cache will poison the repository if you let it
+
+The sharpest thing this exercise turned up was in the tool itself, and it is
+worth knowing about far beyond mutation testing.
+
+Restoring the source is not enough. Python decides a `.pyc` is current by
+comparing the source's `(mtime, size)` -- and every mutation here replaces text
+with text of the *same length*, restored within the *same second*. Both halves
+of that check still match, so the next import gets the mutant's bytecode out of
+`__pycache__` while the file on disk is correct.
+
+The symptom was three tests failing in `recon/mipsdis.py` against a file that
+was byte-for-byte identical to HEAD, with a clean `git status`. Every instinct
+says look at the diff, and the diff is empty. Deleting `__pycache__` fixed it
+instantly and explained nothing until the `(mtime, size)` rule was recalled.
+
+So every write goes through `write_source`, which drops the cached bytecode and
+calls `importlib.invalidate_caches()`, and `_Restorer` does the same and then
+*verifies* the bytes match what it read. Two tests pin it.
+
+The general lesson: **any tool that rewrites source in place and then runs
+something has to invalidate the bytecode cache**, and a same-length edit inside
+one second is exactly the case where the cache silently lies.
+
+### Safety
+
+The tool edits files in place. Every path restores the original in a `finally`
+and again through `atexit`, and it refuses to start if the target has
+uncommitted changes -- a crash mid-run would otherwise take those edits with
+it. Never point it at a working tree you have not committed, and never run two
+mutation passes at once.
+
 Beyond code coverage, three categories no test here can reach:
 
 * **Never exercised by a console.** Chat end to end, `quik`/`chal`/`+ses`, the

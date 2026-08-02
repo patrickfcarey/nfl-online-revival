@@ -9,6 +9,7 @@ and when.
 from __future__ import annotations
 
 import sys
+import threading
 import unittest
 import urllib.request
 from pathlib import Path
@@ -101,6 +102,38 @@ class Exposure(unittest.TestCase):
                                     timeout=5) as response:
             body = response.read().decode()
         self.assertIn("nfl_connections_total 7", body)
+
+    def test_the_response_is_a_200_with_the_prometheus_content_type(self):
+        # Found by mutation testing: nothing asserted the status code, so any
+        # 2xx would have passed and a scraper expects exactly 200.
+        port = self.server.start("127.0.0.1", 0)
+        with urllib.request.urlopen("http://127.0.0.1:%d/" % port,
+                                    timeout=5) as response:
+            self.assertEqual(response.status, 200)
+            self.assertIn("text/plain", response.headers["Content-Type"])
+            self.assertEqual(int(response.headers["Content-Length"]),
+                             len(self.metrics.render().encode()))
+
+    def test_the_documented_default_port_is_the_one_used(self):
+        # The operator notes name 9109; drifting from it silently would leave
+        # a scraper pointed at nothing.
+        self.assertEqual(metrics.DEFAULT_PORT, 9109)
+        self.assertEqual(metrics.DEFAULT_BIND, "127.0.0.1")
+
+    def test_nothing_about_it_can_block_process_exit(self):
+        """Both the listener thread and its handlers must be daemons.
+
+        A diagnostic endpoint that keeps the server alive after a shutdown
+        request would turn a clean stop into a hang, and the reason would be
+        invisible -- the game service would already have stopped answering.
+        """
+        self.server.start("127.0.0.1", 0)
+        self.assertTrue(self.server._httpd.daemon_threads)
+        for thread in threading.enumerate():
+            if thread is threading.current_thread():
+                continue
+            self.assertTrue(thread.daemon or not thread.is_alive(),
+                            "%s is non-daemon" % thread.name)
 
     def test_no_counter_carries_a_source_address(self):
         """Aggregate totals answer every operational question here.
