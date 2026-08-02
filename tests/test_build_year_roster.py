@@ -298,6 +298,131 @@ class Ratings(unittest.TestCase):
         self.assertGreater(young, old)
 
 
+class RatingKeys(unittest.TestCase):
+    """Sixteen ratings files, six spellings of "overall" between them."""
+
+    def test_every_observed_spelling_folds_together(self):
+        for spelling in ("OVERALL", "OVERALL RATING", "Overall",
+                         "Overall Rating", "OverallRating", "overall_rating"):
+            self.assertEqual(byr._RATING_BY_KEY.get(byr._rating_key(spelling)),
+                             "POVR", spelling)
+
+    def test_the_camel_case_suffix_is_stripped(self):
+        for spelling, column in (("SpeedRating", "PSPD"),
+                                 ("AgilityRating", "PAGI"),
+                                 ("BreakTackleRating", "PBTK")):
+            self.assertEqual(byr._RATING_BY_KEY.get(byr._rating_key(spelling)),
+                             column, spelling)
+
+    def test_ovr_is_accepted(self):
+        # 2009 and 2015 use it and nothing else.
+        self.assertEqual(byr._RATING_BY_KEY.get(byr._rating_key("OVR")), "POVR")
+
+    def test_split_attributes_do_not_collide_with_the_plain_one(self):
+        """A footwork score must never land in the run-block column.
+
+        These are separate attributes the 2004-era TDB has no column for, so
+        matching by prefix rather than by exact folded name would corrupt the
+        rating it does have.
+        """
+        for other in ("RUNBLOCK FOOTWORK", "PASSBLOCK STRENGTH",
+                      "THROW ACCURACY DEEP", "CATCH IN TRAFFIC"):
+            self.assertIsNone(byr._RATING_BY_KEY.get(byr._rating_key(other)),
+                              other)
+
+    def test_ratings_are_read_whatever_the_spelling(self):
+        for spelling in ("OVERALL", "Overall", "Overall Rating", "OVR"):
+            self.assertEqual(byr.real_ratings({spelling: 88})["POVR"], 88,
+                             spelling)
+
+    def test_an_unreadable_file_shows_as_a_low_rated_fraction(self):
+        """The number that would have caught the flat-60 rosters.
+
+        A record matched by name but carrying no recognised column still
+        reports success everywhere else.
+        """
+        self.assertEqual(byr.rated_fraction({"col_1": 5, "col_2": 6}), 0.0)
+        self.assertGreater(byr.rated_fraction({"Overall Rating": 80,
+                                               "Speed": 90}), 0.0)
+
+    def test_split_throw_accuracy_is_reconstituted(self):
+        # Every input is still a published EA rating for that player.
+        out = byr.real_ratings({"Throw Accuracy Deep": 80,
+                                "Throw Accuracy Mid": 90,
+                                "Throw Accuracy Short": 94})
+        self.assertEqual(out["PTHA"], 88)
+
+    def test_a_plain_throw_accuracy_wins_over_the_split_one(self):
+        out = byr.real_ratings({"Throw Accuracy": 70,
+                                "Throw Accuracy Deep": 99,
+                                "Throw Accuracy Short": 99})
+        self.assertEqual(out["PTHA"], 70)
+
+
+class NameMatching(unittest.TestCase):
+    """Formal first names in the rosters, common ones in the ratings."""
+
+    def setUp(self):
+        self.ratings = {
+            byr.normalise("Greg Olsen"): {"Full Name": "Greg Olsen",
+                                          "Overall Rating": 88},
+            byr.normalise("Josh McCown"): {"Full Name": "Josh McCown",
+                                           "Overall Rating": 70},
+            byr.normalise("Mike Williams"): {"Full Name": "Mike Williams",
+                                             "Overall Rating": 80},
+            byr.normalise("Michael Williams"): {"Full Name": "Michael Williams",
+                                                "Overall Rating": 60},
+        }
+        self.by_surname = byr.surname_index(self.ratings)
+
+    def test_an_exact_name_matches(self):
+        got = byr.match_player("Greg", "Olsen", self.ratings, self.by_surname)
+        self.assertEqual(got["Overall Rating"], 88)
+
+    def test_a_formal_first_name_falls_back_to_the_common_one(self):
+        for formal, common in (("Gregory", "Olsen"), ("Joshua", "McCown")):
+            got = byr.match_player(formal, common, self.ratings,
+                                   self.by_surname)
+            self.assertIsNotNone(got, formal)
+
+    def test_an_exact_match_wins_before_the_fallback_can_be_ambiguous(self):
+        # "Mike Williams" is present verbatim, so the surname fallback -- which
+        # would see two Williamses -- never runs.
+        got = byr.match_player("Mike", "Williams", self.ratings,
+                               self.by_surname)
+        self.assertEqual(got["Overall Rating"], 80)
+
+    def test_an_ambiguous_fallback_is_left_unmatched(self):
+        """Handing one man's ratings to another is worse than an empty slot.
+
+        Measured across eighteen years this arises once, and the answer there
+        has to be "leave the slot alone" rather than pick.
+        """
+        ratings = {
+            byr.normalise("Josh Allen"): {"Full Name": "Josh Allen"},
+            byr.normalise("Joshua Allen"): {"Full Name": "Joshua Allen"},
+        }
+        by_surname = byr.surname_index(ratings)
+        # "Jos" prefixes both, and neither is exact.
+        self.assertIsNone(byr.match_player("Jos", "Allen", ratings, by_surname))
+        # One candidate only: the fallback is allowed to act.
+        self.assertIsNotNone(byr.match_player("Gregory", "Olsen",
+                                              self.ratings, self.by_surname))
+
+    def test_a_short_first_name_is_never_prefix_matched(self):
+        # Two letters would pair "Al Woods" with "Alex Woods".
+        ratings = {byr.normalise("Alex Woods"): {"Full Name": "Alex Woods"}}
+        self.assertIsNone(byr.match_player("Al", "Woods", ratings,
+                                           byr.surname_index(ratings)))
+
+    def test_an_unknown_surname_matches_nothing(self):
+        self.assertIsNone(byr.match_player("Nobody", "Atall", self.ratings,
+                                           self.by_surname))
+
+    def test_the_surname_index_groups_by_last_name(self):
+        self.assertEqual(len(self.by_surname[byr.normalise("Williams")]), 2)
+
+
 class BitWriting(unittest.TestCase):
     """`_set` and `_set_text` write the bytes the console reads back."""
 

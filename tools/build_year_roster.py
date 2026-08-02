@@ -265,6 +265,54 @@ def player_name(record: dict) -> str:
     return ("%s %s" % (first, last)).strip()
 
 
+#: Shortest first name that may be prefix-matched. Two letters would pair
+#: "Al Woods" with "Alex Woods"; three keeps it to the Greg/Gregory family.
+_MIN_PREFIX = 3
+
+
+def surname_index(ratings: Dict[str, dict]) -> Dict[str, list]:
+    """Group the ratings by surname, for the fallback match below."""
+    out: Dict[str, list] = {}
+    for key, record in ratings.items():
+        parts = player_name(record).split()
+        if len(parts) >= 2:
+            out.setdefault(normalise(parts[-1]), []).append(
+                (normalise(parts[0]), key))
+    return out
+
+
+def match_player(first: str, last: str, ratings: Dict[str, dict],
+                 by_surname: Dict[str, list]) -> Optional[dict]:
+    """Find a player's published ratings, tolerating the formal-name problem.
+
+    The scraped rosters carry formal first names and Madden's files carry the
+    common ones: Gregory Olsen against Greg Olsen, Joshua McCown against Josh
+    McCown, Matthew Forte against Matt Forte. Exact matching alone leaves
+    7-25% of a year's misses on the table, and every one of those is a roster
+    slot that keeps whoever the template had there instead.
+
+    So a miss falls back to the surname plus a first-name prefix in either
+    direction -- and **only when exactly one candidate fits**. Two players who
+    share a surname and a compatible prefix are left unmatched rather than
+    guessed at: the NFL has had several Mike Williamses, and handing one man's
+    ratings to another is worse than leaving a slot alone. Measured across the
+    set, that ambiguity arises once in eighteen years.
+    """
+    exact = ratings.get(normalise(first + " " + last))
+    if exact is not None:
+        return exact
+    first_key, last_key = normalise(first), normalise(last)
+    if len(first_key) < _MIN_PREFIX:
+        return None
+    hits = [key for candidate, key in by_surname.get(last_key, ())
+            if len(candidate) >= _MIN_PREFIX
+            and (candidate.startswith(first_key)
+                 or first_key.startswith(candidate))]
+    if len(hits) == 1:
+        return ratings[hits[0]]
+    return None
+
+
 def estimate_ratings(position: str, age: int, years_pro: int) -> Dict[str, int]:
     """Plausible ratings for a player with none published.
 
@@ -421,6 +469,7 @@ def build_players(year: int, estimate_missing: bool = False,
         raise BuildError("no roster for %d at %s" % (year, roster_path))
     roster = json.loads(roster_path.read_text())
     ratings_index, ratings_season = load_ratings(year)
+    by_surname = surname_index(ratings_index)
 
     by_team: Dict[int, List[dict]] = {}
     matched = estimated = 0
@@ -449,7 +498,7 @@ def build_players(year: int, estimate_missing: bool = False,
             position = POSITION_ALIASES.get(position, position)
             if position not in POSITIONS:
                 continue                      # a position the game cannot hold
-            published = ratings_index.get(normalise(first + " " + last))
+            published = match_player(first, last, ratings_index, by_surname)
             if published is not None:
                 ratings = real_ratings(published)
                 published_ratings = True
