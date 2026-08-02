@@ -254,6 +254,14 @@ class RateLimiter:
                  ip_rate: float = DEFAULT_IP_RATE,
                  ip_burst: float = DEFAULT_IP_BURST,
                  enforce: bool = False) -> None:
+        # Validate eagerly by building throwaway buckets. The real ones are
+        # created per connection and per address, so without this an invalid
+        # pair -- a positive rate with a zero burst -- starts the server
+        # cleanly and then raises inside each connection's thread as it
+        # arrives. The symptom would be every client dropping on connect with
+        # nothing wrong in the configuration banner.
+        TokenBucket(rate, burst)
+        TokenBucket(ip_rate, ip_burst)
         self.rate = rate
         self.burst = burst
         self.ip_rate = ip_rate

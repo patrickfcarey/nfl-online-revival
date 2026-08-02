@@ -88,7 +88,9 @@ def _raw_member(path: str, name: str) -> bytes:
 
 def read_word(path: str, address: int = SLOT_ADDRESS) -> int:
     """One little-endian 32-bit word out of the savestate's EE memory."""
-    if not 0 <= address < EE_SIZE - 4:
+    # <= rather than <: EE_SIZE - 4 is the last address a whole word fits at,
+    # and rejecting it put the final word of RAM out of reach.
+    if not 0 <= address <= EE_SIZE - 4:
         raise ReadError("address %#x is outside EE RAM" % address)
     try:
         with zipfile.ZipFile(path) as archive:
@@ -139,15 +141,29 @@ def _read_word_zstd(path: str, address: int) -> bytes:
     writer = threading.Thread(target=feed, daemon=True)
     writer.start()
 
-    remaining = address
-    while remaining:
-        chunk = process.stdout.read(min(remaining, 1 << 20))
-        if not chunk:
-            raise ReadError("EE memory ended before %#x" % address)
-        remaining -= len(chunk)
-    raw = process.stdout.read(4)
-    process.stdout.close()
-    process.wait(timeout=30)
+    try:
+        remaining = address
+        while remaining:
+            chunk = process.stdout.read(min(remaining, 1 << 20))
+            if not chunk:
+                raise ReadError("EE memory ended before %#x" % address)
+            remaining -= len(chunk)
+        raw = process.stdout.read(4)
+    finally:
+        # Including on the raise above. Without this the decompressor is left
+        # running with an open pipe on every short read, and a tool that is
+        # normally invoked several times in a row over one savestate leaks a
+        # process each time.
+        try:
+            process.stdout.close()
+        except OSError:
+            pass
+        if process.poll() is None:
+            process.kill()
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:      # pragma: no cover - zstd hung
+            pass
     return raw
 
 

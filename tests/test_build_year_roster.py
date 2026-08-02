@@ -20,7 +20,10 @@ That is how Derrick Henry ended up a Viking.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import os
 import struct
 import sys
 import tempfile
@@ -622,6 +625,121 @@ class BuildPlayers(unittest.TestCase):
         with self.assertRaises(byr.BuildError) as caught:
             byr.build_players(1999, team_ids={})
         self.assertIn("no roster for 1999", str(caught.exception))
+
+
+class Cli(unittest.TestCase):
+    """One command, from a retail disc file to something servable."""
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        (self.repo / "data" / "canonical").mkdir(parents=True)
+        (self.repo / "data" / "raw" / "madden-ratings").mkdir(parents=True)
+        self._original = byr.DATA_REPO
+
+        league = make_league(teams=(1, 2), per_team=3, pool=2,
+                             abbreviations={1: "CHI", 2: "GB"})
+        self.league = league
+        # A TERF archive whose member 0 is the league database, so --template
+        # can be pointed at a disc file directly.
+        dir_size = 8 + 8
+        header = bytearray(0x40)
+        header[0:4] = b"TERF"
+        struct.pack_into("<I", header, 0x04, 0x40)
+        struct.pack_into("<H", header, 0x0E, 1)
+        directory = bytearray(dir_size)
+        directory[0:4] = b"DIR1"
+        struct.pack_into("<I", directory, 4, dir_size)
+        struct.pack_into("<II", directory, 8, 0, len(league))
+        self.template = Path(tempfile.mkstemp(suffix=".DAT")[1])
+        self.template.write_bytes(bytes(header) + bytes(directory) + league)
+        self.addCleanup(os.unlink, self.template)
+
+        self.raw = Path(tempfile.mkstemp(suffix=".dat")[1])
+        self.raw.write_bytes(league)
+        self.addCleanup(os.unlink, self.raw)
+
+        (self.repo / "data" / "canonical" / "roster-2023.json").write_text(
+            json.dumps({"teams": [
+                {"abbreviation": "CHI", "tgId": 5, "players": [
+                    {"name": {"first": "Justin", "last": "Fields"},
+                     "position": "QB", "jerseyNumber": 1, "age": 25,
+                     "yearsPro": 3,
+                     "measurables": {"heightIn": 75, "weightLb": 228}}]},
+                {"abbreviation": "GB", "tgId": 6, "players": [
+                    {"name": {"first": "Jordan", "last": "Love"},
+                     "position": "QB", "jerseyNumber": 10, "age": 26,
+                     "yearsPro": 4,
+                     "measurables": {"heightIn": 76, "weightLb": 219}}]}]}))
+        (self.repo / "data" / "raw" / "madden-ratings" /
+         "madden24-2023.json").write_text(json.dumps({"teams": {"All": [
+             {"Full Name": "Justin Fields", "Overall Rating": 88},
+             {"Full Name": "Jordan Love", "Overall Rating": 85}]}}))
+        self.output = Path(tempfile.mkstemp(suffix=".dat")[1])
+        os.unlink(self.output)
+
+    def tearDown(self):
+        byr.DATA_REPO = self._original
+        if self.output.exists():
+            os.unlink(self.output)
+
+    def _run(self, *extra):
+        argv = ["-o", str(self.output), "--year", "2023",
+                "--data-repo", str(self.repo)] + list(extra)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer), \
+                contextlib.redirect_stderr(buffer):
+            code = byr.main(argv)
+        return code, buffer.getvalue()
+
+    def test_a_template_is_unpacked_and_written(self):
+        code, output = self._run("--template", str(self.template))
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.output.stat().st_size, len(self.league))
+        self.assertIn("roster CSUM", output)
+
+    def test_a_raw_league_database_works_too(self):
+        code, output = self._run(str(self.raw))
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.output.stat().st_size, len(self.league))
+
+    def test_the_players_reach_the_file(self):
+        self._run(str(self.raw))
+        table = madden_tdb.Database(self.output.read_bytes(), 0).table("PLAY")
+        field = table.fields["PLNA"]
+        start, width = field.offset_bits // 8, field.bits // 8
+        names = {table.record(i)[start:start + width].split(b"\x00")[0].decode()
+                 for i in range(table.record_count)}
+        self.assertIn("Fields", names)
+        self.assertIn("Love", names)
+
+    def test_neither_source_nor_template_is_refused(self):
+        code, output = self._run()
+        self.assertEqual(code, 2)
+        self.assertIn("either a raw LEAG database or --template", output)
+
+    def test_a_container_passed_as_a_raw_database_is_refused(self):
+        # The console requires 0x08004244; a TERF header is not that.
+        code, output = self._run(str(self.template))
+        self.assertEqual(code, 2)
+        self.assertIn("not a raw TDB", output)
+        self.assertFalse(self.output.exists())
+
+    def test_an_unreadable_source_is_refused(self):
+        code, _output = self._run("/nonexistent/LEAG.dat")
+        self.assertEqual(code, 2)
+
+    def test_a_year_with_no_scraped_roster_is_refused(self):
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer), \
+                contextlib.redirect_stderr(buffer):
+            code = byr.main([str(self.raw), "-o", str(self.output),
+                             "--year", "1999", "--data-repo", str(self.repo)])
+        self.assertEqual(code, 2)
+        self.assertIn("no roster for 1999", buffer.getvalue())
+
+    def test_the_reported_ratings_are_all_published(self):
+        _code, output = self._run(str(self.raw))
+        self.assertIn("all 2 players carry the ratings EA published", output)
 
 
 if __name__ == "__main__":

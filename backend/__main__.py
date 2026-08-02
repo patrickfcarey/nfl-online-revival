@@ -346,7 +346,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             except Exception as exc:            # not a LEAG database
                 if not args.quiet:
                     print("roster: cannot read a checksum out of the payload "
-                          "(%s); announcing --roster-db's instead" % exc) if args.roster_crc is None else args.roster_crc
+                          "(%s); announcing --roster-db's instead" % exc)
         if args.roster_crc is not None and not args.quiet:
             print("roster CRC OVERRIDDEN to %d -- the console will reject the "
                   "download at the checksum. Diagnostic only."

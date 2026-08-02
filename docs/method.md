@@ -763,13 +763,45 @@ Both suites were checked by mutation rather than by passing: reintroducing the
 0x13 bug fails three tests, trusting the scraped `tgId` over the game's TEAM
 table fails two, and dropping the `PWGT` −160 offset fails two.
 
-### Still uncovered, deliberately or otherwise
+The remaining four zero-coverage modules were closed the same day, along with
+`backend/__main__.py`, which was at 0% while holding every guard that stops a
+misconfigured server from looking like a working one.
 
-`tools/fake_console.py` (the emulated client -- untested test tooling proves
-nothing), `tools/pine.py`, `tools/patch_iso_roster.py` and
-`tools/read_roster_checksum.py`. The middle two touch a live game and a 3.2 GB
-ISO respectively, and `patch_iso_roster.py` has already failed silently once by
-exiting 0 having patched nothing.
+Measured with `coverage.py`, not by counting imports -- a module imported by one
+test is not a module that is tested:
+
+    python3 -m coverage run --source=backend,tools,recon -m unittest discover -s tests
+    python3 -m coverage report --sort=cover
+
+**686 tests, 84% of statements.** Everything under `backend/` and `tools/` is
+above 80% except `backend/rosterfile.py` and `backend/protocol.py`, both at 81%.
+
+Five bugs surfaced from writing those tests rather than from reading the code:
+
+* `read_roster_checksum.py` rejected the last word of EE RAM (`< EE_SIZE - 4`
+  where the last valid address *is* `EE_SIZE - 4`), and leaked a `zstd`
+  subprocess on every short read.
+* `patch_iso_roster.py` crashed in its summary line, which sits outside every
+  `try` -- so a roster whose tables it could not walk produced a traceback
+  *after* the image had already been written and verified. A completed write
+  reported as a failure invites running it again.
+* `backend/limits.py` validated a rate/burst pair only when a bucket was
+  built, and buckets are built per connection -- so `--rate 20 --rate-burst 0`
+  started cleanly and then killed every client as it arrived. The CLI guard
+  written to catch it could not fire.
+* `backend/__main__.py` had a stray conditional expression wrapping a `print`,
+  which suppressed a roster diagnostic whenever `--roster-crc` was passed.
+
+### Still uncovered, and why
+
+The `recon/` capture tools: `easerver.py` (34%), `tlssink.py` (55%),
+`sinkd.py` (62%), `__main__.py` (62%). Their parsers and reply tables are
+covered; what is not is the `serve()` loops, which bind listeners and run until
+interrupted. Those are exercised by using them, and they are diagnostic
+instruments rather than anything a console depends on.
+
+The same is true of the last stretch of `backend/__main__.py`: what remains is
+the call into `serve_forever` itself.
 
 Beyond code coverage, three categories no test here can reach:
 

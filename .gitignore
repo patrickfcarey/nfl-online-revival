@@ -14,3 +14,7 @@ captures/*
 *.pcap
 *.pcapng
 *.jsonl
+
+# coverage.py
+.coverage
+htmlcov/
