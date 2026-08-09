@@ -34,9 +34,9 @@ value that lives in RAM, not in the file image.
 
 This document supersedes `docs/protocol-notes.md` wherever the two disagree.
 Two corrections are called out where they occur: an internal tournament tag
-transcribed as `mist` is actually `imst` (§ Status word and error tags), and
-the previously cited address for the client's 60-second receive deadline does
-not hold the constant in question (§ Transport limits).
+transcribed as `mist` is actually `imst` (§ The status word → Error tables),
+and the previously cited address for the client's 60-second receive deadline
+does not hold the constant in question (§ Transport limits).
 
 ---
 
@@ -157,7 +157,7 @@ the field is read this way, not as an integer:
   following `bne v0, zero` aborts on *any* non-zero value — it never compares
   against a specific error, only against zero.
 - `0x004e1da8`–`0x004e1e3c` is a sibling callback, gated on the reply's
-  *type* being `mesg` (compared at `0x004e1dec`–`0x004e1f8`, i.e. this is
+  *type* being `mesg` (compared at `0x004e1dec`–`0x004e1df8`, i.e. this is
   chat-specific). At `0x004e1e00`, `lw v1, 8(a0)` loads the same field and
   compares it against two constructed literals: `0x75757372` (`"uusr"`) and
   `0x696e676d` (`"ingm"`) — plainly named error tags, not sentinel integers.
@@ -194,16 +194,16 @@ below is the file order:
 
 | Tag | Code | Tag | Code | Tag | Code | Tag | Code |
 |---|---|---|---|---|---|---|---|
-| `-dif` | 0x34 | `-bsy` | 0x01 | `dupl` | 0x10 | `many` | 0x1a |
-| `-dev` | 0x35 | `-con` | 0x2d | `mail` | 0x12 | `pmal` | 0x1b |
-| `-cfg` | 0x2c | `-???` | 0x36 | `pass` | 0x13 | `born` | 0x1e |
-| `-ini` | 0x03 | `-dns` | 0x37 | `filt` | 0x14 | `gend` | 0x1f |
-| `-ton` | 0x02 | `-ath` | 0x2e | `tosa` | 0x15 | `spam` | 0x20 |
-| `maut` | 0x0d | `miss` | 0x0e | `blak` | 0x16 | `ipas` | 0x21 |
-| `imst` | 0x0f | `maxp` | 0x11 | `logn` | 0x17 | `inam` | 0x1d |
-| `iper` | 0x19 | | | `elen` | 0x1c | `tooy` | 0x23 |
-| `uusr` | 0x38 | `dete` | 0x39 | `lock` | 0x3a | `rsrv` | 0x3b |
-| `auth` | 0x3c | `neml` | 0x3d | `cdev` | 0x3e | | |
+| `-dif` | 0x34 | `-dev` | 0x35 | `-cfg` | 0x2c | `-ini` | 0x03 |
+| `-ton` | 0x02 | `-bsy` | 0x01 | `-con` | 0x2d | `-???` | 0x36 |
+| `-dns` | 0x37 | `-ath` | 0x2e | `maut` | 0x0d | `miss` | 0x0e |
+| `imst` | 0x0f | `maxp` | 0x11 | `dupl` | 0x10 | `mail` | 0x12 |
+| `pass` | 0x13 | `filt` | 0x14 | `tosa` | 0x15 | `blak` | 0x16 |
+| `logn` | 0x17 | `iper` | 0x19 | `many` | 0x1a | `pmal` | 0x1b |
+| `born` | 0x1e | `gend` | 0x1f | `spam` | 0x20 | `ipas` | 0x21 |
+| `inam` | 0x1d | `elen` | 0x1c | `tooy` | 0x23 | `uusr` | 0x38 |
+| `dete` | 0x39 | `lock` | 0x3a | `rsrv` | 0x3b | `auth` | 0x3c |
+| `neml` | 0x3d | `cdev` | 0x3e | | | | |
 
 `handlers.py`'s `ERR_*` constants use eleven of these
 (`dupl inam elen mail pass tosa born gend tooy many miss`); `spam` and
@@ -301,9 +301,11 @@ tag with an arbitrary body for exactly this case.
 This is worth documenting in full because it explains *why* both wrong
 readings fail differently, not just that they do.
 
-A single client-side function services every `news` request:
-`0x0034f2a0(a0, a1, a2=NAME-buffer, a3=..., t0=...)`. Its default return
-value is `4` (set at `0x0034f2cc`, before anything else runs). It first
+A single client-side function is the shared path every `news` category
+request funnels through: `0x0034f2a0`, called with the literal type `news`
+(`0x6e657773`, built at `0x0034f4c4`/`0x0034f4d4`) in `a2` — the other
+parameters' exact roles were not fully traced this session. Its default
+return value is `4` (set at `0x0034f2cc`, before anything else runs). It first
 calls a check function at `0x0034eb70`; if that reports "already have a
 current answer," it returns `4` immediately without sending anything. Only
 otherwise does it build a request record — at a **fixed global address**,
@@ -374,7 +376,7 @@ walks the list; the comparison at `0x00446d20` (`beq v0, s0`, where `v0` is
 the list node's registered type and `s0` is the requested type) is the
 match. If that fails, the code falls through to test whether the *requested*
 type is the literal `DQUE` (`0x44515545`, built and compared at
-`0x00446d24`–`0x0044602c` [sic, see next line] `0x00446d2c`) — and if so,
+`0x00446d24`–`0x00446d2c`) — and if so,
 treats it as a match regardless of what the node actually holds. **The
 wildcard is on the asking side, not the registered side**: a handler waiting
 for `DQUE` accepts anything; a handler registered under some other type is
@@ -384,12 +386,12 @@ wildcard receiver silently deaf. The registration counterpart is
 enqueues a pending `ping` expectation — see below).
 
 **A second, global pending-request ring**, entirely independent of any one
-connection: a fixed array at `gp + 15128` (i.e. `0x00609308`-relative — the
-address is gp-relative in code, not a fixed absolute one), stride 24 bytes,
-with a count byte at `gp + 15133` and an active flag at `gp + 15134`.
-`0x004df098` looks a request up in this ring; the match is an `xor`-and-test
-at exactly `0x004df0e0`. This is the mechanism the `news` completion code
-above rides on.
+connection: a fixed array whose base pointer lives at `gp + 15128`
+(`0x00609208`, with `gp = 0x006056f0`), stride 24 bytes per record, with a
+count byte at `gp + 15133` (`0x0060920d`) and an active flag at `gp + 15134`
+(`0x0060920e`). `0x004df098` looks a request up in this ring; the match is
+an `xor`-and-test at exactly `0x004df0e0`. This is the mechanism the `news`
+completion code above rides on.
 
 **Consequently: one reply per request, exact type, in order, and nothing
 pops the head on a timeout except one type.** An extra, wrong, mistyped, or
@@ -406,10 +408,11 @@ useful to say yet.
 **The one exception is `ping`** (not `~png` — see next section; this is the
 client's own outbound latency probe, a different type entirely). Its pending
 entries carry a deadline: registration goes through `0x00448340`, which
-first checks the connection's state against `conn`/`idle`/`auth`/`acct`
-(mirroring the same open-vs-established distinction `handlers.py`'s
-`OPEN_STATES` encodes), then enqueues type `ping` (`0x70696e67`, built at
-`0x004483c8`/`0x004483dc`) via `0x00446c08` and stores a deadline —
+first requires the connection's state to be one of four values — `conn`,
+`idle`, `auth`, `acct`, each built and compared in turn at `0x00448344`–
+`0x004483a4`, falling through to an early exit if none match — then enqueues
+type `ping` (`0x70696e67`, built at `0x004483c8`/`0x004483dc`) via
+`0x00446c08` and stores a deadline —
 `now() + timeout` — at the new record's `+12`, exactly at `0x00448404`. The
 timeout is a caller-supplied parameter, not a constant baked into this
 function; its one actual value traces to the function's single call site,
