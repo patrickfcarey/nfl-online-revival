@@ -63,6 +63,7 @@ New to the repo? Read in this order:
 | `press-and-routes.md` | the jam contest, whether LBs can press, and what governs route running (#20/#20b/#21) |
 | `ai-play-calling.md` | the small play pool, the steep favourite, and the missing plan (#18) |
 | `fb-wr-blocking.md` | why the FB and the slot WR block nobody — a corner in coverage is not a legal target (#15) |
+| `fact-check-2026-08.md` | **read before patching** — eight verification passes over every doc here; what survived and what did not |
 
 **Forward work**:
 
