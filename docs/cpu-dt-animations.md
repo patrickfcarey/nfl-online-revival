@@ -17,11 +17,12 @@ scores shedder vs blocker, then plays an animation chosen by *who won*:
 
 * **Blocker score** = pass-block or run-block rating (by play phase) +
   Strength/3 + move-type terms. It receives **no difficulty, slider, or
-  `ptrk` modifier** — but it *is* modified by geometry: `0x001a69a0` /
-  `0x001a69e4` apply up to ±50% from the angle between the block and the
-  carrier direction. (An earlier version of this doc said the blocker's
-  score was untouched "in either direction"; that is true only of the
-  difficulty/slider/`ptrk` family.)
+  `ptrk` modifier** — but it *is* modified by geometry, and heavily:
+  `0x001a69a0` / `0x001a69e4` scale it from **1.0 down to 0.25** (a 4×
+  swing, not the ±50% this doc first claimed) based on the angle the
+  rusher has won. That is the engine's **leverage** model and it is the
+  strongest single term in the contest — see `pass-rush.md`. The bull
+  rush (move 6) is exempt from it.
 * **Shedder score** = Strength + move-type terms, then a ×4.0 multiply
   and a **second difficulty scaler** (`0x00153400`, one caller, keyed on
   the defense side: ×0.333 / ×0.667 / ×1.0 / ×1.333 for Rookie / Pro /
@@ -38,10 +39,14 @@ scores shedder vs blocker, then plays an animation chosen by *who won*:
   `B = RandInt(0, blockScore)`, shedder wins iff `B < A`. Not a threshold
   — a genuine contested roll.
 * **Animation** = `0x001a7070(win, moveType)` returns a record; win and
-  lose point at different ID sets. Pass-play win IDs 62/63/122/123/126/
-  127/130 (shed/swim/rip/club), lose IDs 120/121/124/125/128/129/131
-  (driven back / pancaked). The human sees his DT play the lose set; the
-  CPU DT plays the win set — because the CPU's score is inflated.
+  lose point at different ID sets. Win IDs 62/63/122/123/126/127/130
+  (shed/swim/rip/club), lose IDs 120/121/124/125/128/129/131 (driven
+  back / pancaked). The human sees his DT play the lose set; the CPU DT
+  plays the win set — because the CPU's score is inflated.
+  **Correction (see `pass-rush.md`): the two tables are swapped in this
+  doc's original text — `0x00526668` is the RUN table and `0x00526710`
+  is the PASS table.** The records are also `0xFFFF`-terminated fallback
+  chains, not single IDs.
 
 ## Why it is not a hard gate (the census)
 
@@ -131,6 +136,10 @@ Recommended: (1) alone for the default-uplift pnach.
   contest driver here).
 * Effective ratings are the 0–100 Madden rating × 2.55 on a 0–255 scale
   (proven: the STR>65 move-4/5 gate compares against 165.75 = 65×2.55).
+* The `+0x14` comparison this doc called a "leverage test" is actually
+  an **engagement-profile advantage test** against a hidden
+  finesse/power axis pair — see `pass-rush.md`. The real leverage model
+  is the geometry term above.
 * Conditional-move hazards in this chain that the first version did not
   flag: `0x001a6adc`/`0x001a6ae0` (`movz`, the score clamps in the
   contest) and `0x001a7218` (`movz`, the move-4↔5 select).

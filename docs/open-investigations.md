@@ -378,27 +378,39 @@ checking whether WR/FB run the same state 47 path or a different one.
 
 ## 16. Pass rush: finesse vs power moves, leverage and gap control
 
-> Pass rush. Finesse vs power moves. Leverage and gap control.
-> Run-block block-shedding.
+> "Pass rush. Finesse vs power moves. Leverage and gap control.
+> Run-block block-shedding."
 
-**Substantially anchored already** (`cpu-dt-animations.md`): the shed
-contest takes a **moveType 0–6**, and the families are already visible —
-moves 0–3 add AGI to both sides (the *finesse* family), moves 4–5 require
-effective Strength > 65 and are gated behind a 50% roll (the *power*
-family), move 6 is the default. Move selection is `0x001a6c98`
-(`RandomInt`, remapped by bearing/geometry) for the AI, and pad-button
-driven for the human.
+**Status: RESOLVED — `pass-rush.md`.** All four parts answered:
 
-**What remains:** (a) name each moveType against its animation IDs — the
-tables at `0x00526668`/`0x00526710` are dumped, so this is mostly
-labelling; (b) whether *leverage/gap* is modelled at all, or whether the
-±50% geometry term on the blocker's score is the entire representation of
-leverage; (c) how move selection is weighted — currently it looks
-random-plus-geometry, with no rating input, which would explain why pass
-rush feels undifferentiated between players.
+* **Finesse vs power is real** — and richer than expected. Beyond the
+  move families (0–3 finesse, 4–5 power, 6 bull rush), there is a hidden
+  **three-axis rating profile** stamped per engagement: a POWER axis
+  (block/tackle + STR + **weight**) and a FINESSE axis (+ AWR + AGI),
+  with finesse moves testing one, power moves testing both, and the bull
+  rush testing power only. `cpu-dt-animations.md` had mislabelled this a
+  "leverage test". Also identified: `player+0xAEC` is **weight**, the
+  power currency. A third "overall" axis is computed and **never read** —
+  a dead field and a free hook.
+* **Leverage is real and dominant** — a 4× swing (1.0 → 0.25) on the
+  blocker's score from the angle the rusher has won. Dwarfs every rating
+  term. The bull rush is exempt.
+* **Gap control does not exist.** A lineman gets a frozen (angle,
+  distance) rush lane from the play data, anchored at the snap, with no
+  gap identity, no line-alignment reference and no re-fit.
+* **Run vs pass shedding is one system** with the blocker's rating
+  swapped and one extra animation clip.
 
-**Status: leads, 2004-native, cheap** — much of this is labelling work on
-tables we already have.
+**Why it feels undifferentiated — two independent causes:** AI move
+choice reads **no ratings at all** (uniform random plus a side remap;
+census-proven), and the contest **saturates**, so once the multipliers
+push the shedder's score well above the blocker's, rating changes stop
+moving the outcome.
+
+Fix candidates run from one-word (widen the STR-65 power gate, make the
+bull rush respect leverage, make attempt rate depend on a rusher rating
+instead of tackle) to a cave (rating-weighted move selection — the
+headline ask).
 
 ## 17. Punter placement logic (the coffin corner)
 
@@ -498,6 +510,9 @@ rather than a comparison. The contest clamps scores to zero
 term negative produces a player who cannot win — or perhaps cannot even
 engage, which would explain the 40-rated protector making no contact at
 all.
+
+**Confirmed thresholds so far:** the power-move gate at **STR 65**
+(`pass-rush.md`, three single-reader constants), and:
 
 **First confirmed finding from another lane:** punter accuracy (PKAC)
 has a **forgiveness dead-zone** whose useful band is rating **70–100** —

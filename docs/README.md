@@ -54,6 +54,7 @@ New to the repo? Read in this order:
 | `lead-blocker-targeting.md` | pulling/lead blockers target wrong, and get hung up on the line (#5) |
 | `cpu-dt-animations.md` | the CPU appears to have pass-rush animations the human never gets (#9) |
 | `punt-logic.md` | punters never coffin-corner (#17) — the logic exists and is gated off |
+| `pass-rush.md` | finesse vs power, leverage, and the absence of gap control (#16) |
 
 **Forward work**:
 
