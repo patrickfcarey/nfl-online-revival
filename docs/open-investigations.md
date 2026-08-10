@@ -402,20 +402,36 @@ tables we already have.
 
 ## 17. Punter placement logic (the coffin corner)
 
-> I can set 20/20 punt power and accuracy and they never coffin-corner
-> me. They drill touchbacks and are happy about it. At 20/20 accuracy
-> they don't even try to drop it inside the 15 or 10 for a bounce.
+> "I can put 20/20 punt power and accuracy and they never want to coffin
+> corner me. They will often just drill touchbacks... they don't even try
+> to drop the ball inside the 15 or 10 and get a bounce."
 
-Discrete and well-bounded. We know the two punt sliders' consumers
-(`0x001448e8` length, `0x001449b8` accuracy — the latter scales an *aim
-error* magnitude), so the sliders affect **execution**. The question is
-about **intent**: what aim point does the punter choose, and does field
-position enter it at all? If the aim point is always "max distance" then
-no accuracy slider can ever produce a coffin corner, which matches the
-report exactly.
+**Status: RESOLVED — `punt-logic.md`.** The hypothesis (that no
+coffin-corner logic exists) is **refuted** — but the complaint is right.
+A real ballistic coffin-corner solver exists at `0x001598c0`: it computes
+flight time, compensates for wind, aims one yard outside the sideline,
+and clamps the landing to the 1-yard line. It is gated behind four
+conditions that must all pass — **CPU kicking side** (a human punter can
+never reach it), kick type must be punt, ball beyond the punting team's
+own 40, **and a 25% coin flip**. Everything else takes a default path of
+three random numbers with **no field-position input at all** — the AI
+punter swings as hard from the opponent's 35 as from his own 10, while
+the field-goal arm ten instructions away *does* read field position.
 
-**Status: open, 2004-native, small and self-contained** — a good
-candidate for a quick win.
+Why the accuracy slider never helps: on the coffin path it is
+**overwritten and does nothing**; on the default path there is no aim
+point to sharpen. Punter ratings affect magnitude and noise only — **a
+95-accuracy and a 60-accuracy punter choose the same aim point** — and
+PKAC has a dead zone below rating 70 where every punter is identical
+(logged for #19).
+
+**Fixes are one-word each**, because the logic is already there: raise
+the 25% to always (`0x0015a4bc`), aim for the 10 instead of the 1
+(`0x00159a18`, 49.0 → 40.0), widen the field-position band
+(`0x0015a4d4`), and optionally aim *inside* the sideline for a bounce
+(the ±27.6667 pool words). A genuine feature, by contrast, would be
+field-position-aware punt *power* — a code-cave project reusing the FG
+solver's iterative pattern.
 
 ## 18. AI play calling: the algorithm, situational contradictions, and the small play pool
 
@@ -482,6 +498,12 @@ rather than a comparison. The contest clamps scores to zero
 term negative produces a player who cannot win — or perhaps cannot even
 engage, which would explain the 40-rated protector making no contact at
 all.
+
+**First confirmed finding from another lane:** punter accuracy (PKAC)
+has a **forgiveness dead-zone** whose useful band is rating **70–100** —
+below 70, every punter behaves identically (`punt-logic.md`). That is a
+threshold created by a clamp on a curve, not by an `if`, which is exactly
+the pattern this entry warns about.
 
 **Status: open, 2004-native, in progress (Lane V).** High value: the
 answer applies to every other question in this ledger.
