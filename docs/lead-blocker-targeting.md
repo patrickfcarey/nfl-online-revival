@@ -50,72 +50,78 @@ behavior, not the current behavior:
    (see the hang-up section) — full protection needs the capture
    exemption below.
 
-## The one-paragraph diagnosis
+## What is known, and what is not
 
-Blocking is not run by a route-aware or threat-ranked defender selector.
-A **single global per-frame engagement manager** (`0x001f7298`, called from
-the gameplay tick, live phases 3/4) pairs a blocker to a defender **purely
-on proximity**, holds the pairing for a **block-rating-scaled countdown
-(~15–30 frames)**, and on contact writes a mutual locomotion lock-in into
-both players. There is **no already-engaged dedup** and **Awareness is
-never consulted** — selection is proximity plus a rating timer, never
-correctness. Whether the engagement also *overrides the blocker's route*
-was asserted in the first version of this doc and is now **unproven**: the
-committed bearing/speed/facing are staged in the engagement record
-(`self+0x404/0x40C/0x410`) and the writer of those fields has not been
-walked (see the correction below). So the confirmed defects are wrong
-selection and no dedup; route-override is a suspicion, not a finding.
+This doc had to be rewritten once. The first version told a single tidy
+story — "the blocker abandons his route and drives at the defender's
+current position" — that rested on misreading one register. An
+adversarial pass removed that claim. What follows separates what survived
+from what is still open, because the open part is the part the fix spec
+depends on.
 
-## Mechanism (evidence)
+### Known: target SELECTION is broken (verified twice)
 
-Blocking is layered on top of the 93-state machine, which drives only the
-blocker's *pre-engagement* locomotion (it follows its play-authored pull
-path as an unengaged player, engagement kind 1 at `player+0x3E0`).
-Everything about who-to-block is the global manager's, keyed by the
-engagement kind:
+* **Pairing is proximity-only.** The global per-frame engagement manager
+  (`0x001f7298`, live phases 3/4) runs choosers `0x001f00d8`/`0x001f06a0`
+  (frame-parity selected) which take a player's *pre-existing pursuit
+  target* and consummate a mutual engagement once distance thresholds are
+  met: `SetTarget(self, target, 5)` + `reverse(target, self, 5)` at
+  `0x001f0600`. **No threat ranking, no route awareness, no play-assigned
+  defender id.**
+* **No already-engaged dedup.** The target's engagement kind
+  (`target+0x3E0`) is never read before the pairing is formed — verified
+  by field census over both choosers. Two blockers can take the same
+  defender.
+* **Awareness is never consulted** anywhere in the block-target path.
+  Block rating (PPBK/PRBK, attrs 11/12) only sets a timer.
+* **Re-selection already happens on a cadence**: kind-4 is stamped with
+  `+0x432 = 30 − blockRating/16` frames at `0x001ef820`, so a blocker
+  re-decides every ~15–30 frames. The owner's "retarget every couple of
+  frames" premise needs no new machinery — only a better criterion.
+* **A separate designator picks *which teammate* is the lead blocker**
+  (class-2 manager `0x00242070`, by distance to the ball carrier, on a
+  60-frame timer). That chooses the blocker, not the defender he hits.
 
-* **kind 4** = blocker approaching an assigned defender (pre-contact); the
-  steering pass `0x001f1c20` processes only kind-4 players.
-* **kinds 5/6** = mutual block engagement (contact/drive).
+### Open: what actually MOVES an approaching blocker
 
-**Target pairing is proximity-only.** The manager choosers
-(`0x001f00d8`/`0x001f06a0`, frame-parity selected) take a player's
-*pre-existing* pursuit target and consummate a mutual engagement when
-distance thresholds are met — `SetTarget(self, target, 5)` +
-`reverse(target, self, 5)`. No threat ranking, no route, no play-assigned
-defender id. (A separate class-2 "block manager" `0x00242070` designates
-*which teammate is the lead blocker* by distance to the ball carrier on a
-60-frame timer — but that picks the blocker, not the defender he hits.)
-
-**The locomotion overwrite — CORRECTED 2026-08-09.** The first version of
-this doc described the stores below as a per-frame "drive straight at the
-defender's current position", overwriting the route. **That
-characterization was wrong** and an independent verification pass caught
-it. What the code actually does:
+Engagement kinds: **1** = unengaged (running his play-authored
+assignment), **4** = approaching an assigned defender, **5/6** = mutual
+contact. The steering pass `0x001f1c20` processes only kind-4 players and
+commits three values into the locomotion block:
 
 ```
 001f1c9c  addiu s3, s1, 992    ; s3 = SELF+0x3E0 -- own engagement record
-001f1de4  lw   v0, 44(s3)      ; self+0x40C: a bearing already staged in the record
+001f1de4  lw   v0, 44(s3)      ; self+0x40C
 001f1dec  sw   v0, 492(s1)     ; self+0x1EC desired bearing
 001f1df0  swc1 f0, 488(s1)     ; self+0x1E8 speed   (from self+0x404)
 001f1df8  sw   v0, 496(s1)     ; self+0x1F0 facing  (from self+0x410)
 001f1e08/0e0c/0e18             ; the SAME three stores into the TARGET (s2)
 ```
 
-The values come from the player's **own** engagement record, not from a
-target-position difference; the triple occurs three times
-(`0x001f1de4`, `0x001f1f5c`, `0x001f2054`), always applied symmetrically
-to **both** players, always alongside `[+0x1F4] = 5`. It is the mutual
-engagement **lock-in** as kind goes 4→5, gated by a one-shot flag
-(`self+0x42E`, set at `0x001efa5c`) — not a per-frame drive.
+The values are **staged in the blocker's own engagement record**, not
+computed here from the target's position, and the identical triple is
+written into *both* players alongside `[+0x1F4] = 5` — the signature of a
+mutual lock-in as kind goes 4→5, gated by a one-shot flag (`self+0x42E`,
+set at `0x001efa5c`).
 
-**Consequence for the fix spec:** the "no route landmark, no lead" census
-is **UNVERIFIED**. It cannot be derived from these stores, because the
-committed values are staged in `+0x404/0x40C/0x410` and *the writer of
-those fields has not been walked*. The conclusion may still be true; it
-is not currently evidenced. **Fix A below must not be implemented until
-that writer is found** — patching these three stores would break the
-engagement lock-in rather than demote a route override.
+**So the central question is unanswered: nobody has walked the code that
+writes `+0x404/0x40C/0x410`.** Until that is done we cannot say whether
+an approaching blocker runs his route, beelines at the defender, or
+blends the two — and route primacy is exactly what the owner's spec is
+about. *(Investigation in progress; this section will be replaced with
+the answer.)*
+
+Consequences while it is open:
+
+* The confirmed defects are **wrong selection** and **no dedup**. Route
+  override is a *suspicion*, not a finding.
+* **Fix A (demote the target to a lean) is blocked.** Patching those
+  three stores today would break the engagement lock-in, not restore
+  route primacy.
+* Fixes B (AWR-gated selection), C (on-route selection window) and D
+  (dedup) are all selection-side and can proceed independently.
+
+### Known: the lock and release cycle
 
 **Cadence and lock/release.** Kind-4 is stamped with a countdown
 `+0x432 = 30 − blockRating/16` frames (block rating = PPBK/PRBK, attrs
@@ -131,18 +137,20 @@ Re-acquisition then happens by the same proximity rule with no distance
 ceiling — so a blocker can end up on a useless far defender ("blocks
 nobody useful"). **The blocker already re-evaluates every ~15–30 frames**,
 so the owner's "retarget every couple of frames" premise is confirmed as
-cheap and already present; only the *criterion* and *route-primacy* are
-wrong.
+cheap and already present. The *criterion* is demonstrably wrong;
+whether *route primacy* is also violated is the open question above.
 
-**Three proven defects:** (i) target overrides route; (ii) no already-
-engaged dedup (two blockers can pair the same defender — the `+0x3E0` read
-is only of the iterating player, never the target); (iii) selection is
-proximity + a rating timer, never correctness.
+**Two proven defects:** no already-engaged dedup (the `+0x3E0` read is
+only of the iterating player, never the target), and selection by
+proximity + a rating timer rather than correctness. A third — route
+override — was claimed in the first version and is now the open question
+above.
 
 ## Fix candidates (reframed to the owner's spec)
 
-The cadence is free (already present); the fix is criterion + route-primacy
-+ an AWR gate. All are **code caves**, not data edits — the play-assignment
+The cadence is free (already present). The fix is the selection
+*criterion* plus an AWR gate — and route primacy too, if the open
+question turns out to need it. All are **code caves**, not data edits — the play-assignment
 scheme carries no defender-choice weights to retune. All reuse existing
 primitives: `FindNearestPlayer 0x001657c0`, `RandomInt 0x002f9428`,
 effective AWR at `player+0xB74` (confirmed readable for OL/FB), the `+0x432`
