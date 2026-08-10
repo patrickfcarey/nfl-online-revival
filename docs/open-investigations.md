@@ -522,6 +522,24 @@ either a slot CB was doing it, the earlier titles gated it differently,
 or a second jam path exists that we have not found. The M02/M03 half is
 **blocked on materials**.
 
+**Owner's second hypothesis (2026-08-10) — and it may be the real
+answer:** TEs may be "jammed" only in the sense of being **physically
+held up as they release into their route, bumping into blitzing
+defenders** — no jam mechanic involved at all. This is highly plausible
+because *we have already confirmed the identical mechanism on the
+offensive line*: the proximity pairing is mutual and has **no role
+exemption**, and the offense has **no shed**, so an offensive player who
+brushes a defender is captured and held for the 15–30 frame engagement
+timer, re-armed on every re-contact (`lead-blocker-targeting.md`, the
+hang-up section). A tight end releasing inline runs straight through
+blitz traffic. If a route-running receiver can be captured the same way a
+pulling guard is, the visible result is indistinguishable from a jam.
+
+If capture is the mechanism, the fix changes: not "let LBs jam" (still
+worth doing on its own merits) but "give releasing receivers an exemption
+or an escape" — the **same fix family** as the pulling-guard capture
+exemption already sketched. One exemption might serve both.
+
 **Status: open, 2004-native, in progress (Lane W).**
 
 ## 21. Route running: what actually governs it?
