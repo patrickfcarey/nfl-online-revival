@@ -42,18 +42,17 @@ and diff the turn-rate constants and any lateral-speed penalty between
 > Why do runners over-run their blocks on pitch plays, and can we fix
 > their vision/understanding of blocks? [both games and beyond]
 
-**Status: open — investigable in 2004 now.** Relevant map: ball-carrier
-AI lives in the same 93-state machine (`0x00527238`); the RB Ability
-slider rescales ball-carrier attrs 0–4/13/14/15 via `0x00144b18`;
-blocker↔defender engagement is a mutual link maintained by
-`SetTarget 0x001f73a0` / `ClearTarget 0x001f7428`. First angle: identify
-the ball-carrier states (enter/think pairs that read the carrier flag
-and the locomotion block), find where the carrier's steering target is
-chosen on outside runs, and check whether blocker positions/engagements
-appear in that choice at all. Hypothesis to test: the carrier steers to
-a play-authored landmark (like the zone landmarks at `0x001ee5f0`) and
-never reads blocks — in which case "vision" was never there to fix, and
-the fix is landmark/speed-scale tuning per play.
+**Status: RESOLVED — `pitch-play-runner.md`.** Hypothesis refuted: the AI
+carrier (state 1, AIthink `0x001dfeb8`) DOES read blocks — it scans its
+own team for a lead blocker, finds the nearest threat in a forward cone,
+follows that defender's engagement link to his blocker, and steers to the
+gap between them. The over-run is (a) a cone-limited field of view (75°
+threat cone, 8-yard lead-blocker window) that misses a pitch's wide,
+laterally-developing blocks, plus (b) a weak speed governor (base 1.0,
+slowdown only once a blocker latches in that narrow window — too late on a
+sweep). Fix is code, not data (the carrier reads no play path once
+carrying): recommended N1 (widen the 8→16-yard latch window,
+`0x001df370`) + N5 (follow-speed pool word `0x005FEE40`), both AI-only.
 
 ## 3. Warping / sliding / leaping defense starting in Madden 2005 & NCAA 2005
 
@@ -93,16 +92,24 @@ records, and see what the blockers are actually told to do.
 > What is with the targeting of pulling/lead blockers and can we fix
 > that?
 
-**Status: open — investigable in 2004 now.** Relevant map: the blocking
-slider function `0x001444a0` scales an existing impulse vector but does
-NOT pick targets; target selection happens upstream in the engagement
-system (`SetTarget 0x001f73a0`, kind codes at `player+0x3E0`). First
-angle: find the block-target chooser (callers of SetTarget from
-offensive-lineman states), determine its inputs (nearest? play-assigned?
-threat-ranked?), and specifically what a pulling guard's state chain
-does between pull and contact — the community complaint suggests the
-chooser re-evaluates late or ranks the wrong defender. Fixability
-depends on whether ranking weights are data or code.
+**Status: RESOLVED (diagnosis) + design spec set — `lead-blocker-targeting.md`.**
+Blocking is run by a global per-frame engagement manager (`0x001f7298`)
+that pairs blocker→defender **purely on proximity**, holds it on a
+block-rating-scaled ~15–30-frame countdown, and while paired **overwrites
+the blocker's route to drive at the defender's current position** (no
+lead, no route blend, no already-engaged dedup, no Awareness). So the
+shipped code already does what the owner forbids (route override,
+snap-to-defender) and none of what he wants.
+
+**Owner's fix spec (acceptance criteria):** land the block via on-route
+retargeting whose correctness is an **Awareness probability roll**; the
+route is the primary steering objective (never abandoned to chase);
+honest misses are acceptable when selection can't win on-route; faking
+the block via warp/snap/oversized-radius is forbidden. The cadence is
+already present and cheap — only the selection *criterion* and *route
+primacy* are wrong. Fix is a **code cave** (A: demote target to a lean;
+B: AWR-gated selection; C: on-route defender window; D: engaged-dedup),
+not a data edit — blocked on the free-space survey.
 
 ## 6. Zone defenders bunch up / hook defenders abandon the middle
 
