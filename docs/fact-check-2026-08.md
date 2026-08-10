@@ -143,11 +143,29 @@ conclusion survives either way.
 | `robo-qb.md` | 19 reads of `+0xB07` | Exactly **nine** byte readers. `hb-vision`'s count was right. |
 | `punt-logic.md` | exactly three references to ±27.6667 exist | **Seven** such words; four referenced outside the solver. Fix E is still safe; the uniqueness proof is not. |
 | `cpu-dt-animations.md` | `ptrk` block-shed boost up to **+94%** | Max **+46.9%** (`+(score/2)·f`, f ≤ 0.9375). `play-tendency-ai.md`'s ×1.47 is right. |
-| `tackle-contest.md` | weight levels "+19 DT / +11 CB" | The field is **pounds − 160**, so the true levels are **+9 / +1**. The 8-point spread and the conclusion survive. |
+| ~~`tackle-contest.md`~~ | ~~weight levels "+19 DT / +11 CB"~~ | **THIS CORRECTION WAS ITSELF WRONG — WITHDRAWN 2026-08-10.** See below. |
 | `catch-and-fumble.md` | 12× fumble-rate spread | **9.3×**. |
 | `default-uplift-tuning.md` | "60 is the largest base that keeps the whole slider live" | **57.** Self-contradictory with the doc's own table one paragraph later. |
 | `default-uplift-tuning.md` | section D lists 0.5 and 0.75 as pool words | Both are **code literals**; the 18-word pool is eleven copies of 0.02 plus {0.35, 0.55, 0.70, 0.40, 0.20, 0.45, 0.1125}. The doc's own corrections section already says this for 0.75. |
 | `ea-protocol.md` | the words after `cdev` form a pointer table incl. `0x004e1e40`/`0x004e1da8` | Not at that boundary. Low stakes — the doc hedges it as a layout coincidence. |
+
+### Withdrawn: the weight correction was backwards
+
+Read against a live memory dump on 2026-08-10, `player+0xAEC` is an **f32
+in real pounds**. The quarterback reads 226.0 (Brad Johnson weighed 226 lb),
+linemen 299–322, a corner 185. Under "pounds − 160" those linemen would be
+459–482 lb, which is nonsense.
+
+**So `tackle-contest.md`'s original "+19 DT / +11 CB" was right**, and the
+correction above was wrong: 305/16 = 19 and 190/16 = 11 only work in real
+pounds. Pounds-minus-160 is the roster *database* column `PWGT`; the player
+object in memory holds the decoded value. All 19 load sites are `lwc1`, and
+one site adds `trunc(weight)` directly to 0–255 ratings.
+
+A caution worth carrying: this error came from reasoning about a field's
+encoding from the code that *writes the database* rather than from the
+object the engine actually reads. Live memory settled in one read what two
+static passes got wrong in opposite directions.
 
 ### A community premise that is also wrong: linebackers can jam
 
