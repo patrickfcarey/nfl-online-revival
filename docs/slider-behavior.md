@@ -150,8 +150,11 @@ Consequences, walked to their comparisons:
   AWR (×0.55 at slider 0, ×1.45 at 100) feeds AI reaction timers
   (`timer = rand + (255−AWR)/32` at `0x001cb6c0`, gated by a REGIMM
   `bgez`), the per-tick probability that a defender changes AI state
-  (`rand(100) < f(AWR)` at `0x001cb7f4`, with a `movz` halving it in one
-  state), per-player AI update-interval bytes (`0x001dfcd8`), a
+  (`rand(100) < f(AWR)` at `0x001cb7f4` — a four-way AWR/1·2·4·8 split
+  keyed on the *target kind*, not the AI state as an earlier note said —
+  and, in every coverage state, the break-off roll `rand(255) < AWR`
+  documented in `sdchargersfanboy.md`), per-player AI update-interval
+  bytes (`0x001dfcd8`), a
   defensive matchup predicate whose threshold moves with both players'
   AWR (`0x001ef4e8`), and the penalty awareness modifier (`0x0025ba88`
   reads the same `player+0xB74` slot — so the Awareness slider also
@@ -195,8 +198,10 @@ the options-array order. Getter `0x0015fef0` normalises `s = raw/99`
 (the constant at `gp−30780` is exactly float32(1/99)) and returns 0 when
 `GetOption(62)` is 0. All penalties funnel through `TryPenalty
 0x0015fa98` (exactly 23 direct call sites, zero indirect; it also
-requires `GetOption(62) == 1` *exactly* — index 62's 4CC reads `EPPN`,
-which sits oddly with its role as the master penalty enable; unresolved).
+requires `GetOption(62) == 1` *exactly* — index 62 (`EPPN`) **is** the
+master penalty enable: the Penalty Settings screen's "Penalties" on/off
+row writes it, via settings id 78 in the UI's settings-id layer — see
+below; resolved 2026-08-09).
 The roll is `RandomFloat < chance` (`c.lt.s` / `bc1f` in `0x0015f560`).
 Chance comes from `ApplySlider 0x0025d2c8`:
 
@@ -242,8 +247,24 @@ in `DATA/UIS_PAUC.DAT` (gameplay/custom/penalty/A.I./EAsy-Play settings);
 storage map 1:1 (the A.I. screen: offense/defense/special-teams sub-tabs,
 Human/CPU toggle — 15 sliders per side). The penalty screen shows ten
 sliders; its on-screen order differs from storage order, and it also hosts
-the master Penalties on/off plus an Offsides on/off row with no backing
-option word.
+the master Penalties on/off (option 62 `EPPN`) and an Offsides on/off row
+(option 63 `EPOS` — an earlier version of this doc wrongly said it had no
+backing word).
+
+How the screens bind to storage (extracted from the UI bytecode,
+2026-08-09): the settings screens never call `GetOption`/`SetOption`.
+They go through a **settings-id layer** — script natives `GetSetting`
+(method 230, `0x002c5650`) and `SetSetting` (method 229, `0x002c56e0`)
+resolve a settings id through a 392-entry master table (`u32
+fourcc[392]` at `0x00545918`, storage-class array at `0x00545f38`)
+straight to the TDB by 4CC, no scaling, no clamping. Settings ids 6–15 =
+the penalty sliders, 16–30 = `OH*`, 31–45 = `OA*`, 76–83 = `EP*`. The
+widget→option bindings were verified exact for the A.I. screen (defense
+tab: Awareness→31/46 … Tackling→35/50, zero shift) and the penalty
+screen (the claimed permutation, confirmed). The value moved between
+screen and database is the raw 0–100 number; the 0–20 tick display seen
+by players is a widget-formatter detail (×5 mapping consistent with
+EAsy Play's 75/25 but not located in the ELF or the UIS scripts).
 
 ## Red herrings, recorded so nobody re-walks them
 
@@ -287,7 +308,17 @@ option word.
   REGIMM branches (`bltz`/`bgez`, opcode 0x01) as `.word` — several
   load-bearing branches in this document were hand-decoded; folding
   REGIMM + COP1 into `mipsdis` properly would remove that risk.
-* Open items for a runtime check (PINE/savestate on the rig): the real
-  shipped slider defaults (not statically recoverable), the identity of
-  option 62 (`EPPN`) as the penalty master gate, and team-strategy slot
-  17 behind the ×4.0 penalty multiplier.
+* Resolved since first writing (details in `play-tendency-ai.md`): the
+  ×4.0 penalty multiplier's gate and the two extra multipliers on the
+  effective-ratings path are **Madden Cards** effects (the structure at
+  `*(gp−20092)` is the cards' active-effect list `'madt'`, not a
+  "team-strategy table" as earlier text said; card magnitudes live in
+  the `GODA` database on disc). The CPU-only awareness multiplier is
+  the **anti-repetition play-history tracker `'ptrk'`**. Option 62 as
+  the penalty master gate: resolved — see the penalty section. One
+  nuance: "the lone human's team is always class 1" holds in normal
+  play, but a practice-mode path (`0x0017992c` → `0x00153048`) can set
+  the class word to 3.
+* Still open for a runtime check (PINE/savestate on the rig): the real
+  shipped slider defaults (not statically recoverable), and the
+  per-frame swat-window length on deep balls.
