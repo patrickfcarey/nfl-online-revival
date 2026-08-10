@@ -25,6 +25,28 @@ behavior, not the current behavior:
    realistic outcome. **Forbidden:** faking the block via position-snap,
    oversized engage radius, or route abandonment (the warp/magnet behavior
    the project fights everywhere else).
+5. **Minimum-steps gate before targeting (per play).** Selection must not
+   begin until the blocker has traveled a minimum distance/step count
+   along its assigned route — ideally authored per play. A too-early
+   target is worse than a slightly delayed correct one: engaging before
+   the pull develops grabs the first man passed instead of the designed
+   defender downfield. The gate withholds *selection* only, not
+   locomotion — the blocker keeps running his route during the delay.
+
+   **Verified feasible, cheaply.** The engine keeps a true frames-since-
+   snap counter at `[0x00601280+84]` (reset at play init `0x001f7034`,
+   incremented at `0x001f5b94`), already used as a gate elsewhere
+   (`sltiu` idioms at `0x001f5214`, `0x001f02f4`). The gate: keep the
+   blocker at engagement kind 1 until `frames ≥ THRESH` by gating the
+   kind-4 stamp in `0x001ef820` (and the kind-5 pairing at `0x001f0600`).
+   Because both the steering pass and the choosers are kind-gated, **the
+   route override at `0x001f1dec` never fires during the delay** — the
+   blocker keeps running his pull path; selection alone is withheld.
+   Per-play authoring of the threshold is feasible via a state-chain
+   `p`-param but unconfirmable without a play file; start with a global
+   constant. Caveat: a *defender* can still capture him during the window
+   (see the hang-up section) — full protection needs the capture
+   exemption below.
 
 ## The one-paragraph diagnosis
 
@@ -114,6 +136,44 @@ pick the right defender, stay on the route, gated by Awareness, honest
 misses"* is achievable in this engine's primitives — but it is a **code
 cave (A+C+B+D)**, not a data edit, and all cave work is **blocked on the
 free-space survey** (not yet done). The cadence itself needs no change.
+
+## The hang-up: pulling guards stuck on the line (second owner question)
+
+Distinct from wrong targeting. Diagnosis, three mechanisms checked:
+
+* **CONFIRMED CAUSE — captured by a defender, with no escape.** The
+  mutual proximity pairing has **no role exemption for a pull-path
+  runner** (the engage gate `0x00200130` reads a global flag, not a role;
+  `EngageBlock 0x001a6618` checks no assignment byte). A DT whose pursuit
+  resolves onto the puller engages him on contact — realistic in itself —
+  but **the offense has no shed**: `TryShedMove`/`BreakBlockContest` are
+  defender-only, so the captured puller is passive until the engagement
+  timer (`+0x42C`, set mutually by the *defender* at `0x001a7320/33c`)
+  expires: **15 or 30 frames (0.25–0.5 s) per capture, re-armed on every
+  re-contact** — a puller who brushes the pile can be chained and never
+  reach the corner.
+* **Teammate body traffic: not an independent cause.** No teammate-
+  collision stall exists in the walked locomotion path (consistent with
+  Lane K's no-separation finding). But the cheapest lever lives here:
+  **the pull path is authored per-play data** — waypoint floats at play
+  record +140…171 (via `0x00242848`). Deepening the path to route the
+  puller behind the pile is a pure data fix, per play, no warping.
+* **The tangle trigger: not a teammate cause.** The two-man interaction
+  driver iterates the defense side only; no offense-offense tangle
+  exists. The tangle *is* the visible form of the capture lock.
+* **Secondary: the pivot.** Reversing ~120–180° at the snap under the
+  ~25°/frame turn gate costs ~5–7 frames of arcing through LOS traffic,
+  widening the capture window. The turn-rate constant is a lever but
+  global (all players).
+
+Hang-up fix levers, in recommended order:
+
+| lever | type | where | risk |
+|---|---|---|---|
+| **Deepen/widen the pull path per play** | **data** | play record +140…171 waypoints | Low — needs a play-file read to confirm waypoint semantics |
+| Capture exemption pre-landmark (skip engaging a pull-role player who hasn't reached his landmark; reuse the frame gate) | code cave | before `0x001a6618` / `0x001f0600` | Med — must lapse once the landmark is reached |
+| Offensive escape / shorter lock for pullers (cap at ≤15 frames or add a break-out roll) | code cave | `+0x42C` setter `0x001f7a28` | Med — gate to pull roles |
+| Faster pivot | code | turn-rate clamp | Med-High — global |
 
 ## Cross-references and toolchain
 
