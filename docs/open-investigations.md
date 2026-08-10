@@ -505,16 +505,15 @@ refute the STR/AWR assumption); whether a position or size term exists
 complaint); and what winning/losing does — animation, speed penalty,
 route delay, knock-off-path — and for how long.
 
-**Owner's design note (2026-08-10):** *linebackers should definitely be
-able to jam — they sometimes play man coverage on a receiver.* If the
-CB-only gate on state 37's press is the engine's only jam path, then a
-linebacker manned up on a tight end or a back can never jam him. That is
-both a realism gap and a candidate fix: widen the position check from a
-single comparison against 16 to a position set. Under investigation as
-part of this entry — including whether man coverage (state 22) has its
-own press contest, or only a pre-snap alignment with no contact mechanic
-behind it (a defender who lines up pressed but has no jam code would be a
-distinct failure mode).
+**Owner's requirement (2026-08-10):** **linebackers need to be able to
+jam at the line.** Stated plainly, as a capability gap: *it is not
+football if a linebacker cannot jam a much smaller slot receiver.* If
+state 37's CB-only position gate is the engine's only jam path, that
+capability does not exist and needs to be added. Also under
+investigation: whether man coverage (state 22) has its own press contest
+or only a pre-snap alignment with no contact mechanic behind it — a
+defender who lines up pressed but has no jam code would be a distinct
+failure mode.
 
 Note the reconciliation problem: the community reports TEs being jammed
 *constantly*, so somebody is jamming them. If 2004 permits only CBs, then
@@ -522,23 +521,32 @@ either a slot CB was doing it, the earlier titles gated it differently,
 or a second jam path exists that we have not found. The M02/M03 half is
 **blocked on materials**.
 
-**Owner's second hypothesis (2026-08-10) — and it may be the real
-answer:** TEs may be "jammed" only in the sense of being **physically
-held up as they release into their route, bumping into blitzing
-defenders** — no jam mechanic involved at all. This is highly plausible
-because *we have already confirmed the identical mechanism on the
-offensive line*: the proximity pairing is mutual and has **no role
-exemption**, and the offense has **no shed**, so an offensive player who
-brushes a defender is captured and held for the 15–30 frame engagement
-timer, re-armed on every re-contact (`lead-blocker-targeting.md`, the
-hang-up section). A tight end releasing inline runs straight through
-blitz traffic. If a route-running receiver can be captured the same way a
-pulling guard is, the visible result is indistinguishable from a jam.
+## 20b. Receivers held up by traffic while releasing (a separate issue)
 
-If capture is the mechanism, the fix changes: not "let LBs jam" (still
-worth doing on its own merits) but "give releasing receivers an exemption
-or an escape" — the **same fix family** as the pulling-guard capture
-exemption already sketched. One exemption might serve both.
+> "It's possible that TEs get jammed in the sense that they get held up
+> when trying to go on their route — like they're bumping into players
+> that are trying to blitz."
+
+**Explicitly a different issue from #20**, and tracked separately at the
+owner's direction: one is a *missing capability* (linebackers cannot
+jam), the other is an *unwanted engagement* (offensive players getting
+stuck on contact they did not seek). They should not be conflated, and
+they do not share a fix.
+
+The hypothesis is well-founded because the identical mechanism is
+**already confirmed on the offensive line**: the proximity pairing is
+mutual with **no role exemption**, and the offense has **no shed**, so an
+offensive player who brushes a defender is captured and held for the
+15–30 frame engagement timer, re-armed on every re-contact
+(`lead-blocker-targeting.md`, the hang-up section). A tight end releasing
+inline runs straight through blitz traffic.
+
+To settle: can a route-running receiver (state 31) be captured by the
+pairing at all, is anything exempt, and does he have any escape? If he
+can, the visible result is indistinguishable from a jam — meaning
+behaviour alone cannot tell #20 and #20b apart, and only the code can.
+
+**Status: open, 2004-native, in progress (Lane W).**
 
 **Status: open, 2004-native, in progress (Lane W).**
 
