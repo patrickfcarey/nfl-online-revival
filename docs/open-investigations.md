@@ -323,8 +323,18 @@ Also in scope: whether the defender's position (DB vs LB vs DL) enters
 the contest at all, since the wish is explicitly about *who* is
 tackling.
 
-**Status: open, 2004-native, well-anchored — probably the highest
-value-per-hour item in wave 2.**
+**Status: RESOLVED — `tackle-contest.md`.** The hypothesis is confirmed:
+of ~100 score points, a random seed contributes 24 and a flat difficulty
+add 25, while the **entire 50→99 break-tackle range moves the score by
+8**. Worse, quantisation means one point per ~6.3 rating points, so
+**Alstott at 94 is arithmetically identical to an 88**, and the two
+functions that look like "the break-tackle move" don't read break tackle
+at all — they read strength and weight, both saturating at rating ~78.
+**Position never enters the contest**; only weight does. And the
+reporter's instinct about sliders is arithmetically correct — RB Ability
+100 buys a monster +2.8 points and an average back +18.6, *compressing*
+the differential. **Fix: four words** (double the resolution of both
+ratings) plus a class retune, no sliders, closed blast radius.
 
 ## 14. Line play: pass blocking, run blocking, and the absence of double teams
 
@@ -356,9 +366,30 @@ groundwork:
   contest reads PPBK vs PRBK by phase, but whether the *behaviour* differs
   (anchor-and-mirror vs drive-and-seal) is unknown.
 
-**Status: open, 2004-native, large.** Recommend splitting 14b out first —
-it is a yes/no architectural question that determines how much of the
-rest is even feasible.
+**Status: RESOLVED — `block-cycle.md` and `pass-vs-run-blocking.md`.**
+
+**14b: the community's flat claim is wrong — coordinated double teams
+exist**, with their own engagement kinds (7, 8, 9 — our taxonomy was
+incomplete), a per-frame pass, a purpose-built helper scorer with real
+double-team geometry, a four-record registry, and **a working
+peel-off-to-the-second-level path**. They are gated so tightly nobody
+sees them: run block only, within 60 frames of the snap, and the helper
+is *frozen* (speed zeroed) once attached. Effect is a debuff on the
+defender, not a sum of blockers. **Not** representable beyond two men in
+an animation: the dispatcher is hand-unrolled for exactly two.
+
+**14a: there is no kind 5/6 pass** — those kinds are owned by AI state
+32, where the animation's root motion owns both transforms.
+
+**14c: pass and run blocking are separate systems** — two states, two
+~700-instruction steering solvers, opposite-signed LOS constraints, and
+eight phase-exclusive contest terms including a pass-only decay that
+bleeds up to 95% of the blocker's score over three seconds.
+
+**"Action figures" has five identified causes**, chief among them that a
+block is a 14–30-frame rigid two-body translation along one frozen shared
+axis, with **zero stores to either player's position** anywhere in the
+block code.
 
 ## 15. Blocking assignments for non-linemen: FB and WR
 
@@ -473,9 +504,20 @@ Three related but separable questions:
   repetitiveness. This one is measurable statically by reading the
   candidate-enumeration loop.
 
-**Status: open, 2004-native.** 18c is the cheapest and most likely to
-explain the felt problem; 18b is the most likely to be a genuine design
-gap rather than a bug.
+**Status: RESOLVED — `ai-play-calling.md`.** Both halves confirmed, with
+different causes. **The pool is authored, not filtered**: the enumerator's
+only predicate is the AI group, and the playbook table holds 175 rows
+across *all* groups — under 18 plays per group in practice. **The
+predictability is code**: a class renormalisation forces one play family
+to own a fixed share of the roulette regardless of how many plays are in
+it, so a lone run in a thin short-yardage group gets 80% of the draw.
+**The AI applies no anti-repetition to itself** — every `ptrk` read is of
+the *opponent*. **Situational state is complete** (timeouts, score,
+quarter, clock, down, distance, LOS) but the policy is a **bytecode
+script loaded from the disc**, with no shared intent variable — hence
+hurry-up-and-run-and-timeout. Also: the CPU **never pinches or spreads**
+its line (both weighted zero), and the deliberation clock reads only
+skill level, never the game clock.
 
 ## 19. Do the PS2 games use rating THRESHOLDS? (cross-cutting)
 
@@ -520,8 +562,14 @@ below 70, every punter behaves identically (`punt-logic.md`). That is a
 threshold created by a clamp on a curve, not by an `if`, which is exactly
 the pattern this entry warns about.
 
-**Status: open, 2004-native, in progress (Lane V).** High value: the
-answer applies to every other question in this ledger.
+**Status: RESOLVED — `rating-thresholds.md`.** Yes, but selectively.
+A closed census of **278 rating read sites** finds the engine ~87%
+continuous — yet **the contact game is banded at 4 bits**, and the
+community's 44 is a band boundary exactly. Confirmed hard gates and dead
+zones include power pass-rush moves at **STR 65**, QB throw power below
+**70** (every QB identical), carrying below **50** (term hard-zeroed),
+agility below **50**, and punter accuracy below **70**. A clamp can
+create a gate without a comparison, as predicted.
 
 ## 20. Press / jam: how is the win determined? (WR vs DB, TE vs LB)
 
@@ -627,7 +675,18 @@ take over immediately?**
 Bonus scope, because the community will ask: with **no fumble slider** in
 this game (`slider-behavior.md`), what *does* govern fumbles?
 
-**Status: open, 2004-native, in progress (Lane X).**
+**Status: RESOLVED — `catch-and-fumble.md`.** Both community assumptions
+are correct and the engine is unusually sophisticated here. There is a
+real **process of the catch**: possession transfers immediately but the
+ball stays *unsecured* for ~21 ticks (41 diving), and a ball jarred loose
+in that window is scored an **incompletion**, not a fumble. A dedicated
+**post-catch strip** exists, resisted by catching (full weight) and
+carrying (quarter), driven by tackle and strength, with the **big hit
+worth 2–6× a standard wrap** — and the **WR Catching slider is the strip
+slider**, inverted. And precisely: **catching is substituted for carrying
+as the ball-security rating** while unsecured, then stops mattering
+entirely. Bonus: the tackler's ratings are read **nowhere** in ordinary
+fumbles; toughness has **no gameplay consumer** at all.
 
 
 ---

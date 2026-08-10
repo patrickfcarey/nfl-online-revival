@@ -55,6 +55,12 @@ New to the repo? Read in this order:
 | `cpu-dt-animations.md` | the CPU appears to have pass-rush animations the human never gets (#9) |
 | `punt-logic.md` | punters never coffin-corner (#17) — the logic exists and is gated off |
 | `pass-rush.md` | finesse vs power, leverage, and the absence of gap control (#16) |
+| `block-cycle.md` | the double-team system that exists, and why line play looks like action figures (#14a/b) |
+| `pass-vs-run-blocking.md` | pass pro and run blocking are separate systems; what the block sliders really scale (#14c) |
+| `tackle-contest.md` | why break tackle doesn't feel like break tackle, and a four-word fix (#13) |
+| `rating-thresholds.md` | does the engine use rating thresholds? (#19) |
+| `catch-and-fumble.md` | the process of the catch, post-catch strips, and what governs fumbles (#22) |
+| `ai-play-calling.md` | the small play pool, the steep favourite, and the missing plan (#18) |
 
 **Forward work**:
 
