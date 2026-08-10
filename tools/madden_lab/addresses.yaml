@@ -1,0 +1,1074 @@
+# The address map for Madden NFL 2004 (PS2, SLUS_207.52, CRC 0x14F8B841).
+#
+# Data, not code. `world.py` is the only thing that interprets it, so a wrong
+# number is a one-line fix in one file and every consumer picks it up. Nothing
+# here may be believed without a `source:` -- the whole point of writing it down
+# is that a claim stays attached to the document it came from.
+#
+# Addresses are virtual, as loaded. For the 32 MB EE image
+# (extract/ee_mainmenu.bin, and every savestate's eeMemory.bin) virtual address
+# == file offset. For extract/SLUS_207.52, file_offset = vaddr - 0xFF000.
+#
+# `confidence:` is the only field that matters when something disagrees:
+#
+#   dump  -- read out of extract/ee_mainmenu.bin and the value matched what was
+#            expected. The strongest grade available offline.
+#   code  -- derived here by disassembling the instructions that use it, in the
+#            same dump. Stronger than a document, weaker than seeing the value.
+#   doc   -- taken on the cited document's word. Nothing confirmed it and
+#            nothing contradicted it. Treat as a hypothesis.
+#
+# Main-menu caveat: every runtime pointer below except `ball_spot` is null in
+# extract/ee_mainmenu.bin, because the game had not built a play yet. A null
+# there is the expected reading, not a failure -- see `null_at_menu:`.
+
+meta:
+  game: Madden NFL 2004 (PS2)
+  elf: extract/SLUS_207.52
+  crc: 0x14F8B841
+  gp: 0x006056F0
+  elf_file_offset_bias: 0xFF000
+  reference_dump: extract/ee_mainmenu.bin          # menu; every runtime pointer null
+  reference_dump_inplay: extract/ee_inplay.bin     # pre-snap, 22 players on the field
+  reference_state: extract/state_mainmenu.p2s
+  verified_on: 2026-08-10
+
+# ---------------------------------------------------------------------------
+# Statics. Present and readable in any dump, including the main menu.
+# ---------------------------------------------------------------------------
+globals:
+
+  option_values:
+    addr: 0x0051FFD8
+    type: u16
+    count: 131
+    source: slider-behavior.md
+    confidence: dump
+    note: >-
+      131 confirmed empirically: the parallel name table stops being fourccs at
+      index 131. Indices 16-55 all read 50 in the reference dump. Values are
+      never clamped on write (SetOption is a bare sh), so out-of-range is
+      possible and callers must not assume 0..100.
+
+  option_names:
+    addr: 0x0051FDC8
+    type: fourcc
+    count: 131
+    source: slider-behavior.md
+    confidence: dump
+    note: >-
+      Stored as readable ASCII, not byte-swapped. Index 0 is OQLN; 7 and 8 are
+      both OFMO, which is a real duplicate in the shipped table and not a
+      reader bug. Index 62 is EPPN.
+
+  attribute_names:
+    addr: 0x00520140
+    type: fourcc
+    count: 21
+    source: cpu-dt-animations.md
+    confidence: dump
+    note: >-
+      Exactly 21 entries, then zeros -- which is what fixes the length of the
+      effective-ratings block at player+0xB70. Order read from the dump:
+      PACC PAGI PAWR PBTK PCAR PCTH PJMP PIMP PINJ PKAC PKPR PPBK PRBK PSPD
+      PSTA PSTR PTAK PTHA PTHP PTGH PKRT.
+
+  ai_states:
+    addr: 0x00527238
+    stride: 24
+    count: 115
+    documented_count: 93
+    type: fn_ptr
+    columns: [enter, can_leave, ai_think, user_think, exit, extra]
+    source: lessons-learned.md
+    confidence: dump
+    note: >-
+      Six code pointers per row. The column order is lessons-learned.md's
+      "enter / canLeave / AI-think / USER-think / exit" and it CHECKS OUT in
+      the dump against five states documented elsewhere by address: 1
+      (AIthink 0x001DFEB8), 31 (enter 0x001CABD8, think 0x001CB008), 32
+      (AIthink 0x001E8088), 33 (enter 0x001DC110, think 0x001DC2D8) and 47
+      (enter 0x001B66A8, think 0x001B6870). All five land in columns 0 and 2.
+      Column 4 is 0x001B0528 in every live row, matching
+      fact-check-2026-08.md's "shared no-op stub returning 0" for the exit
+      predicate. Column 5 is unnamed and usually zero.
+      COUNT DISAGREES WITH THE DOCS: rows 0..114 all hold plausible code
+      pointers and row 115 (0x00527D00) is plainly byte data, so the table has
+      115 rows, not 93. Row 93 is entirely stubs -- a null state -- which may
+      be where the documented count came from. Unresolved; `count` is the
+      empirical figure because reading a real row must not raise.
+
+  ptrk_recency_weights:
+    addr: 0x00540FE0
+    type: f32
+    count: 4
+    source: play-tendency-ai.md
+    confidence: dump
+    note: Reads exactly {1/24, 1/48, 1/96, 1/192} as documented.
+
+  ptrk_success_weights:
+    addr: 0x00540FF0
+    type: f32
+    count: 4
+    source: play-tendency-ai.md
+    confidence: dump
+    note: Reads {0.0625, 0.0104167, 0.00520833, 0.0026875}.
+
+  settings_master:
+    addr: 0x00545918
+    type: fourcc
+    count: 392
+    source: slider-behavior.md
+    confidence: dump
+    note: >-
+      A different, longer list than the 131-entry option table and not a
+      superset in index order -- it starts OQLN OSLE OFIN OFFA OFPC OFMC OPFS,
+      skipping option indices 5 and 7..15. Storage-class array at 0x00545F38.
+
+  pass_rush_run_table:
+    addr: 0x00526668
+    stride: 24
+    source: pass-rush.md
+    confidence: dump
+    note: >-
+      Confirmed as 24-byte records of small ids with 0xFFFF terminators.
+      cpu-dt-animations.md records that an earlier doc had this table and the
+      pass table the other way round; the current assignment is unverified.
+
+  pass_rush_pass_table:
+    addr: 0x00526710
+    stride: 24
+    source: pass-rush.md
+    confidence: dump
+
+  blocker_position_dispatch:
+    addr: 0x00583860
+    type: u32
+    count: 24
+    source: fb-wr-blocking.md
+    confidence: dump
+    note: >-
+      24 code pointers, confirmed. fb-wr-blocking.md calls +4 the FB slot and
+      +8 the WR slot, which would make the index a position byte -- but the
+      position byte has WR at 3, not 2. The index is therefore NOT
+      player+0xB04. Do not decode with the position enum.
+
+  penalty_names:
+    addr: 0x005435E8
+    type: cstr_ptr
+    count: 18
+    source: slider-behavior.md
+    confidence: dump
+    note: >-
+      slider-behavior.md calls this table "the engine's penalty-type enum,
+      indexed forward by TryPenalty's type argument" and gives three anchors
+      (0 CLIPPING, 9 PASS INTERFERENCE, 17 ILLEGAL PROCEDURE). All three land.
+      The full 18 are now read out and mirrored into enums.penalty_type.
+
+  penalty_yardage:
+    addr: 0x00541338
+    stride: 12
+    count: 18
+    source: slider-behavior.md
+    confidence: doc
+    note: Stride inferred from 18 rows over the span; contents not decoded.
+
+  handle_kind_dispatch:
+    addr: 0x0057B680
+    type: u32
+    count: 10
+    source: world.py (this map)
+    confidence: code
+    note: >-
+      The jump table inside the handle resolver 0x0013B798. Kind 1 resolves to
+      GetPlayer; kinds 0 and 8 fall through to the null arm.
+
+# ---------------------------------------------------------------------------
+# Runtime pointers. Null until a play exists.
+# ---------------------------------------------------------------------------
+pointers:
+
+  player_array:
+    addr: 0x00600E48
+    gp_form: gp-18600
+    struct: player_array_desc
+    source: lab-design.md, zone-bunching.md
+    confidence: dump
+    null_at_menu: true
+
+  play_manager:
+    addr: 0x00601280
+    gp_form: gp-17520
+    struct: play_manager
+    source: lead-blocker-targeting.md, block-cycle.md
+    confidence: dump
+    null_at_menu: true
+    note: >-
+      Holds both the double-team registry and the frames-since-snap counter.
+      Dereference it -- [0x00601280+84] reads a fixed global and is garbage.
+
+  ball_manager:
+    addr: 0x006012F0
+    gp_form: gp-17408
+    struct: ball_manager
+    source: world.py (this map)
+    confidence: code
+    null_at_menu: true
+    note: >-
+      Not in docs/ under any name. Recovered from GetBall 0x001FF9B8, which is
+      what zone-bunching.md's ball->carrier accessors 0x00200040 / 0x00200070
+      call first. This is the base the ball-state work was missing. Reads
+      0x006614A0 in the in-play dump, active index 0.
+
+  ball_spot:
+    addr: 0x00601F4C
+    gp_form: gp-14244
+    struct: ball_spot
+    source: pitch-play-runner.md
+    confidence: dump
+    null_at_menu: false
+    note: >-
+      The one runtime pointer that is NOT null at the main menu -- it reads
+      0x00660FC0, an all-zero object. This is the downfield/LOS reference read
+      by 0x00260208, a different object from the ball itself.
+
+  gamestate:
+    addr: 0x00600C70
+    gp_form: gp-19072
+    struct: gamestate
+    source: world.py (this map)
+    confidence: code
+    null_at_menu: true
+    note: >-
+      Recovered from the getter 0x001485D8. No document gives this base. Only
+      +0x98 and +0x9C are ever touched, by seven references in the whole
+      image. It is NOT the play phase -- see `derived.phase`. Nothing here is
+      understood; +0x98 reads 6 and +0x9C reads 0 in the in-play dump.
+
+  slider_block:
+    addr: 0x00600C14
+    gp_form: gp-19164
+    struct: slider_block
+    source: slider-behavior.md
+    confidence: dump
+    null_at_menu: true
+
+  ptrk:
+    addr: 0x00601EB4
+    gp_form: gp-14396
+    struct: ptrk
+    source: play-tendency-ai.md
+    confidence: dump
+    null_at_menu: true
+
+  madden_cards:
+    addr: 0x00600874
+    gp_form: gp-20092
+    source: play-tendency-ai.md
+    confidence: doc
+    null_at_menu: true
+    note: >-
+      Address is arithmetic from the gp form; the docs only ever write gp-20092.
+      Layout ('madt', two sides x {count; card[100]}, 64-byte cards) not checked.
+
+  difficulty_pair:
+    addr: 0x00600CE0
+    source: cpu-dt-animations.md
+    confidence: doc
+    null_at_menu: true
+    note: cpu-dt-animations.md explicitly hedges this one; it wants a live read.
+
+  screen_object:
+    addr: 0x00600CE4
+    source: world.py (this map)
+    confidence: code
+    null_at_menu: true
+    note: >-
+      [[0x00600CE4]] is a screen id; 0x00154790 maps id 0x0E to 3 and returns 7
+      when the pointer is null. The `phase` getter branches on it.
+
+# ---------------------------------------------------------------------------
+# Structures
+# ---------------------------------------------------------------------------
+structs:
+
+  # GetPlayer(side, index) = desc.base + (side * desc.per_side + index) * 5312
+  # -- read straight off 0x001655B0. This is where the stride comes from.
+  player_array_desc:
+    source: world.py (this map)
+    confidence: dump
+    note: >-
+      Reads base=0x00661B90, per_side=11, total=22 in extract/ee_inplay.bin.
+      NOTE FOR ANYONE DEBUGGING THIS: 0x00600E48 points at the DESCRIPTOR, not
+      at the player array and not at an array of player pointers. Treating the
+      target as either produces one plausible-looking record followed by
+      garbage, which is the trap this note exists to prevent.
+    fields:
+      base:      {offset: 0x00, type: ptr, note: first player object}
+      per_side:  {offset: 0x08, type: u16, note: players per team; the side multiplier}
+      total:     {offset: 0x0A, type: u16, note: loop bound in the reverse lookup 0x001655E8}
+
+  player:
+    stride: 0x14C0
+    stride_source: world.py (this map)
+    stride_confidence: dump
+    note: >-
+      5312 bytes. `addiu v1, zero, 5312` in GetPlayer 0x001655B0, and the same
+      constant in the reverse lookup at 0x001655E8. No document records this
+      number; lab-design.md left it blank and tooling-gaps.md claimed it was
+      known without printing it.
+      CONFIRMED against extract/ee_inplay.bin: walking 22 records at this
+      stride from the descriptor's base yields side 0 = one QB, one HB, three
+      WR, one TE and five OL, and side 1 = four DL, three LB, two CB, FS and
+      SS. That is the formation in extract/ee_inplay.png. Any wrong stride
+      would not produce a legal offence and a legal 4-3.
+    fields:
+      handle_kind:
+        offset: 0x00
+        type: u8
+        confidence: dump
+        source: world.py (this map)
+        note: >-
+          Always 1 -- the handle kind for "player". The first word of a player
+          object IS its own handle, which is why every cross-reference in the
+          engine can store four bytes instead of a pointer.
+      side:
+        offset: 0x01
+        type: u8
+        confidence: dump
+        source: world.py (this map)
+        note: >-
+          0 or 1. Reads 0 for slots 0..10 and 1 for slots 11..21 in the in-play
+          dump. 56 of GetPlayer's 466 call sites load the side argument with
+          `lbu a0, 1(rs)`.
+      index:
+        offset: 0x02
+        type: u8
+        confidence: dump
+        source: world.py (this map)
+        note: The player's slot within his side. Reads 0..10 twice over.
+      controller:
+        offset: 0x08
+        type: u8
+        confidence: dump
+        source: cpu-dt-animations.md
+        note: >-
+          255 = AI, confirmed: in extract/ee_inplay.bin exactly one player
+          reads 0 -- side 0 index 0, the quarterback -- and the other 21 read
+          255. The dump is practice mode with the human on offence, so this
+          also identifies the human-controlled player.
+      pos_x:
+        offset: 0x190
+        type: f32
+        confidence: dump
+        source: world.py (this map)
+      pos_y:
+        offset: 0x194
+        type: f32
+        confidence: dump
+        source: world.py (this map)
+        note: >-
+          The downfield axis, in yards. Confirmed in extract/ee_inplay.bin: the
+          offence sits at y 8.0-14.2 and the defence at y 16.7-25.9, and the
+          five offensive linemen line up at x -3.34 -1.67 -0.21 1.67 3.35 --
+          evenly spaced about the centre, which is what makes the x/y
+          assignment unambiguous rather than a coin flip. The jam eligibility
+          helper 0x001B9360 uses receiver.y < defender.y as its "downfield"
+          test, reading 404(s0).
+      pos_z:
+        offset: 0x198
+        type: f32
+        confidence: dump
+        source: world.py (this map)
+      vel_x:
+        offset: 0x1B8
+        type: f32
+        confidence: code
+        source: world.py (this map)
+        note: >-
+          The lead-blocker "x2 velocity lead" at 0x001B6274..0x001B6294 loads
+          0x1B8 and 0x1BC, doubles each, and adds them into the 0x190/0x194
+          position it just copied. That pins position and velocity together.
+          No document publishes either offset.
+      vel_y:
+        offset: 0x1BC
+        type: f32
+        confidence: code
+        source: world.py (this map)
+      vel_z:
+        offset: 0x1C0
+        type: f32
+        confidence: doc
+        source: world.py (this map)
+        note: Inferred from the x/y pair. Not observed in code.
+      speed_cmd:
+        offset: 0x1E8
+        type: f32
+        confidence: code
+        source: lead-blocker-targeting.md
+        note: swc1 f0, 488(s1) at 0x001F2068.
+      desired_bearing:
+        offset: 0x1EC
+        type: u32
+        confidence: code
+        source: lead-blocker-targeting.md
+        note: 24-bit BAM angle, 0x01000000 = 360 degrees. sw v0, 492(s1).
+      facing:
+        offset: 0x1F0
+        type: u32
+        confidence: code
+        source: lead-blocker-targeting.md
+        note: BAM angle. sw v0, 496(s1).
+      state_chain:
+        offset: 0x2FC
+        type: ptr
+        confidence: doc
+        source: fb-wr-blocking.md
+        note: >-
+          Pointer to 4-byte {id, p1, p2, p3} records; [0] is the current state
+          id and [4] the next. Bit 7 of byte 0 means "more follow".
+      engagement:
+        offset: 0x3E0
+        type: u32
+        enum: engagement_kind
+        confidence: doc
+        source: block-cycle.md
+      engagement_link:
+        offset: 0x3E4
+        type: handle
+        confidence: doc
+        source: pitch-play-runner.md, lead-blocker-targeting.md
+        note: Who this player is engaged with. Resolve through the handle format.
+      block_mode:
+        offset: 0x3F0
+        type: u32
+        enum: block_mode
+        confidence: doc
+        source: pass-vs-run-blocking.md, block-cycle.md
+      staged_drive:
+        offset: 0x404
+        type: u32
+        confidence: doc
+        source: lead-blocker-targeting.md
+      staged_bearing:
+        offset: 0x40C
+        type: u32
+        confidence: doc
+        source: lead-blocker-targeting.md
+        note: Copied into desired_bearing every frame while the engagement holds.
+      staged_facing:
+        offset: 0x410
+        type: u32
+        confidence: doc
+        source: lead-blocker-targeting.md
+      contest_power:
+        offset: 0x414
+        type: f32
+        confidence: doc
+        source: pass-rush.md, pass-vs-run-blocking.md
+      contest_finesse:
+        offset: 0x418
+        type: f32
+        confidence: doc
+        source: pass-rush.md, pass-vs-run-blocking.md
+      contest_overall:
+        offset: 0x41C
+        type: f32
+        confidence: doc
+        source: pass-vs-run-blocking.md
+        note: >-
+          NOT a dead field. fact-check-2026-08.md Tier 1 item 3 refutes
+          pass-rush.md's "computed and never read" three times over. Read here,
+          never written.
+      tug_power:
+        offset: 0x420
+        type: f32
+        confidence: doc
+        source: pass-rush.md
+      tug_finesse:
+        offset: 0x424
+        type: f32
+        confidence: doc
+        source: pass-rush.md
+      tug_total:
+        offset: 0x428
+        type: f32
+        confidence: doc
+        source: pass-rush.md
+      engage_timer:
+        offset: 0x42C
+        type: u16
+        confidence: doc
+        source: lead-blocker-targeting.md
+      reselect_timer:
+        offset: 0x432
+        type: u16
+        confidence: doc
+        source: lead-blocker-targeting.md
+        note: Initialised to 30 - blockRating/16.
+      dt_record:
+        offset: 0x436
+        type: u8
+        confidence: doc
+        source: block-cycle.md
+        note: Index into play_manager.dt_registry.
+      dt_role:
+        offset: 0x437
+        type: u8
+        enum: dt_role
+        confidence: doc
+        source: block-cycle.md
+      height:
+        offset: 0xAE8
+        type: f32
+        confidence: dump
+        source: pass-rush.md
+        note: >-
+          Inches, as a FLOAT -- not the u8 the docs imply. Reads 70.0 to 78.0
+          across the 22 players (77.0 for the 6'5" quarterback, 70.0 for a
+          corner). All eight load sites in the image are `lwc1`. This is also
+          the base address the roster-record fill is handed
+          (`addiu s1, s0, 2792`).
+      weight:
+        offset: 0xAEC
+        type: f32
+        confidence: dump
+        source: tackle-contest.md, pass-rush.md
+        note: >-
+          POUNDS, AS A FLOAT. Not pounds-minus-160, and not a byte.
+          extract/ee_inplay.bin reads 226.0 for the quarterback (Brad Johnson,
+          226 lb), 299.0-322.0 for the five offensive linemen and 185.0 for a
+          corner. Pounds-minus-160 would make those linemen 459-482 lb.
+          All 19 load sites are `lwc1`, and the consumers take
+          `cvt.w.s` of the value and add it straight to 0..255 ratings -- see
+          the blocking power axis at 0x001EFD14, which computes
+          STR + AGI + trunc(weight) + PPBK|PRBK.
+          THIS CONTRADICTS fact-check-2026-08.md. Its Tier 2 row rewrites
+          tackle-contest.md's "305-lb DT gets +19, 190-lb CB +11" to +9 / +1 on
+          the grounds that the field is pounds-minus-160. The original was
+          right: 305/16 = 19 and 190/16 = 11 only work in real pounds. The
+          pounds-minus-160 encoding is the roster DATABASE column PWGT; the
+          player object holds the decoded value. The correction corrected a
+          correct number.
+      weight_copy:
+        offset: 0x1E4
+        type: f32
+        confidence: code
+        source: world.py (this map)
+        note: >-
+          The roster fill copies the weight here immediately after loading it
+          (`lwc1 f0, 2796(s0)` / `swc1 f0, 484(s0)` at 0x0017D034). A second
+          copy inside the locomotion block; not known to be kept in sync.
+      roster_id:
+        offset: 0xAF2
+        type: u16
+        confidence: code
+        source: world.py (this map)
+        note: >-
+          The lineup copier at 0x0011D61C compares `lhu a0, 2802(s0)` against
+          halfword 10 of the source roster record before copying. Meaning
+          beyond "identity" is a guess.
+      position:
+        offset: 0xB04
+        type: u8
+        enum: position
+        confidence: doc
+        source: fb-wr-blocking.md, roster-delivery.md
+      running_style:
+        offset: 0xB07
+        type: u8
+        enum: running_style
+        confidence: doc
+        source: hb-vision-and-moves.md, robo-qb.md
+        note: >-
+          Roster-sourced, and it HAS writers (0x001694A4 and the lineup copier
+          at 0x0011D648). fact-check-2026-08.md Tier 1 item 2 refutes
+          hb-vision-and-moves.md's "no writer anywhere" headline.
+      ratings:
+        offset: 0xB70
+        type: u16
+        count: 21
+        enum_index: attribute
+        confidence: dump
+        source: slider-behavior.md
+        note: >-
+          Effective ratings, rebuilt by 0x00168598 before each play from the
+          roster value, the skill class and the sliders. Scale is 0..255:
+          value = trunc(rating * 2.55). Gameplay reads only this table, never
+          a raw 0..100 rating. Confirmed: all 462 halfwords in the in-play
+          dump fall in 0..255, and the quarterback's row reads high Throw
+          Accuracy and Throw Power (242 and 226, indices 17 and 18) and low
+          Speed (115, i.e. 45) -- so the ordering is right semantically, not
+          only structurally.
+      ai_state:
+        offset: 0xBCC
+        type: u8
+        enum: ai_state
+        confidence: dump
+        source: fb-wr-blocking.md
+        note: >-
+          The current AI state id. fb-wr-blocking.md flagged this as
+          "inference, corroborated by the six-id agreement between two
+          independent tables, not proven" -- it is now proven: in
+          extract/ee_inplay.bin +0xBCC equals byte 0 of the state-chain record
+          for all 22 players, with no exceptions.
+
+  play_manager:
+    source: block-cycle.md, lead-blocker-targeting.md
+    confidence: code
+    note: >-
+      Field census done here by scanning every `lw rX, -17520(gp)` in the dump
+      and reading the offsets used off the result: only +0x00, +0x54, +0x58,
+      +0x59, +0x5A and +0x3E4 appear. That is consistent with the documented
+      layout -- the registry occupies +4..+83 and the counter sits at +84.
+    fields:
+      dt_registry:      {offset: 0x04, type: struct, stride: 20, count: 4, source: block-cycle.md}
+      frames_since_snap:
+        offset: 0x54
+        type: u32
+        source: lead-blocker-targeting.md
+        confidence: code
+        note: >-
+          Reset by `sw zero, 84(v1)` at 0x001F7034, incremented by
+          `lw/addiu/sw 84(v1)` at 0x001F5B94..0x001F5B9C, and read at 29 sites.
+          Confirmed exactly as documented.
+      flag_58:          {offset: 0x58, type: u8, confidence: code, source: world.py (this map)}
+      flag_59:          {offset: 0x59, type: u8, confidence: code, source: world.py (this map)}
+      flag_5a:
+        offset: 0x5A
+        type: u8
+        confidence: code
+        source: world.py (this map)
+        note: Cleared alongside the frame counter at play init (0x001F702C).
+
+  dt_record:
+    stride: 20
+    source: block-cycle.md
+    confidence: doc
+    note: >-
+      block-cycle.md names the five members but not their offsets. Encoded in
+      declaration order at word granularity, which is a guess about layout, not
+      about content. Do not trust the offsets until an in-play dump exists.
+    fields:
+      primary:  {offset: 0x00, type: handle}
+      helper:   {offset: 0x04, type: handle}
+      doubled:  {offset: 0x08, type: handle}
+      second:   {offset: 0x0C, type: handle}
+      active:   {offset: 0x10, type: u32}
+
+  ball_manager:
+    source: world.py (this map)
+    confidence: code
+    note: GetBall 0x001FF9B8 returns `mgr + active*240 + 8`.
+    fields:
+      active: {offset: 0x01, type: u8, note: which ball record is live}
+      balls:  {offset: 0x08, type: struct, stride: 240, struct_name: ball}
+
+  ball:
+    stride: 240
+    source: zone-bunching.md
+    confidence: code
+    confidence_note: RESOLVED against extract/ee_inplay.bin -- see below.
+    note: >-
+      Offsets from the accessors, which resolve a handle stored in the ball:
+      0x00200040 -> 0x001FFFF0 -> ResolveHandle(ball+180), and 0x00200070 ->
+      0x00200018 -> ResolveHandle(ball+184). zone-bunching.md names 0x00200040
+      "carrier" and 0x00200070 "lastCarrier"; the same doc's "+0xB8 has a
+      single writer, SetBallCarrier" appeared to contradict that. It does not:
+      SetBallCarrier 0x001FFF18 writes the SAME handle to both +0xB4 and +0xB8
+      (two calls to the handle setter 0x0013B870 at 0x001FFF54 and 0x001FFF60),
+      and only +0xB4 is additionally cleared elsewhere. So +0xB4 is the live
+      carrier and +0xB8 is the sticky last carrier, exactly as the accessor
+      names say. The in-play dump agrees: pre-snap +0xB4 is null and +0xB8
+      holds handle 0x00010001 = side 0, index 1 -- the halfback.
+    fields:
+      carrier:      {offset: 0xB4, type: handle}
+      last_carrier: {offset: 0xB8, type: handle}
+      unk_c8:       {offset: 0xC8, type: handle}
+      unk_cc:       {offset: 0xCC, type: handle}
+
+  ball_spot:
+    source: pitch-play-runner.md
+    confidence: doc
+    note: >-
+      Read by 0x00260208 as two `lwu`, packed into one 64-bit return that
+      callers split with dsll32/dsrl32. The loads are `lwu`, so the stored form
+      may not be float; treated as f32 here on the doc's word.
+    fields:
+      x: {offset: 0x0C, type: f32}
+      y: {offset: 0x10, type: f32}
+
+  gamestate:
+    source: world.py (this map)
+    confidence: code
+    note: >-
+      Only +0x98 and +0x9C are ever touched -- seven references to
+      gp-19072 in the whole image, and nothing else. See `phase`.
+    fields:
+      phase:      {offset: 0x98, type: u32}
+      phase_prev: {offset: 0x9C, type: u32}
+
+  slider_block:
+    source: slider-behavior.md
+    confidence: doc
+    note: 31 bytes. Human row at +0, CPU row at +15, master enable at +30.
+    fields:
+      human:  {offset: 0x00, type: u8, count: 15}
+      cpu:    {offset: 0x0F, type: u8, count: 15}
+      enable: {offset: 0x1E, type: u8}
+
+  ptrk:
+    source: play-tendency-ai.md
+    confidence: doc
+    note: 1556 bytes; 16-byte header then two 48x16 record rings, one per side.
+    fields:
+      repetition:
+        offset: 0x00
+        type: f32
+        note: 0.0 when the play is excluded, 0.041667 when included; capped at 0.9375
+      success:
+        offset: 0x04
+        type: f32
+        note: consumed as a boolean -- the test is value > 0.25
+
+# ---------------------------------------------------------------------------
+# Derived values that are not a plain memory read
+# ---------------------------------------------------------------------------
+derived:
+
+  frames_since_snap:
+    expr: "[[0x00601280] + 0x54]"
+    type: u32
+    source: lead-blocker-targeting.md
+    confidence: code
+
+  phase:
+    getter: 0x0015ADA0
+    type: u32
+    source: fb-wr-blocking.md, press-and-routes.md
+    confidence: refuted
+    readable: false
+    note: >-
+      THERE IS NO PLAY-PHASE MEMORY READ, and 0x0015ADA0 is probably not the
+      play phase either. Both halves settled against extract/ee_inplay.bin.
+      An earlier revision of this map guessed the backing store was
+      [[0x00600C70] + 0x98], because the getter returns that when
+      0x00154790 yields 3, which happens when the screen id is 0x0E. In the
+      in-play dump the screen id reads 2, so the getter takes the OTHER branch
+      during actual gameplay and [gamestate+0x98] is not what callers see. It
+      reads 6 there, which is simply the literal stored at 0x00148568.
+      What the other branch does: 0x0015ADE0 calls 0x0015B418 to find the
+      player holding the ball, then 0x0015AEB8, which fetches that player's
+      authored play-record class byte through the play blob (0x00243C98) and
+      tests it. The result is therefore a property of the CALLED PLAY, not a
+      per-frame phase -- which also explains why the jam eligibility helper
+      0x001B9360 requires it to equal 3 before allowing a jam: you jam on a
+      pass play. "Play phase" in fb-wr-blocking.md and press-and-routes.md is
+      most likely a mislabel for a play-type getter.
+      Consequence for this layer: `World.phase()` cannot be implemented as a
+      read and does not pretend to be. Use `frames_since_snap`, which is a
+      genuine per-frame counter, plus the AI state ids, which change between
+      pre-snap and live.
+
+  handle:
+    type: u32
+    layout: "byte0 = kind, byte1 = side, byte2 = index, byte3 = pad"
+    resolver: 0x0013B798
+    source: world.py (this map)
+    confidence: code
+    note: >-
+      The engine's universal object reference: every cross-reference between
+      objects (ball carrier, engagement link, double-team registry) stores one
+      of these, not a pointer. Kind indexes a 10-entry jump table at
+      0x0057B680; kind 1 is a player and resolves to GetPlayer(side, index).
+      Kinds 0 and 8 are null. The other kinds are unidentified.
+
+# ---------------------------------------------------------------------------
+# Enumerations
+# ---------------------------------------------------------------------------
+enums:
+
+  position:
+    source: fb-wr-blocking.md, roster-delivery.md
+    confidence: dump
+    note: >-
+      Madden order, QB=0 .. P=20. Only 13/14/15 (linebackers, from the man
+      coverage jam's explicit LB arm), 16 (CB), 17 and 18 (FS/SS) are attested
+      against the executable. The rest come from roster-delivery.md's PPOS
+      column encoding, which reproduces all six ELF anchors exactly -- strong
+      circumstantial evidence that the roster column and player+0xB04 share an
+      encoding, but nothing proves the identity.
+      CLOSED against extract/ee_inplay.bin. Side 0 reads
+      0,1,3,3,3,4,5,6,7,8,9 -- QB, HB, three WR, TE, and exactly five distinct
+      values 5..9 in left-to-right x order, so 5..9 IS the offensive line and
+      that order is LT LG C RG RT. Side 1 reads
+      11,12,12,10,15,14,13,16,17,18,16 -- four down linemen inside 10..12,
+      three linebackers inside 13..15, two 16s (corners) plus 17 and 18. That
+      is a 4-3 against three receivers, which is what extract/ee_inplay.png
+      shows. The individual DL labels within 10..12 and the LOLB/MLB/ROLB
+      order within 13..15 are still inferred; everything else is observed.
+    values:
+      0: QB
+      1: HB
+      2: FB
+      3: WR
+      4: TE
+      16: CB
+      17: FS
+      18: SS
+      19: K
+      20: P
+    ranges:
+      OL: [5, 9]
+      DL: [10, 12]
+      LB: [13, 15]
+
+  running_style:
+    source: hb-vision-and-moves.md, robo-qb.md
+    confidence: dump
+    note: >-
+      Dual purpose. For a halfback the byte selects the gap-steer style
+      (0 -> style 0, 0% steer; 1 -> style 2, 65%; >=2 -> style 1, 35%). For a
+      quarterback the same byte is the QB type, where 1 is a scrambler.
+      Observed values in the in-play dump are 0, 1 and 2 across all positions,
+      so the byte is populated for everyone -- it is not HB/FB-only storage.
+
+  engagement_kind:
+    source: block-cycle.md
+    confidence: doc
+    values:
+      0: idle
+      1: idle
+      2: assigned, approaching
+      3: assigned, approaching a ball carrier
+      4: in contact
+      5: scripted two-man animation, first frame
+      6: scripted two-man animation, running
+      7: assigned as the second man on a double team
+      8: attached as the second man; the double team is live
+      9: reverse marker -- a blocker is coming for me
+
+  block_mode:
+    source: pass-vs-run-blocking.md, block-cycle.md
+    confidence: doc
+    note: >-
+      Not a play-phase flag. Mode 3 is written only by state 47's enter, and
+      the blocker assignment list admits modes 1 and 2 only -- which is why a
+      lead-blocking fullback is never entered into the assignment system.
+      Single writer, SetBlockMode 0x001F7568, 37 call sites.
+    values:
+      0: not blocking
+      1: pass block
+      2: run block
+      3: lead / pull
+
+  dt_role:
+    source: block-cycle.md
+    confidence: doc
+    values:
+      0: primary blocker
+      1: helper
+      2: doubled defender
+      3: peel-off defender
+      5: free
+
+  attribute:
+    source: cpu-dt-animations.md
+    confidence: dump
+    note: >-
+      Read directly out of the fourcc table at 0x00520140, so this is the
+      engine's own order, not a reconstruction. It matches the attribute run
+      in roster-checksum.md's 31 marshalled roster columns exactly, which
+      settles the ELF-vs-roster ordering question for the ratings block.
+    values:
+      0: ACC
+      1: AGI
+      2: AWR
+      3: BTK
+      4: CAR
+      5: CTH
+      6: JMP
+      7: IMP
+      8: INJ
+      9: KAC
+      10: KPR
+      11: PBK
+      12: RBK
+      13: SPD
+      14: STA
+      15: STR
+      16: TAK
+      17: THA
+      18: THP
+      19: TGH
+      20: KRT
+
+  ai_state:
+    source: fb-wr-blocking.md, zone-bunching.md, qb-read.md, block-cycle.md, pitch-play-runner.md
+    confidence: doc
+    note: >-
+      Partial -- 24 of 115 rows are named anywhere in docs/. The remaining ~90
+      are reachable only by hand-decoding the two state-indexed jump tables
+      fb-wr-blocking.md points at (0x00583530, threat by state, 71 entries;
+      0x00583650, defender list by +0xBCC, 77 entries). Neither has been
+      enumerated.
+      CORRECTION TO A WIDELY REPEATED CLAIM: 41 is NOT the press state. No
+      document names 41 at all; it appears twice, both times only as a member
+      of the coverage list the threat classifier at 0x001F2830 routes
+      (22/37/38/39/40/41). press-and-routes.md discusses the press state at
+      length and never gives its id. The press state id is UNKNOWN.
+      A raw state byte taken from a chain record has bit 7 set as a
+      "more follow" marker -- mask it off before comparing.
+    values:
+      42: defensive pre-snap (all 11 defenders in the in-play dump)
+      69: offensive pre-snap (ten of eleven in the in-play dump)
+      70: offensive pre-snap, the quarterback
+      1: ball carrier -- run with the ball
+      2: ball pursuit
+      15: deliver the ball (pass, handoff, pitch)
+      18: QB dropback / read / decide
+      22: man coverage
+      24: play the ball (ball in air)
+      25: authored blocking class, targets a teammate
+      26: authored blocking class, targets a teammate
+      30: pass rush / engaged
+      31: pass protection
+      32: scripted two-man block animation, owns engagement kinds 5 and 6
+      33: run blocking
+      37: zone -- CB outside (flat / deep outside)
+      38: zone -- underneath hook / curl
+      39: zone -- intermediate / transition drop
+      40: zone -- deep safety
+      41: coverage family, unnamed
+      47: lead / pull blocking
+      49: never a threat
+      50: never a threat
+      51: authored wait
+      62: never a threat
+      65: spike
+      72: authored block class -- a dispatcher that installs 47, 31 or 33
+      73: never a threat
+      85: unnamed; carries the coverage cadence jitter
+      89: never a threat
+      92: never a threat
+
+  ball_state:
+    source: zone-bunching.md, pitch-play-runner.md
+    confidence: doc
+    note: >-
+      Only two values are documented and the field's offset within the ball
+      record is not known. Whether this is the same enum as `phase` is
+      unresolved -- both use 4 for "in flight", which is suggestive and not
+      proof.
+    values:
+      4: in flight
+      5: pitch in the air
+
+  penalty_type:
+    source: slider-behavior.md
+    confidence: dump
+    note: >-
+      Read out of the pointer table at 0x005435E8. TryPenalty's 23 call sites
+      pass only {0, 2, 4..14, 17}; 1, 3, 15 and 16 have no generating code, so
+      they can be configured and never fire. The penalty MANAGER uses a
+      different index order -- it inserts OPPF (Personal Foul) at index 6 --
+      so do not use this enum to index the manager's array.
+    values:
+      0: CLIPPING
+      1: DELAY OF GAME
+      2: OFFSIDES
+      3: ENCROACHMENT
+      4: 5yd FACEMASK
+      5: 15yd FACEMASK
+      6: KICK CATCH INTERFERENCE
+      7: FAIR CATCH INTERFERENCE
+      8: FALSE START
+      9: PASS INTERFERENCE
+      10: HOLDING
+      11: INTENTIONAL GROUNDING
+      12: ROUGHING THE PASSER
+      13: RUNNING INTO THE KICKER
+      14: ROUGHING THE KICKER
+      15: UNSPORTSMANLIKE CONDUCT
+      16: PERSONAL FOUL
+      17: ILLEGAL PROCEDURE
+
+  difficulty_class:
+    source: sdchargersfanboy.md
+    confidence: doc
+    note: >-
+      From GetDifficultyClass 0x00152FF0. The lone human's team is always
+      class 1. fact-check-2026-08.md Tier 4 flags the published coverage skill
+      term 11/6/4/2 as holding only in the CPU-defence-vs-human case -- a
+      movn at 0x00153668 makes it 13/8/6/4 otherwise.
+    values:
+      0: Rookie
+      1: Pro
+      2: All-Pro
+      3: All-Madden
+
+  pass_rush_move:
+    source: pass-rush.md
+    confidence: doc
+    note: >-
+      Jump table 0x00581E40, bounded by sltiu 7. No names exist in the binary
+      -- a 104k-string sweep returns nothing for swim, rip, club or bull, so
+      the labels below are descriptive, not the engine's. 0 and 1 upgrade to
+      4 and 5; 2 and 3 never do.
+    values:
+      0: finesse A, left
+      1: finesse A, right
+      2: finesse B, left
+      3: finesse B, right
+      4: power, left
+      5: power, right
+      6: bull rush
+
+  option_group:
+    source: slider-behavior.md
+    confidence: dump
+    note: >-
+      Index ranges into the 131-entry option table. Confirmed against the
+      names read out of the dump. 68 (OLEX) and 69 (OFFD) sit inside the
+      EAsy Play run but are not EAsy Play; 110 (OHDT) sits inside the online
+      run but is not part of it. Indices 111..116 are a dead range -- the
+      getter returns 0. Shipped defaults are NOT statically recoverable; the
+      dump's 50s are the design midpoint, not evidence of a default.
+    ranges:
+      penalty: [16, 25]
+      human_gameplay: [26, 40]
+      cpu_gameplay: [41, 55]
+      easy_play: [60, 70]
+      online: [87, 116]
+    named:
+      0:  quarter length
+      1:  skill level
+      11: penalties on/off
+      15: camera
+      62: master penalty enable -- TryPenalty requires exactly 1
+      63: offsides on/off -- forced to 0 when 62 is 0
+
+  gameplay_slider:
+    source: slider-behavior.md
+    confidence: dump
+    note: >-
+      The 15 gameplay sliders, in table order. Prefix OH for the human row
+      (index 26+n) and OA for the CPU row (index 41+n). Confirmed: the dump's
+      names run OHAC OHOP OHRC OHRA OHRB OHAW OHDK OHIN OHDB OHTA OHFL OHFA
+      OHPL OHPA OHKL, matching the documented meanings in order.
+    values:
+      0: QB Accuracy
+      1: Pass Blocking
+      2: WR Catching
+      3: RB Ability
+      4: Run Blocking
+      5: Awareness
+      6: Knockdowns
+      7: Interceptions
+      8: Break Block
+      9: Tackling
+      10: FG Length
+      11: FG Accuracy
+      12: Punt Length
+      13: Punt Accuracy
+      14: Kickoff Length

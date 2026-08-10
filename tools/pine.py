@@ -192,8 +192,27 @@ class Pine:
     def game_id(self) -> str:
         return self._text(GAME_ID)
 
+    def game_uuid(self) -> str:
+        """The disc CRC, as eight hex characters rather than a number."""
+        return self._text(GAME_UUID)
+
+    def game_version(self) -> str:
+        return self._text(GAME_VERSION)
+
     def status(self) -> int:
         return struct.unpack("<I", self._request(struct.pack("<B", STATUS))[:4])[0]
+
+    def request(self, payload: bytes) -> bytes:
+        """One command, or several concatenated, and the reply's payload.
+
+        PCSX2 parses a message as a stream of commands rather than one
+        (PINE.cpp:516), so a batch is just commands laid end to end and the
+        reply is their results in order behind a single status byte. Public
+        because `madden_lab` batches its reads: forty addresses in one round
+        trip instead of forty is the difference between sampling every frame
+        and not.
+        """
+        return self._request(payload)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
