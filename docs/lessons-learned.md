@@ -108,10 +108,12 @@ Madden/NCAA family and worth checking first in any sibling title:
   *current* position with no lead term. The same shape produces zone
   bunching, runner over-run, and blocker over-run. Expect it anywhere the
   engine steers.
-* **Agency is asymmetric.** Defenders have a shed contest; the offense has
-  no equivalent — a captured blocker is passive until a timer the
-  *defender* set expires. Look for missing counterparts, not just
-  present mechanisms.
+* **Agency is asymmetric — but check the exact boundary.** A captured
+  blocker is passive until a timer the *defender* set expires. The first
+  version of this lesson said "the offense has no shed contest at all";
+  verification found the ball *carrier* can reach it (via state 30) —
+  it is specifically the offensive line and pull roles that cannot. Look
+  for missing counterparts, and then pin exactly who lacks them.
 * **Hidden CPU advantage exists but is bounded and knowable** — here an
   anti-repetition play tracker (`ptrk`), not a score-based rubber band.
   Chase the pointer, not the folklore. (`play-tendency-ai.md`)
@@ -154,6 +156,36 @@ tables, and it is the one everybody forgets.
 
 The same discipline applies in reverse: fragment code at `jr ra`+delay
 slot boundaries so a candidate cannot be entered by fall-through.
+
+## Part 7 — What the second verification round added
+
+A full adversarial re-check of the four gameplay-AI docs (2026-08-09)
+produced six P0 corrections. The patterns worth internalising:
+
+* **A base register is not self-evident.** The worst error was reading
+  `s3 = s1 + 992` as "the target" when it is *self's own engagement
+  record*. Everything downstream — "the blocker drives at the defender's
+  current position, overriding the route" — followed from that one
+  misattribution. **Resolve every base register explicitly before
+  narrating what a store means.**
+* **State a conclusion only from the instructions that produce it.** The
+  "no route landmark, no lead" census was reported against stores whose
+  values were staged elsewhere; the census could not have derived it. The
+  finding may still be true, but it was not evidenced.
+* **Quantitative tables are the most fragile artefact.** One shed-odds
+  table was unreproducible and was missing two whole multipliers. Either
+  derive numbers from a model you can re-run, or publish the mechanism
+  qualitatively.
+* **Check idioms for hidden gates.** Two "per-frame" behaviours turned
+  out to be gated behind a reaction countdown; the docs described them as
+  running every frame. If a block sits after a timer decrement, assume a
+  gate until proven otherwise.
+* **A precondition can look like a filter.** The pitch-runner's 8-yard
+  window reads like a test on teammates; it is a test on the *carrier*
+  that aborts the scan entirely. Read guard clauses before loop bodies.
+* Doc claims should carry their hazards: several conclusions rested on
+  unflagged branch-likely / REGIMM / `movz` instructions even in docs
+  whose own convention is to flag them.
 
 ## Standing debts
 

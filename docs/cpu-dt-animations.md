@@ -16,13 +16,20 @@ The block-shed contest is `BreakBlockContest 0x001a66f8` (sole caller
 scores shedder vs blocker, then plays an animation chosen by *who won*:
 
 * **Blocker score** = pass-block or run-block rating (by play phase) +
-  Strength/3 + move-type terms. It receives **no** difficulty, slider, or
-  `ptrk` modifier — in either direction.
-* **Shedder score** = Strength + move-type terms, then three modifiers
-  applied *only to the shedder*:
+  Strength/3 + move-type terms. It receives **no difficulty, slider, or
+  `ptrk` modifier** — but it *is* modified by geometry: `0x001a69a0` /
+  `0x001a69e4` apply up to ±50% from the angle between the block and the
+  carrier direction. (An earlier version of this doc said the blocker's
+  score was untouched "in either direction"; that is true only of the
+  difficulty/slider/`ptrk` family.)
+* **Shedder score** = Strength + move-type terms, then a ×4.0 multiply
+  and a **second difficulty scaler** (`0x00153400`, one caller, keyed on
+  the defense side: ×0.333 / ×0.667 / ×1.0 / ×1.333 for Rookie / Pro /
+  All-Pro / All-Madden — **a ×2 Pro→All-Madden factor on its own**), and
+  then three further modifiers applied *only to the shedder*:
   1. skill-class (`0x00153498`, one caller): ×0.75 / 1.0 / 1.2 / 1.4 for
-     Rookie / Pro / All-Pro / All-Madden — and the human is *always*
-     class 1, so the human DT never gets this;
+     Rookie / Pro / All-Pro / All-Madden — and the human is class 1 in
+     normal play (see the caveat below), so the human DT never gets this;
   2. the Break-Block slider (`0x00144718`, slot 8, S=0.70), identity at
      slider 50;
   3. the `ptrk` anti-repetition boost (`0x001a6aa0`, `+ (score/2)·f`,
@@ -42,40 +49,58 @@ The per-player "is this the user's guy" test is `player+8` (controller
 index, 255 = AI). The whole shed/rush neighborhood was swept for it:
 
 * The **only** controller-conditional instructions in the contest are the
-  CPU-only `ptrk` gate (`0x001a6a98`) and a human-only branch
-  (`0x001a7184`) — and every consequence of the human branch *favors the
-  human* (an extra move-4/5 upgrade roll, a doubled shed impulse, a
-  shorter engagement lock).
+  CPU-only `ptrk` gate (`0x001a6a98`) and a human-only test at
+  `0x001a7198` (`beq v1, 255` — `0x001a7184` is the *delay slot* that
+  loads `player+8`, not the branch) — and every consequence of the human
+  branch *favors the human* (an extra move-4/5 upgrade roll, a doubled
+  shed impulse, a shorter engagement lock).
 * The decisive question — does the engaged-with-blocker AI skip its
   auto-shed for the user-controlled DT? **No.** The state dispatcher
   (`0x001af9d0`) runs the user-think slot first and only skips the
   AI-think if it returns 1; the DL user-think (`0x0016c7e8`/`0x0016ccd0`)
   returns 0 on every path, so the AI auto-shed runs for the human's DT
-  exactly as for the CPU's. Both sides reach every move type, including
-  move 6 (button-reachable) and moves 4/5 (same Strength>65 + 50% roll).
+  exactly as for the CPU's. Both sides reach the move-type space,
+  including move 6 (button-reachable by the human). **Correction:** the
+  moves-4/5 upgrade roll is *not* symmetric — it sits inside the
+  human-only arm (`beql s4, zero` at `0x001a71c8`, `movz` at
+  `0x001a7218`); the AI reaches 4/5 by its own equivalent path at
+  `0x0019b9f0`–`0x0019ba64`. An earlier version of this doc called that
+  block shared, contradicting its own human-bonus paragraph.
 * The two-man animation subsystem itself has zero controller tests.
 
 So the human is not locked out of any animation; he is simply on the
 losing end of a stacked contest more often.
 
-## The asymmetry, quantified
+## The asymmetry (qualitative — the old numbers were wrong)
 
-Pass play, sliders 50, DT Str 88 / RG PBK 85 Str 85 (effective ratings =
-rating × 2.55 on a 0–255 scale), shed wins iff `B < A`:
+An earlier version of this doc carried a percentage table (43.8% human vs
+59.2% CPU at All-Madden). **It has been removed: the model behind it was
+missing a ×4.0 multiply, a second difficulty scaler, and the blocker's
+geometry term, and its baseline could not be reproduced.** The direction
+of the error is that the table *understated* the CPU advantage.
 
-| shedder | P(shed wins) | vs human DT |
-|---|---|---|
-| **Human DT (any difficulty)** | 43.8% | — |
-| CPU DT, Pro, f=0 | 43.8% | ±0 |
-| CPU DT, All-Pro, f=0 | 52.4% | +8.6 |
-| **CPU DT, All-Madden, f=0** | **59.2%** | +15.4 |
-| CPU DT, All-Madden, f=0.5 (repeated play) | 67.3% | +23.5 |
-| CPU DT, All-Madden, f=0.9375 (max) | 72.2% | +28.4 |
+What is solid without the arithmetic:
 
-The CPU shedder's score is multiplied by up to ×2.06; the blocker's score
-is never touched. Over a game, and especially against a repeated
-offensive play, the CPU DT shows the "win" (highlight) animation set far
-more than the human's — exactly the reported phenomenon.
+* **Two difficulty scalers stack on the shedder**, both CPU-side only:
+  `0x00153498` (×0.75 / 1.0 / 1.2 / 1.4) and `0x00153400` (×0.333 /
+  0.667 / 1.0 / 1.333, keyed on the defense side). Pro → All-Madden is
+  ×1.4 from the first and **×2.0 from the second**.
+* **The `ptrk` boost adds up to +94%** on top of that, CPU-side only,
+  scaled by how often you have repeated the current play.
+* **The human DT gets none of these** — his side is class 1 in normal
+  play, though see the caveat below.
+* **The blocker's score gets no difficulty term at all**, only the ±50%
+  geometry term.
+
+So the CPU DT wins the shed contest substantially more often, by a margin
+that grows with difficulty and with play repetition, and win/lose select
+disjoint animation sets — which is the reported phenomenon. Re-deriving
+exact percentages requires walking the move-type jump table at
+`0x00581e40` and the angle term first.
+
+**Caveat on "the human is always class 1":** `0x00152ff0` returns
+`[*(0x00600ce0)+0]` or `[+4]` depending on who is human; both are runtime
+words. That reading needs a PINE read on the rig to confirm.
 
 ## Fix candidates (single-word, `file_offset = vaddr − 0xFF000`)
 
@@ -106,7 +131,10 @@ Recommended: (1) alone for the default-uplift pnach.
   contest driver here).
 * Effective ratings are the 0–100 Madden rating × 2.55 on a 0–255 scale
   (proven: the STR>65 move-4/5 gate compares against 165.75 = 65×2.55).
-* No REGIMM/MMI in any walked path here; but Lane L again rebuilt the
-  enhanced disassembler in scratch — the standing request to fold
-  REGIMM/MMI/3-operand-mult/gp-annotation into `recon/mipsdis.py` is now
-  made by five lanes.
+* Conditional-move hazards in this chain that the first version did not
+  flag: `0x001a6adc`/`0x001a6ae0` (`movz`, the score clamps in the
+  contest) and `0x001a7218` (`movz`, the move-4↔5 select).
+* Verified by an independent adversarial pass (2026-08-09): the contest
+  structure, the B<A draw, the exact win/lose animation ID sets, the
+  no-controller-gate finding, the user-think return paths, and every fix
+  opcode word all held. What did not hold is recorded above.

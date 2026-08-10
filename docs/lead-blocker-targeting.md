@@ -34,14 +34,16 @@ behavior, not the current behavior:
    locomotion — the blocker keeps running his route during the delay.
 
    **Verified feasible, cheaply.** The engine keeps a true frames-since-
-   snap counter at `[0x00601280+84]` (reset at play init `0x001f7034`,
-   incremented at `0x001f5b94`), already used as a gate elsewhere
+   snap counter at **`*(0x00601280) + 84`** — a double indirection: `gp−17520`
+   holds a *pointer*, and the counter is at +84 off it. (Written here as
+   `[0x00601280+84]` in an earlier draft, which would read garbage.) Reset
+   at play init `0x001f7034`, incremented at `0x001f5b94`, already used as a gate elsewhere
    (`sltiu` idioms at `0x001f5214`, `0x001f02f4`). The gate: keep the
    blocker at engagement kind 1 until `frames ≥ THRESH` by gating the
    kind-4 stamp in `0x001ef820` (and the kind-5 pairing at `0x001f0600`).
    Because both the steering pass and the choosers are kind-gated, **the
-   route override at `0x001f1dec` never fires during the delay** — the
-   blocker keeps running his pull path; selection alone is withheld.
+   engagement machinery at `0x001f1dec` never fires during the delay** —
+   the blocker keeps running his pull path; selection alone is withheld.
    Per-play authoring of the threshold is feasible via a state-chain
    `p`-param but unconfirmable without a play file; start with a global
    constant. Caveat: a *defender* can still capture him during the window
@@ -54,13 +56,15 @@ Blocking is not run by a route-aware or threat-ranked defender selector.
 A **single global per-frame engagement manager** (`0x001f7298`, called from
 the gameplay tick, live phases 3/4) pairs a blocker to a defender **purely
 on proximity**, holds the pairing for a **block-rating-scaled countdown
-(~15–30 frames)**, and while paired **overwrites the blocker's locomotion
-command to drive straight at the defender's *current* position, discarding
-the route the blocker's state machine was following.** There is no lead/
-pursuit term, no route blend, no already-engaged dedup, and Awareness is
-never consulted. So the shipped code already does the two things the owner
-forbids (overrides the route, aims to snap onto a defender) and does none
-of the four things the owner wants.
+(~15–30 frames)**, and on contact writes a mutual locomotion lock-in into
+both players. There is **no already-engaged dedup** and **Awareness is
+never consulted** — selection is proximity plus a rating timer, never
+correctness. Whether the engagement also *overrides the blocker's route*
+was asserted in the first version of this doc and is now **unproven**: the
+committed bearing/speed/facing are staged in the engagement record
+(`self+0x404/0x40C/0x410`) and the writer of those fields has not been
+walked (see the correction below). So the confirmed defects are wrong
+selection and no dedup; route-override is a suspicion, not a finding.
 
 ## Mechanism (evidence)
 
@@ -83,31 +87,52 @@ defender id. (A separate class-2 "block manager" `0x00242070` designates
 *which teammate is the lead blocker* by distance to the ball carrier on a
 60-frame timer — but that picks the blocker, not the defender he hits.)
 
-**The route override (the core bug under the owner's spec).** In the kind-4
-drive, the locomotion command is copied wholesale from the target geometry
-into the blocker:
+**The locomotion overwrite — CORRECTED 2026-08-09.** The first version of
+this doc described the stores below as a per-frame "drive straight at the
+defender's current position", overwriting the route. **That
+characterization was wrong** and an independent verification pass caught
+it. What the code actually does:
 
 ```
-001f1de4  lw   v0, 44(s3)      ; bearing derived from the target's CURRENT position
-001f1dec  sw   v0, 492(s1)     ; self+0x1EC desired bearing  <- overwrites the route
-001f1df0  swc1 f0, 488(s1)     ; self+0x1E8 speed
-001f1df8  sw   v0, 496(s1)     ; self+0x1F0 facing
+001f1c9c  addiu s3, s1, 992    ; s3 = SELF+0x3E0 -- own engagement record
+001f1de4  lw   v0, 44(s3)      ; self+0x40C: a bearing already staged in the record
+001f1dec  sw   v0, 492(s1)     ; self+0x1EC desired bearing
+001f1df0  swc1 f0, 488(s1)     ; self+0x1E8 speed   (from self+0x404)
+001f1df8  sw   v0, 496(s1)     ; self+0x1F0 facing  (from self+0x410)
+001f1e08/0e0c/0e18             ; the SAME three stores into the TARGET (s2)
 ```
 
-Field census of the drive chain resolves every position read to self+0x190
-and target+0x190 (current positions) — **no route landmark, and no read of
-the target's velocity (no lead)**, so a moving defender is aimed at where
-he *is* and over-run, exactly like the runner in `pitch-play-runner.md`.
+The values come from the player's **own** engagement record, not from a
+target-position difference; the triple occurs three times
+(`0x001f1de4`, `0x001f1f5c`, `0x001f2054`), always applied symmetrically
+to **both** players, always alongside `[+0x1F4] = 5`. It is the mutual
+engagement **lock-in** as kind goes 4→5, gated by a one-shot flag
+(`self+0x42E`, set at `0x001efa5c`) — not a per-frame drive.
+
+**Consequence for the fix spec:** the "no route landmark, no lead" census
+is **UNVERIFIED**. It cannot be derived from these stores, because the
+committed values are staged in `+0x404/0x40C/0x410` and *the writer of
+those fields has not been walked*. The conclusion may still be true; it
+is not currently evidenced. **Fix A below must not be implemented until
+that writer is found** — patching these three stores would break the
+engagement lock-in rather than demote a route override.
 
 **Cadence and lock/release.** Kind-4 is stamped with a countdown
 `+0x432 = 30 − blockRating/16` frames (block rating = PPBK/PRBK, attrs
-11/12; **Awareness is never read**). The release pass `0x001f5b60`
-decrements it and, on underflow, `SetTarget(self, 0, 1)` (release to idle),
-then re-acquires by the same proximity rule with no distance ceiling on the
-approach — so it can re-lock onto a useless far defender ("blocks nobody
-useful"). **The blocker already re-evaluates every ~15–30 frames** — so the
-owner's "retarget every couple of frames" premise is confirmed as cheap and
-already present; only the *criterion* and *route-primacy* are wrong.
+11/12 — note the attr choice rides a branch-likely at `0x001ef8dc`;
+**Awareness is never read**). The release pass `0x001f5b60` decrements it,
+gated to the possession team (`0x001f5c7c`), and on underflow
+(`0x001f5c90 bgez` — REGIMM, hand-decoded) **promotes rather than
+releases**: `SetTarget(self, target, 2)` plus reverse kind 9. *(Corrected
+— the first version said it released to idle with `SetTarget(self,0,1)`.
+That call exists, but on two other paths: kind 7 after 60 frames at
+`0x001f5c34`, and the kind→1 arm of `0x001ef820` at `0x001efa9c`.)*
+Re-acquisition then happens by the same proximity rule with no distance
+ceiling — so a blocker can end up on a useless far defender ("blocks
+nobody useful"). **The blocker already re-evaluates every ~15–30 frames**,
+so the owner's "retarget every couple of frames" premise is confirmed as
+cheap and already present; only the *criterion* and *route-primacy* are
+wrong.
 
 **Three proven defects:** (i) target overrides route; (ii) no already-
 engaged dedup (two blockers can pair the same defender — the `+0x3E0` read
@@ -125,7 +150,7 @@ cadence, the `+0x3E0/3E4/0x404` engagement state.
 
 | # | change | where | maps to spec | risk |
 |---|---|---|---|---|
-| **A** | demote target to a *lean*: stop the wholesale locomotion overwrite (`0x1f1dec/1df0/1df8`), keep the state machine's route bearing, apply target geometry only as a bounded lean | cave replacing 3 stores | means: route primary (#2), forbidden: no override (#4) | Med-High |
+| **A** | *(BLOCKED — do not implement yet)* demote target to a lean, if a route override is proven to exist. The three stores at `0x1f1dec/1df0/1df8` are the **engagement lock-in**, not a per-frame drive; patching them without first walking the writer of `self+0x404/0x40C/0x410` would break engagement rather than restore route primacy | cave, pending | means: route primary (#2) | **blocked** |
 | **B** | AWR-gated correct selection: at the re-decision stamp (`0x1ef820`, near `0x1ef8e8–0x1efa38`) add `lh AWR,2932(self); RandomInt(0,255); sltu` → win = accept on-route defender, loss = keep previous/none | cave | correctness roll (#3), honest miss (#4) | Med |
 | **C** | on-route selection window: constrain the accepted defender to one on/near the pull path (`FindNearestPlayer` on the defense side, seeded ahead along the route, reject off-route) | cave | correct selection along route (#2) | Med-High |
 | **D** | already-engaged dedup: before `SetTarget kind=5` at `0x1f0600`, read `[target+0x3E0]`, skip if already engaged by another blocker | cave at `0x1f0600` | correct selection (#2) | Low-Med |
@@ -133,9 +158,12 @@ cadence, the `+0x3E0/3E4/0x404` engagement state.
 
 **Feasibility bottom line:** the owner's *"retarget every couple of frames,
 pick the right defender, stay on the route, gated by Awareness, honest
-misses"* is achievable in this engine's primitives — but it is a **code
-cave (A+C+B+D)**, not a data edit, and all cave work is **blocked on the
-free-space survey** (not yet done). The cadence itself needs no change.
+misses"* is achievable in this engine's primitives as a **code cave**, not
+a data edit. Caves are now surveyed and proven (`code-caves.md`), and the
+minimum-steps gate (#5) has a fully-encoded worked example there. **B, C
+and D are ready to design against that cave budget; A is blocked** until
+the `+0x404/0x40C/0x410` writer is walked. The cadence itself needs no
+change.
 
 ## The hang-up: pulling guards stuck on the line (second owner question)
 
@@ -146,12 +174,17 @@ Distinct from wrong targeting. Diagnosis, three mechanisms checked:
   runner** (the engage gate `0x00200130` reads a global flag, not a role;
   `EngageBlock 0x001a6618` checks no assignment byte). A DT whose pursuit
   resolves onto the puller engages him on contact — realistic in itself —
-  but **the offense has no shed**: `TryShedMove`/`BreakBlockContest` are
-  defender-only, so the captured puller is passive until the engagement
-  timer (`+0x42C`, set mutually by the *defender* at `0x001a7320/33c`)
-  expires: **15 or 30 frames (0.25–0.5 s) per capture, re-armed on every
-  re-contact** — a puller who brushes the pile can be chained and never
-  reach the corner.
+  but **no offensive-line or pull-role state can shed**. *(Corrected: an
+  earlier version said `TryShedMove`/`BreakBlockContest` were
+  defender-only. They are not — state 30's AIthink calls `TryShedMove`
+  at `0x001cb9e8`, and state 30 is installed by the **ball carrier**
+  (`0x001df8cc` → `0x001b00a0`, from state 1's AIthink). So an offensive
+  player *can* run the shed contest — just never a pulling guard, who has
+  no path to state 30.)* The captured puller is therefore passive until
+  the engagement timer (`+0x42C`, set mutually by the *defender* at
+  `0x001a7320/33c`) expires: **15 or 30 frames (0.25–0.5 s) per capture,
+  re-armed on every re-contact** — he can be chained and never reach the
+  corner.
 * **Teammate body traffic: not an independent cause.** No teammate-
   collision stall exists in the walked locomotion path (consistent with
   Lane K's no-separation finding). But the cheapest lever lives here:

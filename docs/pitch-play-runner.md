@@ -12,13 +12,15 @@ team for a lead blocker, finds the nearest threatening defender in a
 forward cone, follows that defender's engagement link to the blocker
 assigned to him, and steers toward the *gap between defender and blocker*.
 The vision is real. The over-run is two separate weaknesses: (a) the
-field of view is a **forward cone** (75° for threats, plus an 8-yard-wide
-lateral window for lead blockers), so the wide, laterally-developing
-blocks of a sweep/pitch fall outside it; and (b) the **speed governor is
-weak and conditional** — the carrier runs at full speed 1.0 by default and
-only throttles once a lead blocker latches into that narrow 8-yard window,
-which on a pitch happens too late (or never), so he blows past blocks that
-are still developing wide.
+field of view is a **forward cone** (75° for threats, 45° to actually
+steer at the gap), so the laterally-developing traffic of a sweep falls
+outside it; and (b) the **speed governor is weak and conditionally
+gated** — the carrier runs at full speed 1.0 by default and only
+throttles once a lead blocker is latched, but the latch routine bails
+entirely unless the *carrier* is within 8 yards of the ball spot
+laterally. On a pitch he leaves that band almost at once, so the scan
+never runs, nothing latches, and he blows past blocks still developing
+wide.
 
 ## The carrier AI state
 
@@ -52,9 +54,12 @@ link**:
 
 So the carrier reads teammate positions, teammate engagement state, and
 the defender→blocker assignment link. It is not blind and it is not
-following a landmark. All block-reading helpers are called *only* from the
-AIthink, so tuning them affects the CPU runner without touching the human
-runner (whose USERthink calls only controller-read helpers).
+following a landmark. The block-reading helpers are called from the
+AIthink (the human's USERthink calls only controller-read helpers), so
+tuning them affects the CPU runner — with one qualifier: `0x001df2d8`
+also runs from state-1 *enter*, which executes for the human carrier too.
+Its result is only *consumed* by the AIthink-only follow routine, so the
+practical effect is nil.
 
 ## Steering chain (state 1 AIthink, per frame)
 
@@ -68,9 +73,14 @@ runner (whose USERthink calls only controller-read helpers).
 4. **Steer-to-gap** (`0x001dd9d0`): applies only within a **45° gate**
    (`0x1FFFFF`) and a 2.0-yard distance gate; a `rand(100)` roll can drop
    it (`movn s4,zero,v0` — the follow is probabilistic).
-5. **Lead-blocker latch** (`0x001df2d8`): own-team scan for a teammate
-   ahead in Y, within **|X| < 8.0** (`lui 0x4100`), heading-aligned within
-   **60°**.
+5. **Lead-blocker latch** (`0x001df2d8`): **the 8.0 window is a
+   precondition on the *carrier*, not on the teammate** — the function
+   bails before it looks at anyone unless the carrier is within 8.0 of
+   the ball spot laterally (`0x001df370`, comparing spot X against
+   `self+0x190`) and more than 4.0 from it in Y (`0x001df330`). Only then
+   does it scan the 11 own-side players for: engagement kind ∈{1,2} or
+   role byte `[+0xBCC]==47`; ≥2.25 behind the spot in Y; >1.0 ahead of
+   the carrier in Y; heading within **60°** (`0x002AAAA9`).
 6. **Lead-blocker follow / speed** (`0x001df148`): if latched, throttle
    speed (factor 5.6422 at `0x005fee40`, 0.75 cap).
 7. **Commit**: bearing → `player+0x1F0`, speed → `player+0x1E8`.
@@ -78,17 +88,22 @@ runner (whose USERthink calls only controller-read helpers).
 **Pitch-specific:** the toss has a two-phase life the handoff lacks —
 phase A (state 33) chases the pitch until distance-to-ball < 3.0 with ball
 state 5, running laterally at speed 1.0; phase B (flip to state 1)
-immediately aims downfield at that carried speed 1.0, *before* the wide
-lead blockers cross into the 8-yard latch window. That's the re-target-
-too-early moment.
+immediately aims downfield at that carried speed 1.0 — from a position
+already outside the 8-yard band that the latch routine requires. That is
+the re-target-too-early moment, and it is why the pitch is worse than the
+handoff.
 
 ## The over-run mechanism
 
 1. Base speed is 1.0 and stays there (`0x001dfdc8`, `lui 0x3f80`); no
    unconditional "slow as blocks develop" term.
-2. The only slowdown is lead-blocker-follow, gated behind the **|X| < 8.0**
-   latch — a pitch's wide blockers start outside it, so no latch → no
-   slowdown → full speed.
+2. The only slowdown is lead-blocker-follow, gated behind that latch —
+   and **on a pitch the carrier himself leaves the 8.0-yard band almost
+   immediately**, so the scan never even iterates: no latch → no slowdown
+   → full speed. (An earlier version of this doc said the *blockers*
+   started outside the window. The correction makes the mechanism
+   stronger, not weaker, and N1 remains the right lever — for this reason
+   instead of the stated one.)
 3. Defender avoidance is **cone-limited** (75° threat cone, 45° steer
    gate) — the sweep alley's lateral defenders/blocks fall outside both.
 4. On the pitch re-target, bearing snaps downfield at speed 1.0 before
@@ -99,11 +114,11 @@ too-early moment.
 
 | # | lever | address | current → patched | effect | risk |
 |---|---|---|---|---|---|
-| **N1 (rec)** | lead-blocker X window 8.0 → 16.0 | `0x001df370` | `3C014100` → `3C014180` | wide pitch blockers latch → follow-slowdown engages | Low |
+| **N1 (rec)** | carrier-position gate 8.0 → 16.0 | `0x001df370` | `3C014100` → `3C014180` | the carrier stays "eligible" further outside the hashes, so the lead-blocker scan still runs on a sweep → follow-slowdown engages | Low |
 | N5 (rec) | follow speed factor 5.6422 → ~2.5 | `0x005FEE40` (data) | pool word | harder throttle behind a latched blocker | Low |
 | N2 | lead-blocker heading tol 60° → 90° | `~0x001df45c` (2-word) | verify pair | latches blockers not already aimed at | Low-med |
-| N3 | defender cone 75° → ~110° | `~0x001dd4a0` (2-word) | verify pair | react to lateral pursuit on sweeps | Med |
-| N4 | steer-to-gap gate 45° → ~70° | `0x001dda34` (2-word) | verify pair | steers to off-axis gaps | Med |
+| N3 | defender cone 75° → ~110° | `0x001dd4a0` + `0x001dd4b4` (20 B apart) | verified pair | react to lateral pursuit on sweeps | Med |
+| N4 | steer-to-gap gate 45° → ~70° | `0x001dda2c` + `0x001dda30` (`0x001dda34` is the `slt`) | verified pair | steers to off-axis gaps | Med |
 | N6 | follow slowdown 0.75 → 0.55 | `0x001df1c4` | `3C013F40` → `3C013F0C` | stronger brake | Low |
 | N7 | carrier base speed 1.0 | `0x001dfd98` | — | **shared — also slows the HUMAN carrier; avoid** | High |
 
@@ -119,11 +134,15 @@ he reads blocks after.
 
 ## Caveats / open
 
-* `0x00260208` (the downfield/LOS reference) was identified by usage as
-  the ball-spot/LOS accessor but not fully disassembled — worth a 10-min
-  confirm before N-series tuning, as it defines the base downfield vector.
-* N2/N3/N4 need their `lui`+`ori` pairs verified in place before patching
-  (immediates and addresses given; N1/N5/N6 are single-word and ready).
+* ~~`0x00260208` unconfirmed~~ — **confirmed** by the verification pass:
+  it loads `[gp−14244]` then `lwu +12` (X) / `lwu +16` (Y), returned
+  packed in one 64-bit register (callers split with `dsll32`/`dsrl32`).
+* N3/N4 pairs are now located exactly (see the table); N2 still needs its
+  pair verified in place. N1/N5/N6 are single-word and ready.
+* **`0x001df2d8` is not AI-only**: it also runs from state-1 *enter*
+  (`0x001dfe4c`), which executes for the human carrier too. Practical
+  impact is nil — the latch is only *consumed* by `0x001df148`, which is
+  AIthink-only — but "no effect on the human" needs that qualifier.
 * Whether specific pitch plays route the RB through a different
   pre-carrier chain is play-file data (none in repo) — doesn't change the
   carrier state (always 1) or its block-reading.

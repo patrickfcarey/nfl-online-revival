@@ -17,8 +17,8 @@ anywhere in the zone-steering code**. So all hook defenders read the same
 X and slide the same direction together; nothing pushes two of them
 apart. Worse, the slide coefficient is centrifugal on outside thirds
 (0.75) and has a 3× step discontinuity at the hash mark with no
-hysteresis, so a QB drifting across a hash can instantly relocate a
-defender's landmark by several yards. Shared reference + no separation =
+hysteresis, so a QB drifting across a hash steps a defender's landmark
+1.5 yards instantly. Shared reference + no separation =
 the reported bunching, and it is fixable with a single one-word patch.
 
 ## How the landmark actually moves
@@ -29,21 +29,28 @@ lateral bound, where:
 
 * **The reference (`carrier.x`)** comes from `0x001ee4d0`:
   `ball->carrier` (`0x00200040`), or `ball->lastCarrier`
-  (`0x00200070`) when the ball state is 4 (in flight). Both handles are
-  written only by `SetBallCarrier 0x001fff18`. It is one global object —
+  (`0x00200070`) when the ball state is 4 (in flight). `+0xB8` has a
+  single writer (`SetBallCarrier 0x001fff18`); `+0xB4` is additionally
+  *cleared* at three sites (`0x001fef24`, `0x001ffea8`, `0x001ffef4`) —
+  which is exactly what makes the in-flight fallback fire. It is one global object —
   every zone defender keys the *same* X. (A genuine per-defender receiver
   nomination exists at `0x001edc88`, reading `p1` from the state record,
   but it feeds the man-tracking arm, never the landmark.)
 * **The coefficient `k`** (`0x001ee530` classifies an X by hash mark,
-  ±3.083 yd): `k = 0.5` if the *authored base* is between the hashes;
+  **±3.08 yd** — the pool constants are ∓3.0799999): `k = 0.5` if the *authored base* is between the hashes;
   else `0.75` if the carrier is in the same outside third as the base,
   `0.25` if not. So the outside arm is *centrifugal* and there is a **3×
-  jump at the hash with no hysteresis** — a one-inch carrier crossing can
-  move the landmark 5 yards, and mirror-based defenders flip at different
-  times (one lurches out while the other creeps in).
+  jump in the coefficient at the hash, with no hysteresis** — a one-inch
+  carrier crossing steps the landmark by `0.5 × 3.08 = 1.54 yd`, and
+  mirror-based defenders flip at different times (one lurches out while
+  the other creeps in). *(An earlier version said 5 yards; the
+  coefficient step is 3×, the positional step is 1.54 yd.)*
 * **The clamp** is state-specific static data: state 38 = ±22.667
-  (`0x005ff078/07c`), state 37 = ±21.667, state 40 = ±24.667 — i.e. 4/5/2
-  yards inside the sideline. No runtime writer; one reader each.
+  (`0x005ff078/07c`), state 37 = ±21.667 (`0x005ff004/008`), state 40 =
+  ±24.667 (`0x005fefd4/d8`) — i.e. 4/5/2 yards inside the ±26.667
+  sideline. No runtime writer. (One reader each, but that is the generic
+  float-pool pattern — every constant in that pool has exactly one reader
+  — so it means "safe to patch individually", not "special".)
 
 Worked example: a dead-center hook (base 0, k forced to 0.5) with the QB
 rolling to +22 lands at +11 — eight yards outside the right hash. Two
@@ -58,9 +65,13 @@ resolves to exactly three base registers — self, the latched receiver,
 or the ball carrier. **No loop, no teammate array, no proximity term.**
 Corroborating negatives: the roster array pointer (`gp−18600`) is
 confined to the accessor module; the only proximity primitive
-(`FindNearestPlayer 0x001657c0`) is called by kick coverage and catch
-resolution, never by a zone state; the state-machine's spacing hooks are
-stubs (`return 0/1`). (An earlier version of this paragraph said the
+(`FindNearestPlayer 0x001657c0`) is reached from state 37's think chain
+(`0x001ed878` → `0x001eca68` → `0x001ed060`) but with the side filter set
+to the **offense**, so it is a receiver search, not separation — no zone
+state scans its own side; the state-machine's spacing hooks are stubs
+(`return 0/1`). (An earlier version of this paragraph said
+`FindNearestPlayer` was "never called by a zone state" — it is, just not
+for teammates — and said the
 "wide-scan variants `0x0016589c`/`0x00165e58` have zero callers". That is
 wrong and was corrected by the free-space survey: `0x0016589c` is *inside*
 the live `FindNearestPlayer 0x001657c0`, and `0x00165e58` is referenced by
@@ -74,7 +85,7 @@ Nothing repels two defenders in adjacent zones. Confident negative.
 | state | role | evidence |
 |---|---|---|
 | 37 | CB outside zone (flat/deep-outside) | enter requires `position == 16` (CB) for the jam; sideline-referenced clamp; shallow depths — high confidence |
-| 38 | underneath hook / curl | LOS+11 drop (18 for MLB), 270° facing, the sliding landmark — high confidence |
+| 38 | underneath hook / curl | LOS+11 drop (18 for MLB **and** \|ΔX\| < 6.0 — the ΔX condition was omitted in the first version), 270° facing, the sliding landmark — high confidence |
 | 39 | intermediate/transition drop (a phase, no landmark, no lateral clamp) | medium |
 | 40 | deep safety zone | handler gated to positions 17/18 (FS/SS), 270° facing, AWR-scaled hold timer — high confidence |
 
@@ -84,6 +95,17 @@ sense if these states are **phases chained by play-file data**
 (`{id|0x80,p1,p2,p3}` records) — so "which state = which zone" is partly
 "which state = which phase". The assignment-class correlation couldn't be
 closed (no play files in the repo; `TEMPLATE.DAT` has none).
+
+## The slide is not per-frame (added 2026-08-09)
+
+A verification pass found an omission that matters for tuning: the whole
+landmark block — including the `jal 0x001ee5f0` — runs only on frames
+where a byte timer at `[state+2]` underflows (`0x001ee8d0 bgez`, REGIMM;
+`0x001ee94c beql`, branch-likely). The re-arm is **difficulty- and
+AWR-scaled**: `0x001535f8` returns 11 / 6 / 4 / 2 frames for Rookie /
+Pro / All-Pro / All-Madden, plus `RandInt(0, (255−AWR)>>5)`. So the zone
+landmark carries a reaction latency, and **Awareness does buy decision
+cadence here** — consistent with the "AWR is decisiveness" finding.
 
 ## Fix candidates
 
