@@ -37,17 +37,25 @@ blackboard whose target byte has **exactly one writer in the image** — so
 sites, closed: the human's four, the CPU's one, the throwaway, and the
 spike.
 
-## The authored progression — and it is play-file data
+## The progression table — real, but its provenance is open
 
 State 18's enter fills a five-slot weight array from the eligible-receiver
 enumerator, which reads a **five-entry, four-byte table at
 `playRecord + 28`**: each entry is `(receiver's player number, priority
 weight)`. It only exists on pass plays.
 
-**No instruction anywhere in the ELF writes that table** (verified by a
-full store sweep of the play-data module). The progression is authored
-content — which means **it is patchable as data**, and it is exactly what
-a play-data parser should expose.
+> **Correction, 2026-08-10.** This section previously said no instruction
+> anywhere in the ELF writes that table, and concluded the progression is
+> authored content and therefore patchable as data. **Withdrawn.** The store
+> sweep behind it could not follow a struct base passed into another
+> function. Re-run with cross-function tracking, records from the play-record
+> getter are written at +28 — by an eight-byte store spanning bytes 24–31 and
+> a float at exactly +28, at two sites. Whether those writes touch *this*
+> field depends on whether that getter returns more than one record layout,
+> which is unresolved. See `play-data.md` for the addresses and both readings.
+>
+> The table itself is exactly as described below; only "it comes from the play
+> file, so we can edit it" is in doubt.
 
 The primary is then a weighted random draw:
 

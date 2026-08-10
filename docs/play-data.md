@@ -63,18 +63,49 @@ questions, and it is a separate job from this parser.
   members, 208 empty, and 756 of some further type not yet classified.
 * CLI: `--list`, `--plays`, `--ai-groups`, `--play N`, `--scan`.
 
-## Cross-reference: the QB's progression table is play-file data
+## Cross-reference: the QB's progression table — provenance unresolved
 
-`qb-read.md` found the QB's receiver priority order — five entries of
-`(receiver number, priority weight)` at `playRecord + 28` — with **no
-writer anywhere in the ELF**. That is authored play content, and it is
-the single most valuable thing a completed play-data reader would expose:
-weight 0 and weight 1 are unreachable to the CPU QB, so *the reason backs
-and tight ends get ignored in the flat is a number in the play file*, and
-it is editable.
+`qb-read.md` found the QB's receiver priority order at `playRecord + 28`:
+five entries of `(receiver number, priority weight)`, read at
+`0x00243cb0`. Weight 0 and weight 1 are unreachable to the CPU QB, so
+whatever sets those numbers decides *which receivers the CPU will never
+look at* — which is why this table is the most valuable thing a completed
+play-data reader could expose.
 
-Note that `playRecord+28` is the **runtime** record the engine builds. How
-it maps onto either on-disc format is unresolved.
+**What this document used to say — that the table has no writer anywhere
+in the ELF, and is therefore authored play content — is withdrawn.** The
+sweep behind it could not follow a struct base across a call boundary. Re-run
+2026-08-10 with cross-function tracking, records returned by the play-record
+getter `0x00242848` **are** written at +28, from two sites:
+
+```
+002971cc  jal 0x00242848
+002971d4  daddu a3, v0, zero          ; a3 = the returned record
+00297278  sdl v0, 31(a3)              ; with the sdr below, bytes 24..31
+0029727c  sdr v0, 24(a3)
+002972b0  swc1 f0, 28(a3)             ; a float, at exactly +28
+```
+
+and the same pair again at `0x00298b34`/`0x00298b50`.
+
+**The negative is dead; the conclusion is merely unproven.** Those writes
+are a float and an eight-byte blob, which does not match the reader's
+five-byte-pair interpretation — and `0x00242848` takes a record-kind
+argument, so it plausibly hands back more than one record layout. Both
+readings survive the evidence:
+
+* the getter returns different record types, these writes belong to
+  another one, and the progression really is authored; **or**
+* it is one record, engine code populates +28, and the progression is not
+  play-file data at all.
+
+Settling it means establishing what `0x00242848`'s third argument selects.
+Until then this table must not be cited as authored content, and no fix
+should assume editing a play file would change it.
+
+Note also that `playRecord+28` is the **runtime** record the engine
+builds. Even under the authored reading, how it maps onto either on-disc
+format is unresolved.
 
 ## Next steps, in order
 
@@ -85,5 +116,8 @@ it maps onto either on-disc format is unresolved.
 2. **Find a populated TDB playbook** — a custom playbook saved to a
    memory card would validate the whole reader against real rows and cost
    nothing but a rig session.
-3. **Map `playRecord+28` to its on-disc source**, which is what actually
-   unblocks editing the QB progression.
+3. **Establish what `0x00242848`'s record-kind argument selects.** This now
+   comes before mapping `playRecord+28` to any on-disc source, because it
+   decides whether that table has an on-disc source at all.
+4. **Map `playRecord+28` to its source**, if step 3 says it has one — that
+   is what would actually unblock editing the QB progression.
