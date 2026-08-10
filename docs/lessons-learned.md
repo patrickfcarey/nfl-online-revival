@@ -9,17 +9,26 @@ were paid for with hours.
 
 ## Part 1 — Tooling: what our disassembler does not tell you
 
-These gaps produced real errors, repeatedly. **Six separate lanes each
-rebuilt the same enhanced disassembler in scratch** before this was
-written down; fold it into `recon/mipsdis.py` and stop paying the tax.
+These gaps produced real errors, repeatedly. **Eight separate lanes each
+rebuilt the same enhanced disassembler in scratch** before it was finally
+folded into `recon/mipsdis.py`. **Do not build a ninth** — use the module,
+and if it is missing something, add it there.
 
-| gap | consequence |
-|---|---|
-| `find_immediate` filters opcodes 0x08–0x0E — it cannot see `lui`, **nor any load or store** | Any "exhaustive sweep" for a constant or a struct offset done with it is **unsound**. One earlier sweep reached the right conclusion only by luck. Sweep `elf.words()` with your own opcode decoding instead. |
-| REGIMM branches (opcode 0x01: rt 0=`bltz`, 1=`bgez`, 2=`bltzl`, 3=`bgezl`) print as `.word` | Load-bearing gates read as nothing. The knockdown clamp, the coverage cadence gate, and the 110-word default-image copy loop all hinge on hand-decoded REGIMM. |
-| MMI (opcode 0x1C, e.g. `div1`/`mflo1` — the EE's second divider) prints as `.word` | Silently loses whole arithmetic terms (a `/115` vanished from one formula). |
-| R5900 `mult` is **3-operand** (writes `rd`) | Reading the 2-operand form hides difficulty-class multipliers and struct-stride math entirely. |
-| `lui` + negative `addiu`/`ori` sign extension | Hand-arithmetic gets the wrong address (`0x0057C838` misread as `0x0058C838`, twice in different lanes). Use `find_address_refs`, or be very careful. |
+| gap | consequence | status |
+|---|---|---|
+| `find_immediate` filters opcodes 0x08–0x0E — it cannot see `lui`, **nor any load or store** | Any "exhaustive sweep" for a constant or a struct offset done with it is **unsound**. One earlier sweep reached the right conclusion only by luck. | **fixed** — `find_immediate_all` sweeps every immediate-carrying opcode including loads and stores. `find_immediate` keeps its narrow filter (comparisons only) because older notes cite its output. |
+| REGIMM branches (opcode 0x01: rt 0=`bltz`, 1=`bgez`, 2=`bltzl`, 3=`bgezl`) print as `.word` | Load-bearing gates read as nothing. The knockdown clamp, the coverage cadence gate, and the 110-word default-image copy loop all hinge on hand-decoded REGIMM. | **fixed** — decoded, including the `-al` forms; the likely ones are marked `; likely`. |
+| MMI (opcode 0x1C, e.g. `div1`/`mflo1` — the EE's second divider) prints as `.word` | Silently loses whole arithmetic terms (a `/115` vanished from one formula). | **fixed** — the pipeline-1 integer set (`mult1`/`div1`/`mfhi1`/`mflo1`/`madd`…). The SIMD sub-tables MMI0–MMI3 still print as `.word`. |
+| `sllv`/`srlv`/`srav` printed `rd, rs, rt` — the operands the wrong way round | A variable shift read backwards: "shift the counter by the score". Made a live function look like unreachable dead code. | **fixed** — the six variable shifts are `rd, rt, rs`, and a mutation test pins it. |
+| COP1 (FPU) prints as `.word` unless you remember `recon/fpudis.py` | Float maths is everywhere in the gameplay code and it was easy to forget the second module mid-read. | **fixed** — `mipsdis.disassemble` delegates the three FPU opcodes to `fpudis`. |
+| R5900 `mult` is **3-operand** (writes `rd`) | Reading the 2-operand form hides difficulty-class multipliers and struct-stride math entirely. | **fixed** (earlier) — `rd` is shown whenever it is non-zero. |
+| `lui` + negative `addiu`/`ori` sign extension | Hand-arithmetic gets the wrong address (`0x0057C838` misread as `0x0058C838`, twice in different lanes). Use `find_address_refs`, or be very careful. | unchanged — this one is arithmetic, not tooling. |
+
+One addition worth knowing about: loads, stores and address-forming adds
+through `gp` now carry the address they resolve to as a comment
+(`lw v1, -19164(gp)   ; gp-relative 0x00600c14`), using `GP_BASE =
+0x006056f0`. Pass `gp=None` to `disassemble`/`dump` for a different
+executable rather than trusting a stale annotation.
 
 ## Part 2 — Reading MIPS in this binary: the recurring traps
 
@@ -243,9 +252,12 @@ Lessons that generalise:
 
 ## Standing debts
 
-1. **Fold the enhanced disassembler into `recon/mipsdis.py`** — REGIMM,
-   MMI, R5900 3-operand `mult`, gp-relative annotation, and a
-   load/store-aware immediate sweep. Requested by six lanes.
+1. ~~**Fold the enhanced disassembler into `recon/mipsdis.py`**~~ —
+   **done**. REGIMM, MMI, the `sllv` operand order, COP1 (delegated to
+   `recon/fpudis.py`), gp-relative annotation and `find_immediate_all`
+   all live in the module now, with tests in `tests/test_mipsdis.py` and
+   a mutation entry for the shift-operand bug. Requested by eight lanes;
+   there is no longer any reason to build a private one.
 2. ~~Free-space survey~~ — **done**, see `code-caves.md`. Caves exist
    (~9.2 KB of dead code, all reachable by a one-word `j`), the pnach
    mechanics are proven with a worked example, and the runtime

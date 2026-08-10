@@ -198,13 +198,14 @@ stores, arithmetic, branches, jumps -- and to answer "where is a result
 tested", not to produce a faithful listing. Two things follow from that scope,
 and both matter more than they look:
 
-- **It does not decode `REGIMM` (opcode `0x01`: `bltz`/`bgez` and their `-al`
-  variants).** An instruction in that family prints as `.word`, and has to be
-  identified by context instead -- which is what happened when a client-side
-  record check turned out to hinge on `bltz`, not `blez` (`b8be939`).
-- It also has no entry for opcode `0x00` funct values it doesn't list, which
-  is exactly the gap that produced the disassembler's worst bug (see
-  `movz`/`movn` in Part 2).
+- **Anything it does not have a table entry for prints as `.word`** -- opcode
+  `0x00` funct values it doesn't list, MMI's SIMD sub-tables, COP2/VU. That is
+  the gap that produced the disassembler's worst bug (see `movz`/`movn` in
+  Part 2), and it is why an unfamiliar `.word` deserves a hand-decode before
+  it is dismissed as data.
+- **A `.word` is never a guess.** Where the encoding is ambiguous without a
+  field the module does not read, it declines to name the instruction rather
+  than printing a plausible wrong one.
 
 Everything it *does* decode is there because a gap in it cost something.
 Branch-likely (`beql`/`bnel`/`blezl`/`bgtzl`) and the unaligned load/stores
@@ -213,13 +214,21 @@ Branch-likely (`beql`/`bnel`/`blezl`/`bgtzl`) and the unaligned load/stores
 answer creeps in, and did (see the BEQL entry in Part 2). `movz`/`movn`
 (conditional move) and the R5900's three-operand `mult`/`multu`/`div`/`divu`
 were added after each one produced a real misreading, documented in the
-source comments next to the fix. `find_address_refs` locates the `lui`/
-`addiu` (or `ori`) pair that materialises a 32-bit address -- the way MIPS
-builds a reference to a string or a global -- adjusting the high half for a
-negative low half, which is the usual reason a naive version of this search
-finds nothing. `find_jal_targets` and `find_immediate` are the
-cross-referencers: once a function or a constant is identified, these find
-every caller or every comparison against it in one pass.
+source comments next to the fix. So were REGIMM (`bltz`/`bgez`: the client-side
+record check at `b8be939` hinges on `bltz`, not `blez`), MMI's second integer
+pipeline (`div1`/`mflo1`), and the operand order of the variable shifts
+(`sllv` is `rd, rt, rs`, backwards from the rest, and reading it the usual way
+round made a live function look dead). COP1 is handed to `recon/fpudis.py`,
+which wraps this module, so float maths decodes on the default path.
+`find_address_refs` locates the `lui`/`addiu` (or `ori`) pair that materialises
+a 32-bit address -- the way MIPS builds a reference to a string or a global --
+adjusting the high half for a negative low half, which is the usual reason a
+naive version of this search finds nothing. `find_jal_targets`,
+`find_immediate` and `find_immediate_all` are the cross-referencers: once a
+function or a constant is identified, these find every caller, every
+comparison, or every instruction of any kind carrying it, in one pass. Prefer
+`find_immediate_all` for anything described as exhaustive -- `find_immediate`
+sees only the arithmetic and logical comparisons, not loads and stores.
 
 ### `serve-madden.sh` and the single-instance lock
 

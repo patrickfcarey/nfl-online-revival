@@ -8,7 +8,7 @@ currently-blocked findings it would unblock**, counted from the docs.
 
 | tool | what it does |
 |---|---|
-| `recon/mipsdis.py` + `fpudis.py` | MIPS/R5900 disassembly and cross-referencing (four known defects; repair in flight) |
+| `recon/mipsdis.py` + `fpudis.py` | MIPS/R5900 disassembly and cross-referencing (the four known defects are repaired; COP1 now decodes on the default path) |
 | `tools/pine.py` | live EE memory read/write over PCSX2's PINE socket |
 | `tools/madden_tdb.py` | TDB database reader (rosters, settings, playbook tables) |
 | `tools/lzh1.py` | EA `LZH1` codec — opens every UIS container on the disc |
@@ -116,14 +116,15 @@ Not code, but it cost real time: **three separate lanes reported
 overwriting each other's scratch files**, and one had to fork to a private
 directory mid-run. Convention going forward is per-lane subdirectories.
 Related and larger: **eight lanes each rebuilt the same enhanced
-disassembler** before the repair now in flight — the standing lesson is
+disassembler** before it was repaired in place — the standing lesson is
 that a tool defect costs the *product* of its lifetime and the number of
 agents who hit it.
 
 ## Recommended order
 
-1. **Finish the disassembler repair** (in flight) — it is upstream of
-   everything else and eight lanes have paid for it already.
+1. ~~**Finish the disassembler repair**~~ — **done**. REGIMM, MMI, the
+   variable-shift operand order, COP1 on the default path,
+   `find_immediate_all` and gp annotation are all in `recon/mipsdis.py`.
 2. **Play-data parser** — biggest unlock per hour, no hardware needed, and
    the format is already reverse-engineered.
 3. **Patch verify** (the `assert current word == expected` half alone) —

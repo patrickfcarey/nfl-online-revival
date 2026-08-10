@@ -44,13 +44,18 @@ mistakes that hand-reads and other disassemblers made (see its docstring):
   materialise an address. This is how you get from a string or global to the
   code that uses it.
 * `find_jal_targets(elf, target)` — every call site of a function.
-* `find_immediate(elf, value)` — every instruction carrying a 16-bit
-  immediate. This is the threshold-finder: it is exactly how the playbook cap
-  (`sltiu s1, v0, 101`) was located.
+* `find_immediate(elf, value)` — every *comparison* carrying a 16-bit
+  immediate (opcodes 0x08–0x0E only). This is the threshold-finder: it is
+  exactly how the playbook cap (`sltiu s1, v0, 101`) was located.
+* `find_immediate_all(elf, value)` — the same sweep with no opcode filter:
+  `lui`, and every load and store as well. Use this one for anything you
+  intend to call exhaustive; a struct offset or a scale constant used only in
+  an address calculation is invisible to `find_immediate`.
 
 ```python
 import sys; sys.path.insert(0, '.')
-from recon.mipsdis import Elf32, dump, find_address_refs, find_jal_targets, find_immediate
+from recon.mipsdis import (Elf32, dump, find_address_refs, find_jal_targets,
+                           find_immediate, find_immediate_all)
 elf = Elf32('extract/SLUS_207.52')
 ```
 

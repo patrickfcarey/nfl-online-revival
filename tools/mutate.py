@@ -114,6 +114,14 @@ REGRESSIONS: List[Regression] = [
         "BEQL at 0x13 silently inverts every branch-likely condition printed, "
         "and those readings go into the documentation as facts."),
     Regression(
+        "variable-shift-operand-order", "recon/mipsdis.py",
+        '            return "%s %s, %s, %s" % (name, _REGS[rd], _REGS[rt], _REGS[rs])',
+        '            return "%s %s, %s, %s" % (name, _REGS[rd], _REGS[rs], _REGS[rt])',
+        "sllv/srlv/srav are rd, rt, rs -- the reverse of every other SPECIAL "
+        "form. Printed the generic way round, a shift of a value by a counter "
+        "reads as a shift of the counter by the value, and a live function "
+        "reads as dead code."),
+    Regression(
         "roster-team-from-file", "tools/build_year_roster.py",
         "            team_id = resolve_team(abbreviation, team_ids)",
         "            team_id = team['tgId']",

@@ -1,7 +1,13 @@
-"""Scratch: wrap recon.mipsdis with COP1 (FPU) decoding for read-only recon."""
-import sys
-sys.path.insert(0, '/mnt/c/GitHub/nfl-online-revival')
-from recon.mipsdis import Elf32, disassemble as base_dis, _signed16
+"""Wrap ``mipsdis`` with COP1 (FPU) decoding for read-only recon.
+
+Gameplay maths on this console is largely float, so this is a superset of
+``mipsdis``: it decodes the COP1 forms and hands everything else back to it.
+``mipsdis.disassemble`` returns the favour for the three FPU opcodes, which is
+why the fallback below must stay a *fallback* -- if this module ever forwarded
+an FPU opcode to ``base_dis``, the two would call each other forever.
+"""
+from .mipsdis import (Elf32, disassemble as base_dis, _signed16, _REGS,
+                      _gp_note, GP_BASE)
 
 FREG = ["f%d" % i for i in range(32)]
 
@@ -15,7 +21,7 @@ COP1_FUNCT = {
 }
 
 
-def dis(word, vaddr=0):
+def dis(word, vaddr=0, gp=GP_BASE):
     op = word >> 26
     if op == 0x11:  # COP1
         fmt = (word >> 21) & 0x1F
@@ -25,9 +31,9 @@ def dis(word, vaddr=0):
         funct = word & 0x3F
         imm = _signed16(word & 0xFFFF)
         if fmt == 0x00:
-            return "mfc1 %s, %s" % (["zero","at","v0","v1","a0","a1","a2","a3","t0","t1","t2","t3","t4","t5","t6","t7","s0","s1","s2","s3","s4","s5","s6","s7","t8","t9","k0","k1","gp","sp","fp","ra"][ft], FREG[fs])
+            return "mfc1 %s, %s" % (_REGS[ft], FREG[fs])
         if fmt == 0x04:
-            return "mtc1 %s, %s" % (["zero","at","v0","v1","a0","a1","a2","a3","t0","t1","t2","t3","t4","t5","t6","t7","s0","s1","s2","s3","s4","s5","s6","s7","t8","t9","k0","k1","gp","sp","fp","ra"][ft], FREG[fs])
+            return "mtc1 %s, %s" % (_REGS[ft], FREG[fs])
         if fmt == 0x02:
             return "cfc1 r%d, %d" % (ft, fs)
         if fmt == 0x06:
@@ -49,21 +55,23 @@ def dis(word, vaddr=0):
             if funct == 0x20:
                 return "cvt.s.w %s, %s" % (FREG[fd], FREG[fs])
         return ".cop1 0x%08x" % word
-    if op == 0x31:
-        return "lwc1 %s, %d(%s)" % (FREG[(word >> 16) & 0x1F], _signed16(word & 0xFFFF),
-                                    ["zero","at","v0","v1","a0","a1","a2","a3","t0","t1","t2","t3","t4","t5","t6","t7","s0","s1","s2","s3","s4","s5","s6","s7","t8","t9","k0","k1","gp","sp","fp","ra"][(word >> 21) & 0x1F])
-    if op == 0x39:
-        return "swc1 %s, %d(%s)" % (FREG[(word >> 16) & 0x1F], _signed16(word & 0xFFFF),
-                                    ["zero","at","v0","v1","a0","a1","a2","a3","t0","t1","t2","t3","t4","t5","t6","t7","s0","s1","s2","s3","s4","s5","s6","s7","t8","t9","k0","k1","gp","sp","fp","ra"][(word >> 21) & 0x1F])
-    return base_dis(word, vaddr)
+    if op in (0x31, 0x39):
+        # lwc1/swc1. Float constants and tuning tables usually sit gp-relative,
+        # so these get the same annotation an integer load would.
+        rs = (word >> 21) & 0x1F
+        simm = _signed16(word & 0xFFFF)
+        return "%s %s, %d(%s)%s" % ("lwc1" if op == 0x31 else "swc1",
+                                    FREG[(word >> 16) & 0x1F], simm,
+                                    _REGS[rs], _gp_note(gp, rs, simm))
+    return base_dis(word, vaddr, gp)
 
 
-def d(elf, start, count=32):
+def d(elf, start, count=32, gp=GP_BASE):
     out = []
     for i in range(count):
         v = start + i * 4
         w = elf.word(v)
         if w is None:
             break
-        out.append("  %08x  %08x  %s" % (v, w, dis(w, v)))
+        out.append("  %08x  %08x  %s" % (v, w, dis(w, v, gp)))
     return "\n".join(out)

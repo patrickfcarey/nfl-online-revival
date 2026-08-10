@@ -23,6 +23,17 @@ The R5900 traps, all of which have cost this project time:
 * **The low half of a lui/addiu pair is sign-extended**, so the high half is
   adjusted when the low half has bit 15 set. Getting that wrong is the usual
   reason an address search finds nothing.
+* **REGIMM (opcode 0x01) keeps its condition in the rt field.** Left undecoded
+  it prints as `.word`, and a gate that prints as nothing reads as no gate.
+* **MMI (opcode 0x1C) is a whole second integer pipeline.** A `div1` printed as
+  `.word` took a `/115` term out of a formula without leaving a mark.
+* **Variable shifts are `rd, rt, rs`**, the reverse of every other
+  three-register SPECIAL form. Printed the usual way round, a shift of the
+  score by a counter reads as a shift of the counter by the score.
+
+The instruction words used below with no explanatory arithmetic were copied out
+of `extract/SLUS_207.52` at the addresses named in their comments. The file is
+not in the repository, so they are inlined rather than read back.
 """
 
 from __future__ import annotations
@@ -36,7 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from recon import mipsdis  # noqa: E402
+from recon import fpudis, mipsdis  # noqa: E402
 
 
 def i_type(op, rs, rt, imm):
@@ -47,6 +58,11 @@ def r_type(rs, rt, rd, funct, shamt=0):
     return (rs << 21) | (rt << 16) | (rd << 11) | (shamt << 6) | funct
 
 
+def mmi_type(rs, rt, rd, funct):
+    """SPECIAL's layout under opcode 0x1C, the second integer pipeline."""
+    return (0x1C << 26) | r_type(rs, rt, rd, funct)
+
+
 def j_type(op, target):
     return (op << 26) | ((target >> 2) & 0x03FFFFFF)
 
@@ -54,6 +70,7 @@ def j_type(op, target):
 #: Register numbers used below, by the names the listing prints.
 ZERO, AT, V0, V1, A0, A1, A2, A3 = range(8)
 S0 = 16
+GP = 28
 
 
 class BranchLikely(unittest.TestCase):
@@ -153,6 +170,86 @@ class Multiply(unittest.TestCase):
                              "%s a2, a0, a1" % name)
 
 
+class Regimm(unittest.TestCase):
+    """Opcode 0x01, where the condition hides in the rt field."""
+
+    def test_the_four_conditions(self):
+        for rt, name in ((0, "bltz"), (1, "bgez"), (2, "bltzl"), (3, "bgezl")):
+            text = mipsdis.disassemble(i_type(0x01, S0, rt, 4), 0x00400000)
+            self.assertTrue(text.startswith("%s s0, 0x00400014" % name), text)
+
+    def test_the_and_link_forms(self):
+        for rt, name in ((0x10, "bltzal"), (0x11, "bgezal")):
+            text = mipsdis.disassemble(i_type(0x01, S0, rt, 4), 0x00400000)
+            self.assertTrue(text.startswith("%s s0, " % name), text)
+
+    def test_the_target_is_pc_relative_from_the_delay_slot(self):
+        # 0x06000004 at 0x001448b8, the shape these gates usually take.
+        self.assertEqual(mipsdis.disassemble(0x06000004, 0x001448b8),
+                         "bltz s0, 0x001448cc")
+        self.assertEqual(mipsdis.disassemble(i_type(0x01, S0, 0, 0xFFFD),
+                                             0x00400000),
+                         "bltz s0, 0x003ffff8")
+
+    def test_the_likely_members_are_marked(self):
+        self.assertIn("; likely", mipsdis.disassemble(i_type(0x01, S0, 2, 4)))
+        self.assertNotIn("; likely", mipsdis.disassemble(i_type(0x01, S0, 0, 4)))
+
+    def test_an_unassigned_rt_is_word_not_a_guess(self):
+        text = mipsdis.disassemble(i_type(0x01, S0, 8, 4))
+        self.assertTrue(text.startswith(".word"), text)
+
+
+class SecondPipeline(unittest.TestCase):
+    """MMI (opcode 0x1C): the EE's second divider, and its own HI1/LO1."""
+
+    def test_a_divide_and_the_read_of_its_result(self):
+        # 0x0014ecbc/0x0014ecc0. As two `.word`s this pair is invisible, and a
+        # division that is invisible drops a term out of the formula around it.
+        self.assertEqual(mipsdis.disassemble(0x7068001A), "div1 v1, t0")
+        self.assertEqual(mipsdis.disassemble(0x70001812), "mflo1 v1")
+
+    def test_mult1_keeps_the_three_operand_rule(self):
+        self.assertEqual(mipsdis.disassemble(mmi_type(A0, A1, A2, 0x18)),
+                         "mult1 a2, a0, a1")
+        self.assertEqual(mipsdis.disassemble(mmi_type(A0, A1, ZERO, 0x18)),
+                         "mult1 a0, a1")
+
+    def test_the_moves_show_the_register_they_touch(self):
+        self.assertEqual(mipsdis.disassemble(mmi_type(0, 0, A0, 0x10)),
+                         "mfhi1 a0")
+        self.assertEqual(mipsdis.disassemble(mmi_type(A0, 0, 0, 0x13)),
+                         "mtlo1 a0")
+
+    def test_the_simd_subtables_stay_word(self):
+        # MMI0 (funct 0x08) needs the sa field as a second index. Printing the
+        # encoding is honest; guessing a mnemonic for it would not be.
+        text = mipsdis.disassemble(mmi_type(A0, A1, A2, 0x08))
+        self.assertTrue(text.startswith(".word"), text)
+
+
+class VariableShifts(unittest.TestCase):
+    """`sllv`/`srlv`/`srav` are `rd, rt, rs` -- backwards from the rest."""
+
+    def test_the_value_comes_before_the_count(self):
+        # 0x00901007 at 0x00186f68: the value in s0 shifted by the count in a0.
+        # Printed the generic way round it reads as the count shifted by the
+        # value, which is how a live function came to look like dead code.
+        self.assertEqual(mipsdis.disassemble(0x00901007), "srav v0, s0, a0")
+
+    def test_all_six_variable_shifts_use_that_order(self):
+        for funct, name in ((0x04, "sllv"), (0x06, "srlv"), (0x07, "srav"),
+                            (0x14, "dsllv"), (0x16, "dsrlv"), (0x17, "dsrav")):
+            self.assertEqual(mipsdis.disassemble(r_type(A0, A1, A2, funct)),
+                             "%s a2, a1, a0" % name)
+
+    def test_the_ordinary_three_register_forms_are_untouched(self):
+        # add/or/slt really are `rd, rs, rt`; the exception must stay one.
+        for funct, name in ((0x21, "addu"), (0x25, "or"), (0x2A, "slt")):
+            self.assertEqual(mipsdis.disassemble(r_type(A0, A1, A2, funct)),
+                             "%s a2, a0, a1" % name)
+
+
 class Immediates(unittest.TestCase):
     def test_lui_prints_its_immediate_unsigned(self):
         self.assertEqual(mipsdis.disassemble(i_type(0x0F, 0, V0, 0x8004)),
@@ -182,6 +279,60 @@ class Immediates(unittest.TestCase):
         for op, name in mipsdis._UNALIGNED.items():
             text = mipsdis.disassemble(i_type(op, S0, V0, 4))
             self.assertTrue(text.startswith(name + " "), text)
+
+
+class GpRelative(unittest.TestCase):
+    """gp is fixed for this executable, so the slot has a real address."""
+
+    def test_gp_base_is_this_executables_value(self):
+        self.assertEqual(mipsdis.GP_BASE, 0x006056F0)
+
+    def test_a_load_through_gp_is_resolved(self):
+        # 0x8f83b524 at 0x0014483c. The offset alone names nothing; the
+        # resolved address is something find_address_refs can chase.
+        self.assertEqual(mipsdis.disassemble(0x8F83B524),
+                         "lw v1, -19164(gp)   ; gp-relative 0x00600c14")
+
+    def test_the_address_forming_add_is_resolved_too(self):
+        self.assertEqual(mipsdis.disassemble(i_type(0x09, GP, V0, 0x0010)),
+                         "addiu v0, gp, 16   ; gp-relative 0x00605700")
+
+    def test_any_other_base_is_left_alone(self):
+        self.assertNotIn(";", mipsdis.disassemble(i_type(0x23, S0, V0, 4)))
+
+    def test_the_annotation_can_be_turned_off(self):
+        # Another executable has another gp, and a stale annotation would be
+        # worse than none at all.
+        self.assertEqual(mipsdis.disassemble(0x8F83B524, 0, None),
+                         "lw v1, -19164(gp)")
+
+
+class FloatingPoint(unittest.TestCase):
+    """COP1 belongs to fpudis; the default path has to reach it."""
+
+    def test_float_arithmetic_is_not_a_word(self):
+        # 0x001448a0 and 0x0014487c, in the middle of ordinary integer code.
+        self.assertEqual(mipsdis.disassemble(0x46020842), "mul.s f1, f1, f2")
+        self.assertEqual(mipsdis.disassemble(0x46800860), "cvt.s.w f1, f1")
+
+    def test_moves_between_the_two_register_files(self):
+        self.assertEqual(mipsdis.disassemble(0x44900800), "mtc1 s0, f1")
+        self.assertEqual(mipsdis.disassemble(0x44020000), "mfc1 v0, f0")
+
+    def test_a_float_load_is_annotated_like_any_other(self):
+        # 0xc78483ec at 0x00144890 -- float constants live gp-relative too.
+        self.assertEqual(mipsdis.disassemble(0xC78483EC),
+                         "lwc1 f4, -31764(gp)   ; gp-relative 0x005fdadc")
+
+    def test_the_delegation_stays_one_way(self):
+        """fpudis calls back for everything that is not FPU.
+
+        Only these three opcodes may cross, in one direction. Widen the set and
+        the two modules call each other until the stack runs out.
+        """
+        self.assertEqual(mipsdis._COP1, frozenset((0x11, 0x31, 0x39)))
+        self.assertEqual(fpudis.dis(i_type(0x09, ZERO, A3, 1)),
+                         "addiu a3, zero, 1")
 
 
 class Rendering(unittest.TestCase):
@@ -327,6 +478,44 @@ class AddressSearch(unittest.TestCase):
         hits = self._find([i_type(0x0F, 0, V0, 0x0044),
                            i_type(0x09, V0, V0, 0x6ce4)], 0x00446ce0)
         self.assertEqual(hits, [])
+
+
+class ImmediateSearch(unittest.TestCase):
+    """Two sweeps, and the difference that makes one of them unsound."""
+
+    #: A constant reached four ways: as an operand, as a struct offset, as the
+    #: high half of an address, and as a branch displacement that only looks
+    #: like the others.
+    WORDS = [i_type(0x09, ZERO, V0, 100),       # addiu v0, zero, 100
+             i_type(0x23, S0, V1, 100),         # lw v1, 100(s0)
+             i_type(0x0F, 0, A0, 100),          # lui a0, 0x0064
+             i_type(0x04, V0, V1, 100)]         # beq -- 100 is a displacement
+
+    def _sweep(self, finder, words=None, value=100):
+        path = _elf(self.WORDS if words is None else words)
+        try:
+            return [vaddr for vaddr, _ in finder(mipsdis.Elf32(path), value)]
+        finally:
+            os.unlink(path)
+
+    def test_the_narrow_sweep_sees_only_the_arithmetic_form(self):
+        self.assertEqual(self._sweep(mipsdis.find_immediate), [0x00100000])
+
+    def test_the_exhaustive_sweep_sees_the_load_and_the_lui(self):
+        # The difference that matters: a struct offset lives in a load, and a
+        # sweep that cannot see loads is not exhaustive whatever it is called.
+        # Searches described here as exhaustive were run through the narrow one.
+        self.assertEqual(self._sweep(mipsdis.find_immediate_all),
+                         [0x00100000, 0x00100004, 0x00100008])
+
+    def test_a_branch_displacement_is_not_a_constant(self):
+        # Included, it would bury the real hits under every branch of that span.
+        self.assertNotIn(0x0010000C, self._sweep(mipsdis.find_immediate_all))
+
+    def test_a_negative_value_matches_the_encoding_it_has(self):
+        self.assertEqual(self._sweep(mipsdis.find_immediate_all,
+                                     [i_type(0x09, S0, S0, 0xFFF8)], -8),
+                         [0x00100000])
 
 
 class CallSearch(unittest.TestCase):
