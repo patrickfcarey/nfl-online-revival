@@ -71,6 +71,7 @@ New to the repo? Read in this order:
 | `default-uplift-tuning.md` | verified patch-point catalog + draft pnach for getting extreme-slider behaviour at default settings (#7) |
 | `play-data.md` | where play data actually lives — two formats, and which one the engine queries |
 | `hb-vision-and-moves.md` | HB vision, special-move selection, and why halfbacks may have no vision at all (#12) |
+| `robo-qb.md` | why the QB shreds a blitz but folds to a four-man rush (#10 pressure half) |
 | `qb-read.md` | how the QB chooses a target (#10 read half) |
 | `tooling-gaps.md` | what tooling the modernization work is actually blocked on, scored by findings unblocked |
 | `code-caves.md` | the free-space survey: where injected code can live, the pnach mechanics, a proven worked example, and the rig verification plan |

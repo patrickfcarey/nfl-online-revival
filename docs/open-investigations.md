@@ -261,8 +261,18 @@ order and the effective-ratings table are known. Expect the decision to
 live in a state-machine think (the 93-state array) plus a per-play
 receiver table, the same shape as the coverage and blocker systems.
 
-**Status: open, 2004-native, high value.** This is the biggest single
-gameplay system still unmapped.
+**Status: RESOLVED — `qb-read.md` (the read) and `robo-qb.md` (pressure
+and scrambling).** Headlines: the target is a weighted random draw over a
+**play-file-authored** priority table where weights 0 and 1 are
+unreachable to the CPU — so the ignored checkdown is *authored*, and
+editable. Coverage recognition is real but **man-vs-zone per defender,
+with no shell concept**. And the two halves of "robo QB" are unrelated:
+the pixel-perfect throw is **global** (`p = 0.5 + THA/200`, zeroing the
+error vector entirely), while folding to a four-man rush is because **a
+blocked rusher is arithmetically invisible** — the −9.0 engaged discount
+exceeds the 8.5 maximum raw threat, so the QB gets no warning frames and
+stands at speed zero until the block breaks. There is no sack-specific
+code at all.
 
 ## 11. Why does Madden 04 get QB scrambling right when earlier versions do not?
 
