@@ -69,6 +69,7 @@ New to the repo? Read in this order:
 |---|---|
 | `open-investigations.md` | **the ledger** — all nine community questions, status, and first attack angle for each |
 | `default-uplift-tuning.md` | verified patch-point catalog + draft pnach for getting extreme-slider behaviour at default settings (#7) |
+| `tooling-gaps.md` | what tooling the modernization work is actually blocked on, scored by findings unblocked |
 | `code-caves.md` | the free-space survey: where injected code can live, the pnach mechanics, a proven worked example, and the rig verification plan |
 | `slider-threshold-hunt.md` | the original hunt brief (historical; results superseded by `slider-behavior.md`) |
 
