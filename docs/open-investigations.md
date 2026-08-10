@@ -295,7 +295,19 @@ and what gates it; (c) the separability question — the wish is to improve
 vision *without* making everyone elite at special moves, which is only
 possible if the two read different inputs. Determine that explicitly.
 
-**Status: leads, 2004-native, ready to start.**
+**Status: RESOLVED — `hb-vision-and-moves.md`.** Vision is a **cadence
+timer** (`(255 − mean(AWR,CAR,AGI)) >> 4`, so a 50-rated back re-plans
+every 8 ticks and an 88 every tick), and the gap-steer roll itself is a
+flat per-running-style constant (0 / 35 / 65%) that reads no rating.
+**Halfbacks and fullbacks take their style from `player+0xB07`, a byte
+with no writer anywhere in the ELF** — if it is zero at runtime, every HB
+is style 0, the gap-steer probability is 0%, and the block-reading vision
+never runs for a halfback at all. That needs a PINE read to settle and is
+the highest-value runtime measurement outstanding. Special-move selection
+is fully mapped (its own cadence, three 7-byte priority rows, seven
+handlers reading only AGI/AWR/BTK/STR). **Separability: impossible via
+ratings — they share AWR and AGI — but fully possible via code, since the
+two systems share no instruction. Two patches, not one.**
 
 ## 13. Making rating differentials *felt*: break tackle vs tackle
 
