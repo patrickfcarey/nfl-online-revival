@@ -320,44 +320,227 @@ def dump(elf: Elf32, start: int, count: int = 32,
     return "\n".join(lines)
 
 
+def writes_gpr(word: int) -> Optional[int]:
+    """Which general register *word* overwrites, or ``None``.
+
+    Deliberately conservative in one direction: an encoding this does not
+    recognise is reported as writing nothing. A missed invalidation costs a
+    spurious pairing in `find_address_refs`, which a human dismisses in
+    seconds. A *false* invalidation drops a real reference and lets a
+    dead-code survey clear live code -- that failure has already shipped once.
+    """
+    op = word >> 26
+    rt = (word >> 16) & 0x1F
+    rd = (word >> 11) & 0x1F
+
+    if op == 0x00:                                  # SPECIAL
+        funct = word & 0x3F
+        if funct in (0x08,                          # jr
+                     0x0C, 0x0D, 0x0F,              # syscall / break / sync
+                     0x11, 0x13):                   # mthi / mtlo
+            return None
+        # Everything else here writes rd -- including the R5900 three-operand
+        # mult, whose rd is 0 in the classic form and so reads as no write.
+        return rd or None
+    if op == 0x01:                                  # REGIMM
+        return 31 if ((word >> 16) & 0x1E) == 0x10 else None    # bltzal/bgezal
+    if op == 0x03:                                  # jal
+        return 31
+    if op == 0x1C:                                  # MMI
+        return rd or None
+    if op == 0x11:                                  # COP1
+        fmt = (word >> 21) & 0x1F
+        return (rt or None) if fmt in (0x00, 0x01, 0x02) else None  # mfc1/dmfc1/cfc1
+    if op in (0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+              0x18, 0x19):                          # immediate arithmetic, lui
+        return rt or None
+    if op in (0x1A, 0x1B, 0x1E,                     # ldl / ldr / lq
+              0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,   # lb .. lwu
+              0x37):                                # ld
+        return rt or None
+    return None
+
+
 def find_address_refs(elf: Elf32, target: int,
-                      window: int = 64) -> List[Tuple[int, str]]:
+                      window: int = 4096) -> List[Tuple[int, str]]:
     """Find code that materialises *target* as a 32-bit address.
 
-    MIPS builds an address from ``lui reg, hi`` plus a following
+    MIPS builds an address from ``lui reg, hi`` plus a later
     ``addiu/ori reg, reg, lo``. The low half is sign-extended by ``addiu``, so
     the high half is adjusted when the low half is negative -- getting that
     wrong is the usual reason a search like this finds nothing.
+
+    The *other* reason it finds nothing is distance. A compiler hoists the
+    ``lui`` well above its use, and this project once cleared a live callback
+    suite as a dead code cave because four such pairs sat 124 bytes apart and
+    the window here was 64. The window is now wide; correctness comes instead
+    from dropping a pending ``lui`` the moment anything overwrites that
+    register, which is what makes a wide window safe.
     """
     lo = target & 0xFFFF
     hi = (target >> 16) & 0xFFFF
     hi_adjusted = (hi + 1) & 0xFFFF if lo & 0x8000 else hi
 
-    candidates: Dict[int, List[Tuple[int, int]]] = {}
+    pending: Dict[int, Tuple[int, int]] = {}        # register -> (vaddr, hi imm)
     hits: List[Tuple[int, str]] = []
     for vaddr, word in elf.words():
         op = word >> 26
         rt = (word >> 16) & 0x1F
+        rs = (word >> 21) & 0x1F
         imm = word & 0xFFFF
-        if op == 0x0F and imm in (hi, hi_adjusted):        # lui
-            candidates.setdefault(rt, []).append((vaddr, imm))
+
+        if op == 0x0F:                                       # lui
+            if imm in (hi, hi_adjusted):
+                pending[rt] = (vaddr, imm)
+            else:
+                pending.pop(rt, None)                        # clobbered
             continue
-        if op in (0x09, 0x0D):                              # addiu / ori
-            rs = (word >> 21) & 0x1F
-            pending = candidates.get(rs)
-            if not pending:
+
+        if op in (0x09, 0x0D):                               # addiu / ori
+            held = pending.get(rs)
+            want_hi = hi_adjusted if op == 0x09 else hi      # ori does not sign-extend
+            if (held is not None and held[1] == want_hi and imm == lo
+                    and vaddr - held[0] <= window):
+                hits.append((held[0],
+                             "lui/%s pair -> 0x%08x (completed at 0x%08x, "
+                             "%d bytes apart)"
+                             % ("addiu" if op == 0x09 else "ori",
+                                target, vaddr, vaddr - held[0])))
+                # `addiu rD, rS, lo` with rD != rS leaves rS holding the high
+                # half, so a second consumer downstream is still reachable.
+                # That is exactly how one base register serves four callbacks.
+                if rt == rs:
+                    pending.pop(rs, None)
                 continue
-            want_hi = hi_adjusted if op == 0x09 else hi     # ori does not sign-extend
-            for lui_addr, lui_imm in list(pending):
-                if lui_imm != want_hi or vaddr - lui_addr > window:
-                    continue
-                if imm == lo:
-                    hits.append((lui_addr,
-                                 "lui/%s pair -> 0x%08x (completed at 0x%08x)"
-                                 % ("addiu" if op == 0x09 else "ori",
-                                    target, vaddr)))
-                    pending.remove((lui_addr, lui_imm))
+
+        clobbered = writes_gpr(word)
+        if clobbered is not None:
+            pending.pop(clobbered, None)
     return hits
+
+
+_LOADS = {0x1A, 0x1B, 0x1E, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+          0x31, 0x35, 0x37}
+_STORES = {0x1F, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x39, 0x3D, 0x3F}
+_ARG_REGS = (4, 5, 6, 7)                            # a0 .. a3
+
+
+def _copied_from(word: int) -> Optional[Tuple[int, int]]:
+    """``(dest, source)`` if *word* is a register-to-register move."""
+    if (word >> 26) != 0x00:
+        return None
+    if (word & 0x3F) not in (0x21, 0x25, 0x2D):     # addu / or / daddu
+        return None
+    rs, rt, rd = (word >> 21) & 0x1F, (word >> 16) & 0x1F, (word >> 11) & 0x1F
+    if not rd:
+        return None
+    if rt == 0 and rs:
+        return rd, rs
+    if rs == 0 and rt:
+        return rd, rt
+    return None
+
+
+def find_field_refs(elf: Elf32, offset: int, stores_only: bool = False,
+                    max_insns: int = 512) -> List[Tuple[int, str]]:
+    """Every access to a struct field at *offset*, in **all three** forms.
+
+    A field this far into a player record is almost never touched by its
+    literal offset. The engine does one of:
+
+    1. ``lh rX, offset(base)``                      -- the obvious form;
+    2. ``addiu rX, base, K`` then ``sb rY, offset-K(rX)`` -- same function;
+    3. ``addiu rX, base, K``, hand ``rX`` to a callee, and the **callee**
+       does the store -- the base crosses a call boundary as an argument.
+
+    Form 3 is why this exists. A sweep that saw only forms 1 and 2 concluded
+    a running-style byte "has no writer anywhere in the executable" and that
+    "the roster loader writes the bytes on either side of it and skips it".
+    Both were wrong: the loader passes ``record + K`` as an argument and the
+    callee stores through it, one instruction along from the neighbours the
+    sweep did find.
+
+    Callee bodies are scanned for a fixed *max_insns* rather than to the first
+    ``jr ra``, which over-scans past short functions. That direction is
+    deliberate: a stray hit is obvious to a human from its address, whereas
+    stopping early would reintroduce exactly the false negative this is here
+    to kill. Each result reports how far into the callee it sits.
+    """
+    hits: List[Tuple[int, str]] = []
+    seen = set()
+    calls: Dict[int, List[Tuple[int, int, int]]] = {}   # callee -> [(reg,K,site)]
+
+    def note(vaddr: int, word: int, why: str) -> None:
+        if vaddr not in seen:
+            seen.add(vaddr)
+            hits.append((vaddr, "%s  [%s]" % (disassemble(word, vaddr), why)))
+
+    def scan(start: int, seed: Dict[int, int], limit: int,
+             why: str, origin: Optional[int] = None) -> None:
+        held = dict(seed)
+        pending_call: Optional[int] = None
+        for index in range(limit):
+            vaddr = start + index * 4
+            word = elf.word(vaddr)
+            if word is None:
+                return
+            op = word >> 26
+            rs, rt = (word >> 21) & 0x1F, (word >> 16) & 0x1F
+
+            if op in _LOADS or op in _STORES:
+                # An untracked register is the plain form: the displacement is
+                # the whole offset, and the base is presumed to be the struct.
+                base = held.get(rs, 0)
+                if base + _signed16(word & 0xFFFF) == offset:
+                    if not (stores_only and op in _LOADS):
+                        note(vaddr, word, why if origin is None else
+                             "%s, +%d into callee" % (why, vaddr - origin))
+            elif op == 0x09 and rs != 0:                        # addiu rD, rS, K
+                imm = _signed16(word & 0xFFFF)
+                carried = held.get(rs, 0) + imm
+                held[rt] = carried if 0 < carried <= offset else None
+                if held[rt] is None:
+                    held.pop(rt)
+            else:
+                move = _copied_from(word)
+                if move is not None:
+                    dest, src = move
+                    if src in held:
+                        held[dest] = held[src]
+                    else:
+                        held.pop(dest, None)
+                else:
+                    clobbered = writes_gpr(word)
+                    if clobbered is not None and op != 0x03:
+                        held.pop(clobbered, None)
+
+            # Arguments are read *after* the delay slot, which runs before the
+            # callee does and is where a compiler routinely puts the last
+            # argument setup. Only then do the caller-saved registers die --
+            # clearing them at the `jal` itself would discard the very
+            # argument the delay slot was about to supply.
+            if pending_call is not None:
+                for reg in _ARG_REGS:
+                    if reg in held:
+                        calls.setdefault(pending_call, []).append(
+                            (reg, held[reg], vaddr - 4))
+                for reg in (2, 3) + _ARG_REGS + tuple(range(8, 16)) + (24, 25):
+                    held.pop(reg, None)
+                pending_call = None
+            elif op == 0x03 and origin is None:                 # jal
+                pending_call = ((vaddr + 4) & 0xF0000000) | ((word & 0x03FFFFFF) << 2)
+
+    # Forms 1 and 2, plus a census of every base handed to a callee.
+    for seg in elf.segments:
+        scan(seg.vaddr, {}, seg.size // 4, "direct")
+
+    # Form 3: re-enter each callee with the argument register pre-seeded.
+    for callee, arrivals in calls.items():
+        for reg, carried, site in dict.fromkeys(arrivals):
+            scan(callee, {reg: carried},  max_insns,
+                 "via %s = base+%d passed at 0x%08x" % (_REGS[reg], carried, site),
+                 origin=callee)
+    return sorted(hits)
 
 
 def find_jal_targets(elf: Elf32, target: int) -> List[int]:

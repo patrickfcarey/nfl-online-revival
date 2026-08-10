@@ -122,6 +122,39 @@ REGRESSIONS: List[Regression] = [
         "reads as a shift of the counter by the value, and a live function "
         "reads as dead code."),
     Regression(
+        "address-search-narrow-window", "recon/mipsdis.py",
+        "                      window: int = 4096) -> List[Tuple[int, str]]:",
+        "                      window: int = 64) -> List[Tuple[int, str]]:",
+        "A compiler hoists a lui far above the addiu that completes it. At 64 "
+        "bytes this search missed four callback registrations 124 bytes apart, "
+        "a dead-code survey cleared the live region as a code cave, and a "
+        "worked patch example was written on top of it."),
+    Regression(
+        "address-search-no-invalidation", "recon/mipsdis.py",
+        "        clobbered = writes_gpr(word)\n"
+        "        if clobbered is not None:\n"
+        "            pending.pop(clobbered, None)",
+        "        clobbered = None\n"
+        "        if clobbered is not None:\n"
+        "            pending.pop(clobbered, None)",
+        "Invalidation is what makes the wide window safe. Without it a stale "
+        "high half pairs with any later low half and the search fills with "
+        "references that were never there."),
+    Regression(
+        "sqrt-operand-from-fs", "recon/fpudis.py",
+        '                return "sqrt.s %s, %s" % (FREG[fd], FREG[ft])',
+        '                return "sqrt.s %s, %s" % (FREG[fd], FREG[fs])',
+        "The EE takes sqrt's operand in ft. Printing fs turns a square root of "
+        "the accumulated value into a square root of an unrelated register, "
+        "which quietly rewrites the maths a formula was derived from."),
+    Regression(
+        "field-search-same-function-only", "recon/mipsdis.py",
+        "            elif op == 0x03 and origin is None:                 # jal",
+        "            elif op == 0x03 and origin is not None:             # jal",
+        "Struct bases cross call boundaries as arguments. Stop following them "
+        "and a field whose only writer is in a callee reads as having no "
+        "writer at all -- which is how a live byte was documented as dead."),
+    Regression(
         "roster-team-from-file", "tools/build_year_roster.py",
         "            team_id = resolve_team(abbreviation, team_ids)",
         "            team_id = team['tgId']",

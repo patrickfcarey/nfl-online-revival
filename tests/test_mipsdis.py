@@ -334,6 +334,27 @@ class FloatingPoint(unittest.TestCase):
         self.assertEqual(fpudis.dis(i_type(0x09, ZERO, A3, 1)),
                          "addiu a3, zero, 1")
 
+    def test_sqrt_takes_its_operand_from_ft_not_fs(self):
+        """The EE breaks the pattern every other one-operand form follows.
+
+        0x46150544 is the punt solver's square root: fd and ft are both f21,
+        fs is f0. Printed as `fd, fs` it reads `sqrt.s f21, f0` -- the square
+        root of an unrelated register -- which silently rewrites the flight-time
+        maths. The doc author caught it by hand; the tool should not have
+        needed catching.
+        """
+        self.assertEqual(fpudis.dis(0x46150544), "sqrt.s f21, f21")
+
+    def test_rsqrt_is_a_three_operand_form(self):
+        # fd = fs / sqrt(ft), so neither source may be dropped from the listing.
+        word = (0x11 << 26) | (0x10 << 21) | (3 << 16) | (2 << 11) | (1 << 6) | 0x16
+        self.assertEqual(fpudis.dis(word), "rsqrt.s f1, f2, f3")
+
+    def test_the_other_one_operand_forms_still_read_fs(self):
+        # abs/neg/mov/cvt are unchanged -- the exception is sqrt alone.
+        word = (0x11 << 26) | (0x10 << 21) | (3 << 16) | (2 << 11) | (1 << 6) | 0x05
+        self.assertEqual(fpudis.dis(word), "abs.s f1, f2")
+
 
 class Rendering(unittest.TestCase):
     def test_zero_is_nop(self):
@@ -478,6 +499,158 @@ class AddressSearch(unittest.TestCase):
         hits = self._find([i_type(0x0F, 0, V0, 0x0044),
                            i_type(0x09, V0, V0, 0x6ce4)], 0x00446ce0)
         self.assertEqual(hits, [])
+
+    def test_a_pair_hoisted_far_above_its_use_is_still_found(self):
+        """The false negative that cleared a live region as a dead code cave.
+
+        Four callbacks were registered from one hoisted base register 124-128
+        bytes above the `addiu`s that completed them. With a 64-byte window
+        this search returned nothing at all, the survey recorded the region as
+        zero-reference, and a worked patch example was written on top of live
+        code. Distance must not be what decides this.
+        """
+        words = ([i_type(0x0F, 0, S0, 0x0044)]
+                 + [r_type(0, 0, 0, 0x25)] * 40        # 160 bytes of filler
+                 + [i_type(0x09, S0, V0, 0x6ce0)])
+        self.assertEqual(len(self._find(words, 0x00446ce0)), 1)
+
+    def test_one_base_register_can_serve_several_addresses(self):
+        # `addiu rD, rS, lo` with rD != rS leaves rS holding the high half.
+        # That is precisely how one `lui` fed four separate registrations, so
+        # consuming the pending entry on first use would hide the rest.
+        words = [i_type(0x0F, 0, S0, 0x0044),
+                 i_type(0x09, S0, V0, 0x6ce0),
+                 i_type(0x09, S0, V1, 0x6ce0)]
+        self.assertEqual(len(self._find(words, 0x00446ce0)), 2)
+
+    def test_a_clobbered_high_half_does_not_pair_with_a_later_low_half(self):
+        """What earns the wide window: invalidation, not distance.
+
+        Between the `lui` and the `addiu` the register is overwritten, so the
+        two are unrelated and pairing them would invent a reference. Without
+        this the wide window would trade false negatives for false positives.
+        """
+        words = [i_type(0x0F, 0, V0, 0x0044),
+                 i_type(0x24, A0, V0, 0x0000),          # lbu v0, 0(a0)
+                 i_type(0x09, V0, V0, 0x6ce0)]
+        self.assertEqual(self._find(words, 0x00446ce0), [])
+
+    def test_a_pair_completed_in_a_jal_delay_slot_is_found(self):
+        """Why a call must not be treated as clobbering the high half.
+
+        Setting up an argument across the call is the standard idiom -- the
+        delay slot runs *before* the callee does. Invalidating caller-saved
+        registers at the `jal` would look tidy and would silently drop one of
+        the most common address references in the image.
+        """
+        words = [i_type(0x0F, 0, A0, 0x0044),
+                 j_type(0x03, 0x00100040),
+                 i_type(0x09, A0, A0, 0x6ce0)]      # delay slot completes it
+        self.assertEqual(len(self._find(words, 0x00446ce0)), 1)
+
+
+class RegisterWrites(unittest.TestCase):
+    """`writes_gpr` decides when a pending high half is stale."""
+
+    def test_loads_and_arithmetic_write_their_target(self):
+        self.assertEqual(mipsdis.writes_gpr(i_type(0x24, A0, V0, 0)), V0)
+        self.assertEqual(mipsdis.writes_gpr(i_type(0x09, A0, V1, 4)), V1)
+        self.assertEqual(mipsdis.writes_gpr(i_type(0x0F, 0, S0, 0x44)), S0)
+
+    def test_stores_and_branches_write_nothing(self):
+        self.assertIsNone(mipsdis.writes_gpr(i_type(0x28, A0, V0, 0)))   # sb
+        self.assertIsNone(mipsdis.writes_gpr(i_type(0x04, A0, V0, 4)))   # beq
+        self.assertIsNone(mipsdis.writes_gpr(j_type(0x02, 0x100000)))    # j
+
+    def test_jal_and_the_linking_regimm_branches_write_ra(self):
+        self.assertEqual(mipsdis.writes_gpr(j_type(0x03, 0x100000)), 31)
+        self.assertEqual(mipsdis.writes_gpr(i_type(0x01, A0, 0x11, 4)), 31)  # bgezal
+        self.assertIsNone(mipsdis.writes_gpr(i_type(0x01, A0, 0x01, 4)))     # bgez
+
+    def test_writes_to_zero_do_not_count_as_writes(self):
+        # `daddu zero, a0, zero` is a no-op, not an invalidation.
+        self.assertIsNone(mipsdis.writes_gpr(r_type(A0, 0, 0, 0x2D)))
+
+    def test_an_unrecognised_encoding_claims_no_write(self):
+        """The safe direction, chosen deliberately.
+
+        Over-reporting a write drops a real reference -- the failure that let a
+        dead-code survey clear live code. Under-reporting only adds a spurious
+        pairing, which reads as obvious noise.
+        """
+        self.assertIsNone(mipsdis.writes_gpr(0xFFFFFFFF))
+
+
+class FieldSearch(unittest.TestCase):
+    """Struct-field access in all three forms, including across a call."""
+
+    def _find(self, words, offset, **kw):
+        path = _elf(words)
+        try:
+            return mipsdis.find_field_refs(mipsdis.Elf32(path), offset, **kw)
+        finally:
+            os.unlink(path)
+
+    def test_a_literal_offset_is_found(self):
+        hits = self._find([i_type(0x28, A0, V0, 0xB07)], 0xB07)
+        self.assertEqual(len(hits), 1, hits)
+
+    def test_a_base_computed_in_the_same_function_is_found(self):
+        # addiu a1, a0, 0xAE8  /  sb v0, 31(a1)
+        hits = self._find([i_type(0x09, A0, A1, 0xAE8),
+                           i_type(0x28, A1, V0, 31)], 0xB07)
+        self.assertEqual(len(hits), 1, hits)
+
+    def test_a_base_passed_to_a_callee_is_found(self):
+        """The form that hid a writer and cost a headline finding.
+
+        A byte was documented as having "no writer anywhere in the executable",
+        with the loader said to write its neighbours and skip it. In fact the
+        loader computes `record + K`, hands it over as an argument, and the
+        callee stores through it. The `addiu` and the `sb` are in different
+        functions, so no single-function sweep can see the pair.
+        """
+        words = [
+            i_type(0x09, A0, S0, 0xAE8),        # addiu s0, a0, 0xAE8
+            r_type(S0, 0, A2, 0x2D),            # daddu a2, s0, zero
+            j_type(0x03, 0x00100020),           # jal callee
+            r_type(0, 0, 0, 0x25),              # nop (delay slot)
+            r_type(0, 0, 0, 0x25),              # padding
+            r_type(0, 0, 0, 0x25),
+            r_type(0, 0, 0, 0x25),
+            r_type(0, 0, 0, 0x25),
+            r_type(A2, 0, S0, 0x2D),            # callee: daddu s0, a2, zero
+            i_type(0x28, S0, V0, 31),           # sb v0, 31(s0)   -> +0xB07
+        ]
+        hits = self._find(words, 0xB07, stores_only=True)
+        self.assertEqual([v for v, _d in hits], [0x00100024], hits)
+        self.assertIn("passed at", hits[0][1])
+
+    def test_an_argument_set_up_in_the_delay_slot_still_counts(self):
+        # Compilers put the last argument setup after the jal, so reading the
+        # argument registers before the delay slot runs would miss the call.
+        words = [
+            i_type(0x09, A0, S0, 0xAE8),
+            j_type(0x03, 0x00100018),
+            r_type(S0, 0, A2, 0x2D),            # delay slot sets a2
+            r_type(0, 0, 0, 0x25),
+            r_type(0, 0, 0, 0x25),
+            r_type(0, 0, 0, 0x25),
+            i_type(0x28, A2, V0, 31),           # callee stores through a2
+        ]
+        hits = self._find(words, 0xB07, stores_only=True)
+        self.assertEqual([v for v, _d in hits], [0x00100018], hits)
+
+    def test_a_wrong_total_offset_is_not_a_hit(self):
+        hits = self._find([i_type(0x09, A0, A1, 0xAE8),
+                           i_type(0x28, A1, V0, 30)], 0xB07)
+        self.assertEqual(hits, [])
+
+    def test_stores_only_excludes_the_readers(self):
+        words = [i_type(0x24, A0, V0, 0xB07),   # lbu -- a read
+                 i_type(0x28, A0, V1, 0xB07)]   # sb  -- a write
+        self.assertEqual(len(self._find(words, 0xB07)), 2)
+        self.assertEqual(len(self._find(words, 0xB07, stores_only=True)), 1)
 
 
 class ImmediateSearch(unittest.TestCase):

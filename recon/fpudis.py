@@ -46,7 +46,15 @@ def dis(word, vaddr=0, gp=GP_BASE):
             name = COP1_FUNCT.get(funct, "cop1.s?%02x" % funct)
             if name.startswith("c."):
                 return "%s %s, %s" % (name, FREG[fs], FREG[ft])
-            if name in ("mov.s", "abs.s", "neg.s", "sqrt.s", "cvt.w.s", "rsqrt.s"):
+            if name == "sqrt.s":
+                # The EE takes the operand in ft, not fs, unlike every other
+                # one-operand form here. Printing fs turns sqrt(x) into
+                # sqrt(whatever happened to be in fs) and silently rewrites
+                # the maths -- it cost this project a punt-solver derivation.
+                return "sqrt.s %s, %s" % (FREG[fd], FREG[ft])
+            if name == "rsqrt.s":
+                return "rsqrt.s %s, %s, %s" % (FREG[fd], FREG[fs], FREG[ft])
+            if name in ("mov.s", "abs.s", "neg.s", "cvt.w.s"):
                 return "%s %s, %s" % (name, FREG[fd], FREG[fs])
             if name.endswith("a.s"):
                 return "%s %s, %s" % (name, FREG[fs], FREG[ft])
