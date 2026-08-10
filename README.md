@@ -86,9 +86,36 @@ Madden's text framing transfers.
 Xbox versions are ever attempted — reimplementing Kerberos/IPsec is months of
 wasted effort. That one still holds.
 
+## A second track: gameplay reverse engineering
+
+The project now has two tracks. The original one is above — reconstruct the
+dead services. The second grew out of a community question list about how
+Madden 2004 actually behaves, and it turned out the same tools answer it: the
+executable is on disc, and the gameplay systems are as reversible as the
+protocol was.
+
+What that track has established, with every claim pinned to an address:
+
+- **the whole slider system** — storage, the single multiplicative transform
+  every gameplay slider shares, the two-segment penalty ramp, and the UI
+  binding layer (`docs/slider-behavior.md`);
+- **that Awareness is decisiveness, not intelligence** — it drives reaction
+  cadence and commitment probability, never decision quality, which is why
+  maxing it gets safeties burned deep (`docs/sdchargersfanboy.md`);
+- **the real "CPU cheat"** — an anti-repetition play-history tracker, bounded
+  and one-sided, not a score-based rubber band (`docs/play-tendency-ai.md`);
+- **diagnoses for four long-standing gameplay complaints** — zone bunching,
+  pitch-play over-run, lead-blocker targeting and hang-ups, and the CPU's
+  apparent animation monopoly at DT — each with fix candidates;
+- **a tuning catalog** for getting extreme-slider behaviour at default
+  settings (`docs/default-uplift-tuning.md`).
+
+`docs/open-investigations.md` is the ledger: nine community questions, what is
+resolved, and the first attack angle for what is not.
+
 ## Where to start reading
 
-Four documents carry the substance, and they are worth reading in this order:
+`docs/README.md` is the full map. The short version — track 1:
 
 - **`docs/ea-protocol.md`** — the wire format. Nothing else makes sense first.
 - **`docs/roster-delivery.md`** — how a roster reaches a console and how to
@@ -98,7 +125,15 @@ Four documents carry the substance, and they are worth reading in this order:
   every conclusion here that turned out to be wrong. Read it if you plan to add
   to any of the above; the failures are more instructive than the findings.
 
-`docs/protocol-notes.md` is the running log those four were distilled from. It
+…and track 2:
+
+- **`docs/slider-behavior.md`** — the systems doc; start here for gameplay.
+- **`docs/lessons-learned.md`** — the gameplay companion to `method.md`: the
+  disassembler's blind spots, the MIPS traps that have produced wrong answers
+  here, and what this engine's architecture looks like. Read it before adding
+  to track 2.
+
+`docs/protocol-notes.md` is the running log track 1 was distilled from. It
 is kept because it records when things were learned and what they replaced, but
 its earlier sections describe a world that later sections correct.
 
@@ -174,6 +209,9 @@ recon/                 Phase 1 harness (stdlib only)
   sinkd.py             TCP/UDP connection sinkhole + JSONL transcript
   pcapreader.py        classic-pcap reader (no scapy)
   classify.py          stack fingerprinter
+  mipsdis.py           MIPS/R5900 disassembler + cross-referencer
+  fpudis.py            COP1 (FPU) decoding mipsdis lacks — the gameplay
+                       decision layer is almost entirely FPU code
   __main__.py          CLI: python -m recon <dns|sink|classify|pcap>
 tools/
   madden_tdb.py        DB_TEAMS.DAT reader: TERF container + bit-packed TDB
@@ -181,7 +219,9 @@ tools/
   fake_console.py      a stand-in client: drives login/lobby/matchmaking and
                        checks what comes back, so mistakes cost seconds rather
                        than a console boot
+  lzh1.py              EA 'LZH1' codec: opens every UIS container on the disc
 docs/
+  README.md            the documentation map (both tracks)
   ea-protocol.md       the wire format: framing, status tags, message vocabulary
   roster-delivery.md   how a roster reaches a console, and how to build one
   lobby-and-matchmaking.md   rooms, chat, quickmatch, the peer link
@@ -189,6 +229,9 @@ docs/
   roster-checksum.md   the CSUM derivation in detail
   protocol-notes.md    the running log of findings, oldest first
   emulator-capture.md  rig-side runbook: DNS redirect, plaintext vs NIC, tcpdump
+  slider-behavior.md   gameplay: the options/slider system end to end
+  lessons-learned.md   gameplay: tool gaps, MIPS traps, engine architecture
+  open-investigations.md   the community question ledger and its status
 captures/              transcripts and pcaps land here (contents gitignored)
 ```
 
