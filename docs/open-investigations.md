@@ -449,11 +449,117 @@ Three related but separable questions:
 explain the felt problem; 18b is the most likely to be a genuine design
 gap rather than a bug.
 
+## 19. Do the PS2 games use rating THRESHOLDS? (cross-cutting)
+
+> "I was doing the fake punt pass in NCAA 2004 on CPU-vs-CPU Varsity
+> sliders. A backup safety playing LT with **40 pass block** would watch
+> defenders run right by him. I subbed in a guy with **44** and that was
+> enough to bump and fail — at least knock the rusher off his path. A TE
+> with about **55** did more than bump: he got the rusher to a dead stop
+> before breaking the block. Same consistent results, again and again.
+> The rating must have SOME minimum thresholds. The animations and
+> quality are impacted by the ratings, but what do they really do, and do
+> the PS2 games use thresholds?"
+
+The most generalisable question this project has been asked, and it comes
+with a clean natural experiment: same play, repeated, only the protector's
+rating changed, three distinct behaviours at 40 / 44 / 55.
+
+**Thresholds demonstrably exist.** The shed contest gates pass-rush moves
+4/5 behind effective Strength > 165.75 — and 165.75 = 65 × 2.55, i.e. a
+rating of exactly **65** on the 0–100 scale. So the answer to "do they use
+thresholds" is already yes; the work is enumerating them and deciding
+whether the engine is mostly continuous with a few gates, or genuinely
+banded.
+
+**Method:** sweep for rating loads (`lh`/`lhu` in the `+0xB70..+0xB9A`
+window) followed by a comparison, and convert every constant back to a
+0–100 rating by dividing by 2.55 — round numbers are the signal.
+
+**A subtlety worth watching:** a threshold can be created by a *clamp*
+rather than a comparison. The contest clamps scores to zero
+(`movz s3,zero,v1` / `movz s2,zero,v0`), so a rating low enough to drive a
+term negative produces a player who cannot win — or perhaps cannot even
+engage, which would explain the 40-rated protector making no contact at
+all.
+
+**Status: open, 2004-native, in progress (Lane V).** High value: the
+answer applies to every other question in this ledger.
+
+## 20. Press / jam: how is the win determined? (WR vs DB, TE vs LB)
+
+> "How is win/loss determined for the press? I assume strength vs
+> strength and awareness vs awareness. What I saw in M02 & M03 especially
+> was TEs constantly getting jammed, and human WRs getting jammed easily
+> and often — especially on All-Madden."
+
+**Anchored:** zone state 37's enter gates a press on the defender being a
+**CB** (`player+0xB04 == 16`) and calls `0x001a0f28` behind a 50% coin
+flip with a float argument 0.9. Man coverage (state 22) sets press
+alignment from |ΔX| < 3.5 / < 5.5. So the jam exists and has an entry
+point; its *contest* is unmapped.
+
+Specific things to settle: which attributes actually contest (confirm or
+refute the STR/AWR assumption); whether a position or size term exists
+(the TE complaint); whether the difficulty class enters (the All-Madden
+complaint); and what winning/losing does — animation, speed penalty,
+route delay, knock-off-path — and for how long.
+
+**Status: open, 2004-native, in progress (Lane W).**
+
+## 21. Route running: what actually governs it?
+
+> "How about route running? I assume this is an awareness battle + normal
+> athleticism."
+
+The receiver's route state is **31** (enter `0x001cabd8`, think
+`0x001cb008`) — the same state that installs state 1 when he becomes the
+carrier. The question is whether a route is simply authored waypoints
+followed exactly, or whether there is a *quality* term modulated by
+attributes, and whether the covering defender contests it at all.
+
+Also in scope, because it feeds #10: **is there any explicit "separation"
+or "openness" quantity computed for a receiver** — a number a QB read
+could consult? If none exists, that constrains what #10 can possibly find.
+
+**Status: open, 2004-native, in progress (Lane W).**
+
+## 22. The catch process: strips, and whether CATCHING still matters after the catch
+
+> "What about knocking the ball out after it has been caught but before
+> it counts as a catch? Do strength, tackle, awareness or anything else
+> deal with that? Does catch still matter once the WR has caught it, to
+> also hang on to it during contact? I would assume so, but does it?"
+
+**Anchored:** the ball-arrival resolver `0x00255250` dispatches on the
+contesting player's animation (68 = swat → code 32, 69 = the catch
+animation), and the catch resolver `0x00256030` is dominated by attr 5
+(PCTH) + AWR/8 + attr1/16. What is unmapped is everything *after* the
+catch resolves.
+
+Specific questions: where does possession legally transfer
+(`SetBallCarrier 0x001fff18`) relative to the catch animation — is there a
+"process of the catch" window at all? Is there a post-catch strip or
+jar-loose check, and what governs it? And precisely: **does attr 5
+(catching) get read anywhere after the catch, or does attr 4 (carrying)
+take over immediately?**
+
+Bonus scope, because the community will ask: with **no fumble slider** in
+this game (`slider-behavior.md`), what *does* govern fumbles?
+
+**Status: open, 2004-native, in progress (Lane X).**
+
+
 ---
 
 ## Wave 2 triage
 
-Ready to start now, in rough value-per-hour order:
+**Update 2026-08-10: nine lanes launched** covering #13, #14a/b, #14c,
+#16, #17, #18, #19, #20/#21, #22. Remaining unstarted: #10 (the QB
+system, which wants a dedicated multi-lane push), #12, #15, and the
+material-blocked entries.
+
+Original ordering, in rough value-per-hour terms:
 
 1. **#13** rating differentials in the tackle contest — well-anchored, and
    the answer directly serves a stated wish.
