@@ -10,6 +10,11 @@ game's own AI and tuning systems (sliders, coverage, blocking).
 
 ## Start here
 
+**Not a programmer?** Read `human-readable.md` and stop there. It covers
+every gameplay finding in plain English — what the sliders really do, why
+the slot receiver never blocks the corner, why the quarterback folds to a
+four-man rush — and it is honest about the several things we got wrong.
+
 New to the repo? Read in this order:
 
 1. `../README.md` — what the project is and where it stands.
@@ -64,6 +69,7 @@ New to the repo? Read in this order:
 | `ai-play-calling.md` | the small play pool, the steep favourite, and the missing plan (#18) |
 | `fb-wr-blocking.md` | why the FB and the slot WR block nobody — a corner in coverage is not a legal target (#15) |
 | `fact-check-2026-08.md` | **read before patching** — eight verification passes over every doc here; what survived and what did not |
+| `human-readable.md` | every gameplay finding in plain English, for readers who do not read disassembly |
 
 **Forward work**:
 
