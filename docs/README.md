@@ -62,6 +62,7 @@ New to the repo? Read in this order:
 | `catch-and-fumble.md` | the process of the catch, post-catch strips, and what governs fumbles (#22) |
 | `press-and-routes.md` | the jam contest, whether LBs can press, and what governs route running (#20/#20b/#21) |
 | `ai-play-calling.md` | the small play pool, the steep favourite, and the missing plan (#18) |
+| `fb-wr-blocking.md` | why the FB and the slot WR block nobody — a corner in coverage is not a legal target (#15) |
 
 **Forward work**:
 

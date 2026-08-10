@@ -425,9 +425,29 @@ target selection is proximity-only with no play-assigned defender: for a
 slot WR whose job is to seal a corner, proximity-only selection would
 plausibly pick the wrong man or never engage.
 
-**Status: leads, 2004-native.** The #5 fix set (B: AWR-gated selection,
-C: on-route window, D: dedup) may substantially address this too — worth
-checking whether WR/FB run the same state 47 path or a different one.
+**Status: RESOLVED — `fb-wr-blocking.md`.** Two separate causes, and the
+dominant one is not about the blocker at all.
+
+* **The FB and the WR run the same states as a lineman** (31 pass pro,
+  33 run block, 47 lead), chosen by an authored *class* byte plus a
+  runtime dispatcher in state 72. **There is no position gate anywhere**
+  in the install path.
+* **There is no authored block target.** Closed census: every player
+  reference the play data can supply is fetched with the blocker's own
+  side byte. Targets are engine-assigned every frame.
+* **The FB half:** a lead-blocking fullback is in block mode 3, and the
+  blocker list admits **modes 1 and 2 only**. He is never entered into
+  the assignment system at all.
+* **The WR half — the real answer:** a cornerback *in coverage* is not
+  an eligible target, on two independent gates. The defender list accepts
+  only states 2/30/51 or human-controlled; man coverage is 22 and zone is
+  37–41. Even in the pre-snap window the threat classifier pins coverage
+  defenders to exactly the score that the selection gate rejects. **No
+  blocker of any position can be assigned to a defender who is covering
+  somebody.**
+* This also **corrects #5**: selection is *not* proximity-only — there is
+  a threat ranking, and a dedup already exists **twice**, so fix D should
+  be retired and fix B is sited on the wrong function.
 
 ## 16. Pass rush: finesse vs power moves, leverage and gap control
 
