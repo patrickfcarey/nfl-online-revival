@@ -136,13 +136,35 @@ Madden/NCAA family and worth checking first in any sibling title:
   investigations were saved from dead ends by forwarding a sibling lane's
   finding while they were still running.
 
+## Part 6 — Liveness analysis: a `jal` search is not a liveness test
+
+The free-space survey (`code-caves.md`) found that **all four functions
+this project had recorded as "zero callers" are in fact referenced** —
+and each escaped detection a different way:
+
+* reached by a tail-call **`j`** (not `jal`) — two of the four;
+* the address is **mid-function**, not an entry point;
+* the address appears as a **function-pointer word in `.data`**.
+
+To claim something is dead you need all of: no `jal`, no `j`, no branch
+of any form from outside, no `lui`+`addiu`/`ori` pair materialising an
+interior address, **and no 32-bit word anywhere in the file equal to any
+address in it**. The last test is the one that catches vtables and jump
+tables, and it is the one everybody forgets.
+
+The same discipline applies in reverse: fragment code at `jr ra`+delay
+slot boundaries so a candidate cannot be entered by fall-through.
+
 ## Standing debts
 
 1. **Fold the enhanced disassembler into `recon/mipsdis.py`** — REGIMM,
    MMI, R5900 3-operand `mult`, gp-relative annotation, and a
    load/store-aware immediate sweep. Requested by six lanes.
-2. **Free-space survey** for code caves — the enabling step for nearly
-   every designed gameplay fix (in progress).
+2. ~~Free-space survey~~ — **done**, see `code-caves.md`. Caves exist
+   (~9.2 KB of dead code, all reachable by a one-word `j`), the pnach
+   mechanics are proven with a worked example, and the runtime
+   verification plan is written. Every cave still needs its
+   "is-it-really-dead" breakpoint test on the rig before use.
 3. **Play-file / ISO data reads** — the enabling step for the *data*
    fixes (pull-path depth, per-play targeting delay) and for closing the
    assignment-class → AI-state mapping.

@@ -59,8 +59,14 @@ or the ball carrier. **No loop, no teammate array, no proximity term.**
 Corroborating negatives: the roster array pointer (`gp−18600`) is
 confined to the accessor module; the only proximity primitive
 (`FindNearestPlayer 0x001657c0`) is called by kick coverage and catch
-resolution, never by a zone state; the wide-scan variants have zero
-callers; the state-machine's spacing hooks are stubs (`return 0/1`).
+resolution, never by a zone state; the state-machine's spacing hooks are
+stubs (`return 0/1`). (An earlier version of this paragraph said the
+"wide-scan variants `0x0016589c`/`0x00165e58` have zero callers". That is
+wrong and was corrected by the free-space survey: `0x0016589c` is *inside*
+the live `FindNearestPlayer 0x001657c0`, and `0x00165e58` is referenced by
+a function-pointer word in `.data` at `0x00529154`. Neither is dead, and
+neither is called by a zone state — the conclusion stands, the evidence
+sentence did not.)
 Nothing repels two defenders in adjacent zones. Confident negative.
 
 ## The four zone states (roles identified)

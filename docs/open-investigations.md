@@ -188,6 +188,19 @@ system.
 
 ## Cross-cutting notes
 
+* **Code caves: surveyed and proven (2026-08-09, `code-caves.md`).** The
+  blocker on nearly every designed fix is cleared: ~9.2 KB / 2,312
+  instructions of zero-reference dead code exist, any site can reach any
+  cave with a one-word `j`, and the pnach mechanics are demonstrated end
+  to end with a fully-encoded worked example (the lead-blocker
+  minimum-steps gate: 11 lines, one clobbered register). The budget is
+  fixed with no growth path, so caves are pooled, not claimed per fix.
+  Each cave still needs its "is-it-really-dead" breakpoint test on the
+  rig before use — that test now gates all cave work.
+* **The remaining enabler is play-file / ISO data reads**, for the *data*
+  fixes (pull-path depth for #5's hang-up, per-play targeting delay) and
+  to close the assignment-class → AI-state mapping.
+
 * Items 1, 3, 4 need ISOs we don't have (M2002, M2003, M2005, NCAA
   2005/2006). Once on the rig, the extraction path is proven:
   sector-listing + `tools/lzh1.py` for UIS-era files, `recon/mipsdis.py`
