@@ -1,10 +1,16 @@
 # Open investigations — the community question ledger
 
-Questions asked of this project by the community (collected 2026-08-09,
-"Madden 2004 uplift" list plus follow-ups). Each entry records the
-question as asked, what this project already knows that bears on it,
-what materials it needs, and the first investigative angle. Status
-values: **open**, **leads**, **resolved**.
+Questions asked of this project by the community. **Wave 1** (2026-08-09)
+is the original "Madden 2004 uplift" list; **wave 2** (2026-08-10) is a
+second round of reports and a wish list, grouped by the system that would
+have to be investigated. Each entry records the question as asked, what
+this project already knows that bears on it, what materials it needs, and
+the first investigative angle. Status values: **open**, **leads**,
+**resolved**.
+
+Seven of wave 1's nine are resolved; wave 2 adds nine more entries, most
+of them 2004-native and several already half-answered by wave 1's work.
+A triage list is at the end.
 
 Reference base: the Madden 2004 (SLUS-20752) engine is now well-mapped —
 `slider-behavior.md` (options/sliders/transforms), `sdchargersfanboy.md`
@@ -202,6 +208,266 @@ of nothing — he loses the roll: 44% shed vs the CPU's 59% at All-Madden
 `ptrk` boost; `0x001534b8` equalizes the class modifier. Confirms #9 is a
 symptom of the `ptrk` tracker (`play-tendency-ai.md`), not a separate
 system.
+
+---
+
+# Wave 2 — collected 2026-08-10
+
+A second round of community reports and a wish list. Grouped by the
+*system* that would have to be investigated, because that is how the code
+is organised; the most-reported symptoms keep their own named entries
+even where they belong to a larger group. Several already have anchors
+from wave 1 — noted per entry.
+
+## 10. QB decision-making (the "robo QB" system)
+
+The single largest cluster. One system, several symptoms.
+
+> "Robo QB" who always knew when everyone was open, to the pixel, and
+> delivered perfect throws — versus not being able to execute a normal
+> play. Madden QBs HATED losing to early pressure and would shred you,
+> but would fold to a normal 4-man rush if a lineman got in. Send cover
+> zero and get someone unblocked, you get cooked; play cover 2 man under
+> and the QB eats a sack sandwich.
+
+Sub-questions from the wish list, all of which resolve against the same
+machinery:
+
+* **10a. What is the QB's read/progression logic** — how does he decide
+  where to throw on a given play? Is there a receiver priority order from
+  the play data, a per-receiver openness score, or both?
+* **10b. Why the pressure/coverage asymmetry** (the headline symptom):
+  does pressure trigger a *different code path* — a panic/quick-throw
+  branch that bypasses the read progression and its openness evaluation —
+  while coverage-based decisions run the slower, weaker evaluation? That
+  is the shape the report describes and it is directly checkable.
+* **10c. Why do QBs rarely throw to a wide-open flat** (HB/FB/TE)? A
+  receiver-eligibility or priority weighting that under-ranks backs and
+  tight ends, or a route-depth term in the openness score.
+* **10d. Why the lack of confidence against man coverage?** Does the
+  evaluation recognise coverage type at all, or only per-receiver
+  separation?
+* **10e. Is there any code that "attacks coverages"** — i.e. any
+  coverage-recognition input to the decision, as opposed to pure
+  separation geometry?
+* **10f. What makes a QB scramble?** The trigger, and what it is
+  weighted by.
+
+**Anchors we already have:** `0x001c53d8` is the throw-error / pass
+trajectory site (the QB Accuracy slider consumer), and `0x001c5248`
+builds a "QB quality" factor from effective THA + AWR — so the *throw
+execution* half is partly mapped; the *decision* half is not. Attribute
+order and the effective-ratings table are known. Expect the decision to
+live in a state-machine think (the 93-state array) plus a per-play
+receiver table, the same shape as the coverage and blocker systems.
+
+**Status: open, 2004-native, high value.** This is the biggest single
+gameplay system still unmapped.
+
+## 11. Why does Madden 04 get QB scrambling right when earlier versions do not?
+
+> Why has 04 done a much better job at getting QBs to run than past
+> versions? Can we fix past versions to run more/better?
+
+Kept separate from #10 because it is a **cross-title diff**, not a
+system map: establish 04's scramble trigger (10f), then compare against
+2002/2003. **Blocked on materials** (M2002/M2003 ISOs not on the rig);
+the 04 half is investigable now and is a prerequisite anyway.
+
+## 12. HB vision, and what governs special moves
+
+> What gives them vision? Awareness, I assume. What is the threshold
+> between seeing lanes and being blind, and what governs special-move
+> usage? Is it possible to globally improve HB vision without making
+> them all elite at special moves?
+
+**Partially answered already** (`pitch-play-runner.md`): the carrier's
+"vision" is state 1's steering — a 75° threat cone, a gap-midpoint target
+derived from the defender→blocker engagement link, a 45° steer gate, and
+a probabilistic drop on the steer. So vision is *cone geometry plus a
+roll*, not an Awareness threshold — and the roll is the thing to look at
+for a "blind vs sees lanes" dial.
+
+**What remains:** (a) confirm whether AWR enters the carrier's steering
+at all (in the coverage system it drives cadence, not quality — expect
+the same); (b) locate the **special-move selection** (juke/spin/stiff-arm)
+and what gates it; (c) the separability question — the wish is to improve
+vision *without* making everyone elite at special moves, which is only
+possible if the two read different inputs. Determine that explicitly.
+
+**Status: leads, 2004-native, ready to start.**
+
+## 13. Making rating differentials *felt*: break tackle vs tackle
+
+> I want monsters like Alstott and the Bus to FEEL their 94+ strength and
+> break-tackle ratings — especially against DBs with 60s — while still
+> respecting the strength and tackle ratings of linemen and linebackers.
+> Is there a way to tune break-tackle vs tackle that isn't just dropping
+> the tackle slider, raising HB ability, and hoping the rest of the game
+> survives?
+
+This is a **contest-math** question, and the contest is already located:
+`0x00186b04` scores a tackle attempt, applies a difficulty-class modifier
+(`0x00153808`), the Tackling slider (`0x001447a8`), and the `ptrk` boost,
+then compares the score against `RandInt(0,100)`.
+
+The specific thing to determine: **how much of the score is the rating
+differential versus flat terms.** The class modifier adds +25/+35/+40/+50
+*raw points* to a 0–100 scale — if flat additions dominate, a 94-strength
+back and a 70-strength back land in nearly the same band, which is
+exactly the reported feel. If so, the fix is to re-weight the
+differential rather than move sliders, and it is a code lever, not a
+slider one.
+
+Also in scope: whether the defender's position (DB vs LB vs DL) enters
+the contest at all, since the wish is explicitly about *who* is
+tackling.
+
+**Status: open, 2004-native, well-anchored — probably the highest
+value-per-hour item in wave 2.**
+
+## 14. Line play: pass blocking, run blocking, and the absence of double teams
+
+> Pass blocking. Run blocking. Blocking. Seriously, we play 2K because of
+> the blocking. I'm tired of watching line play look like a child
+> crashing his action figures together. **There is no such thing as
+> double teams.**
+
+The biggest system after #10, and the one with the most existing
+groundwork:
+
+* **14a. The block cycle end to end.** `lead-blocker-targeting.md`
+  mapped selection (proximity-only), the approach (state 47, authored
+  route + bounded lean + 2× velocity lead), and contact (a frozen shove
+  axis re-stamped every frame for 15–30 frames, discarding the route).
+  The kind 5/6 processing pass is **still unlocated** — that is the last
+  unmapped part of the cycle and it is where "action figures" likely
+  lives.
+* **14b. Double teams.** We know there is **no already-engaged dedup**,
+  so two blockers *can* end up on one defender — but that is an accident,
+  not an intentional double team. Determine whether the engine has any
+  concept of a coordinated double team (a second blocker joining an
+  existing engagement with combined leverage), or whether the mutual
+  1-to-1 lock-in is the only model. If the latter, "no double teams" is
+  an architectural fact, and adding them is a much larger project than a
+  patch — worth knowing early.
+* **14c. Pass vs run blocking as distinct behaviours** — the slider
+  function already picks pass-block vs run-block by play state, and the
+  contest reads PPBK vs PRBK by phase, but whether the *behaviour* differs
+  (anchor-and-mirror vs drive-and-seal) is unknown.
+
+**Status: open, 2004-native, large.** Recommend splitting 14b out first —
+it is a yes/no architectural question that determines how much of the
+rest is even feasible.
+
+## 15. Blocking assignments for non-linemen: FB and WR
+
+> Full backs: blocking targeting. WRs: **[not] blocking the corners.**
+> What's up with that, especially in the slot?
+
+Distinct from #14 because the question is *assignment*, not *technique* —
+these players are not being told to block the right man (or at all),
+rather than blocking him badly. Directly adjacent to #5, which found that
+target selection is proximity-only with no play-assigned defender: for a
+slot WR whose job is to seal a corner, proximity-only selection would
+plausibly pick the wrong man or never engage.
+
+**Status: leads, 2004-native.** The #5 fix set (B: AWR-gated selection,
+C: on-route window, D: dedup) may substantially address this too — worth
+checking whether WR/FB run the same state 47 path or a different one.
+
+## 16. Pass rush: finesse vs power moves, leverage and gap control
+
+> Pass rush. Finesse vs power moves. Leverage and gap control.
+> Run-block block-shedding.
+
+**Substantially anchored already** (`cpu-dt-animations.md`): the shed
+contest takes a **moveType 0–6**, and the families are already visible —
+moves 0–3 add AGI to both sides (the *finesse* family), moves 4–5 require
+effective Strength > 65 and are gated behind a 50% roll (the *power*
+family), move 6 is the default. Move selection is `0x001a6c98`
+(`RandomInt`, remapped by bearing/geometry) for the AI, and pad-button
+driven for the human.
+
+**What remains:** (a) name each moveType against its animation IDs — the
+tables at `0x00526668`/`0x00526710` are dumped, so this is mostly
+labelling; (b) whether *leverage/gap* is modelled at all, or whether the
+±50% geometry term on the blocker's score is the entire representation of
+leverage; (c) how move selection is weighted — currently it looks
+random-plus-geometry, with no rating input, which would explain why pass
+rush feels undifferentiated between players.
+
+**Status: leads, 2004-native, cheap** — much of this is labelling work on
+tables we already have.
+
+## 17. Punter placement logic (the coffin corner)
+
+> I can set 20/20 punt power and accuracy and they never coffin-corner
+> me. They drill touchbacks and are happy about it. At 20/20 accuracy
+> they don't even try to drop it inside the 15 or 10 for a bounce.
+
+Discrete and well-bounded. We know the two punt sliders' consumers
+(`0x001448e8` length, `0x001449b8` accuracy — the latter scales an *aim
+error* magnitude), so the sliders affect **execution**. The question is
+about **intent**: what aim point does the punter choose, and does field
+position enter it at all? If the aim point is always "max distance" then
+no accuracy slider can ever produce a coffin corner, which matches the
+report exactly.
+
+**Status: open, 2004-native, small and self-contained** — a good
+candidate for a quick win.
+
+## 18. AI play calling: the algorithm, situational contradictions, and the small play pool
+
+> End-of-half and end-of-game play calling is contradictory — the AI is
+> down and wants to score, but calls a run, then burns a timeout to run
+> again, not knowing whether it wants to milk the clock or score. In a
+> Boise State sim, the AI goes to the same Strong-I FB weak dive
+> predictably rather than choosing among the short-yardage plays in the
+> book. **It generally feels like the AI selects from a much smaller list
+> of plays than it has access to.**
+
+Three related but separable questions:
+
+* **18a. The selection algorithm itself.** Anchored: the CPU play caller
+  is around `0x001459b4`, and it already consumes the `ptrk` play-history
+  data (`play-tendency-ai.md`) — including the run/pass tendency mask and
+  the recent-success factor. So we know *some* of its inputs.
+* **18b. Situational logic** (clock/score awareness). The contradiction
+  described — hurry up *and* run *and* burn a timeout — suggests either
+  independent subsystems disagreeing (a clock manager and a play selector
+  that do not share intent) or a missing two-minute mode. Determine
+  whether a game-situation state exists at all.
+* **18c. The effective play pool.** The strongest and most testable
+  claim: does the selector consider the whole playbook or a filtered
+  subset? A formation/personnel filter, a "situational" sub-list, or a
+  scoring function with a steep favourite would each produce the reported
+  repetitiveness. This one is measurable statically by reading the
+  candidate-enumeration loop.
+
+**Status: open, 2004-native.** 18c is the cheapest and most likely to
+explain the felt problem; 18b is the most likely to be a genuine design
+gap rather than a bug.
+
+---
+
+## Wave 2 triage
+
+Ready to start now, in rough value-per-hour order:
+
+1. **#13** rating differentials in the tackle contest — well-anchored, and
+   the answer directly serves a stated wish.
+2. **#17** punter intent — small, self-contained, likely a quick win.
+3. **#16** pass-rush move families — mostly labelling tables we have.
+4. **#18c** the effective play pool — one loop to read.
+5. **#12** HB special-move gating — half-answered already.
+6. **#14b** does the engine support double teams at all — a yes/no that
+   scopes the whole blocking project.
+7. **#10** the QB decision system — the biggest prize and the biggest
+   effort; worth a dedicated multi-lane push rather than a single agent.
+
+Blocked on materials: **#11** (needs M2002/M2003), and wave 1's #1/#3/#4
+(need 2005-era ISOs).
 
 ---
 
