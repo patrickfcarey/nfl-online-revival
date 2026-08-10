@@ -47,12 +47,13 @@ carrier (state 1, AIthink `0x001dfeb8`) DOES read blocks — it scans its
 own team for a lead blocker, finds the nearest threat in a forward cone,
 follows that defender's engagement link to his blocker, and steers to the
 gap between them. The over-run is (a) a cone-limited field of view (75°
-threat cone, 8-yard lead-blocker window) that misses a pitch's wide,
-laterally-developing blocks, plus (b) a weak speed governor (base 1.0,
-slowdown only once a blocker latches in that narrow window — too late on a
-sweep). Fix is code, not data (the carrier reads no play path once
-carrying): recommended N1 (widen the 8→16-yard latch window,
-`0x001df370`) + N5 (follow-speed pool word `0x005FEE40`), both AI-only.
+threat cone, 45° steer gate) and (b) a weak speed governor: base speed
+1.0, and the only slowdown is gated behind a lead-blocker latch whose
+routine **aborts unless the *carrier* is within 8 yards of the ball spot
+laterally** — on a pitch he leaves that band at once, so the scan never
+runs. Fix is code, not data (the carrier reads no play path once
+carrying): recommended N1 (widen that 8→16-yard carrier gate,
+`0x001df370`) + N5 (follow-speed pool word `0x005FEE40`).
 
 ## 3. Warping / sliding / leaping defense starting in Madden 2005 & NCAA 2005
 
@@ -92,24 +93,42 @@ records, and see what the blockers are actually told to do.
 > What is with the targeting of pulling/lead blockers and can we fix
 > that?
 
-**Status: RESOLVED (diagnosis) + design spec set — `lead-blocker-targeting.md`.**
-Blocking is run by a global per-frame engagement manager (`0x001f7298`)
-that pairs blocker→defender **purely on proximity**, holds it on a
-block-rating-scaled ~15–30-frame countdown, and while paired **overwrites
-the blocker's route to drive at the defender's current position** (no
-lead, no route blend, no already-engaged dedup, no Awareness). So the
-shipped code already does what the owner forbids (route override,
-snap-to-defender) and none of what he wants.
+**Status: RESOLVED — `lead-blocker-targeting.md`.** Took three passes;
+the first two were wrong in instructive ways (see `lessons-learned.md`).
+
+**Taxonomy first:** engagement kind 4 is **contact** (promotion needs
+distance < 2.1 yd), not "approaching". The approach is kind 2/3, which
+the engagement manager never touches.
+
+**Pre-contact, route primacy is already respected.** State 47 defaults to
+the play-authored bearing, leads a defender by **2× his velocity**,
+converts that into a bounded ~60° lean off its own facing, and snaps back
+to the route on two clamps (one zeroing speed). Closer to the owner's
+spec than anyone expected.
+
+**On contact, route primacy is totally abandoned.** A bearing/speed/
+facing triple is computed **once** at lock-in (`0x001F14D0` — a mutual
+shove axis) and re-stamped into the blocker's locomotion **every frame**
+for 15–30 frames (`0x001F2064/2068/2070`). State 47 keeps computing the
+route and it is discarded. The axis is *frozen*, so the blocker drives
+the lock-in line after the defender has left it. **That staleness plus
+the 2× over-lead is a sufficient mechanism for the over-run the community
+reports — with no current-position tracking anywhere in the code.**
+
+**Selection is separately broken:** proximity-only pairing, no
+already-engaged dedup, Awareness never consulted, though re-selection
+already runs every ~15–30 frames.
 
 **Owner's fix spec (acceptance criteria):** land the block via on-route
 retargeting whose correctness is an **Awareness probability roll**; the
-route is the primary steering objective (never abandoned to chase);
-honest misses are acceptable when selection can't win on-route; faking
-the block via warp/snap/oversized-radius is forbidden. The cadence is
-already present and cheap — only the selection *criterion* and *route
-primacy* are wrong. Fix is a **code cave** (A: demote target to a lean;
-B: AWR-gated selection; C: on-route defender window; D: engaged-dedup),
-not a data edit — blocked on the free-space survey.
+route is the primary steering objective; honest misses are acceptable;
+faking the block via warp/snap/oversized-radius is forbidden; and
+selection must not begin until a per-play minimum number of steps has
+elapsed. Fixes are **code caves** (A: demote the *contact* override to a
+lean — note the address moved to the per-frame stores; A2: recompute the
+axis instead of freezing it; A3: dial back the 2× lead; B: AWR-gated
+selection; C: on-route defender window; D: engaged-dedup). Caves are now
+surveyed and proven (`code-caves.md`), so all of these are designable.
 
 ## 6. Zone defenders bunch up / hook defenders abandon the middle
 

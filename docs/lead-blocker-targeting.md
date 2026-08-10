@@ -224,10 +224,13 @@ Hang-up fix levers, in recommended order:
 
 ## Cross-references and toolchain
 
-* Same root shape as `pitch-play-runner.md` (#2) and `zone-bunching.md`
-  (#6): steer at a reference's current position, cone/proximity-limited, no
-  lead, no separation/dedup. The runner and the blocker over-run the same
-  way from opposite sides of the pull.
+* Related to `pitch-play-runner.md` (#2) and `zone-bunching.md` (#6),
+  but **not the same shape** — an earlier version claimed it was. The
+  runner and the zone defender steer at a reference's *current* position
+  with no lead. The blocker is the opposite: during the approach he
+  *does* lead (2× velocity, which over-leads), and at contact he stops
+  tracking the defender altogether in favour of a frozen axis. Three
+  different failure modes that happen to look alike on screen.
 * Block rating (PPBK/PRBK) drives only cadence, never selection — same
   "ratings are decisiveness, not decision quality" finding as
   `sdchargersfanboy.md`. Fix B would change that for blocking.
@@ -236,6 +239,10 @@ Hang-up fix levers, in recommended order:
   mid-prologue.
 * Sixth lane to rebuild the enhanced disassembler in scratch — folding
   REGIMM/MMI/3-op-mult/gp-annotation into `recon/mipsdis.py` is overdue.
-* All cave-based fixes across #2/#5/#6/#9 share one blocker: **no
-  free-space survey has been done.** That survey is the next enabling step
-  for any of these to become real patches.
+* The free-space survey is **done** (`code-caves.md`): ~9.2 KB of dead
+  code, one-word `j` reachability from any site, and a worked example
+  that happens to be this doc's minimum-steps gate. Every cave still
+  needs its "is-it-really-dead" breakpoint test on the rig first.
+* **Open here:** the kind 5/6 processing pass was never located (it is
+  not `0x001F1C20`, `0x001F20F8`, or `0x001EF820`). Not needed for the
+  fixes above, but it is the last unmapped part of the block cycle.

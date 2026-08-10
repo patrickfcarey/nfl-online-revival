@@ -102,12 +102,23 @@ Madden/NCAA family and worth checking first in any sibling title:
   returns 1 — which is why human-controlled players still get AI
   behaviours. Assignments are selected by **play-file data**, not ELF
   constants.
-* **A recurring anti-pattern: "steer at a reference, no separation, no
-  lead."** Zone defenders slide toward one shared reference with no
-  teammate repulsion; ball-carriers and blockers aim at a target's
-  *current* position with no lead term. The same shape produces zone
-  bunching, runner over-run, and blocker over-run. Expect it anywhere the
-  engine steers.
+* **Steering failures look alike on screen and are not alike in code.**
+  Three complaints that all present as "over-running the target" have
+  three different causes: zone defenders slide toward one *shared*
+  reference with no teammate repulsion; the ball carrier aims at a
+  target's *current* position with no lead; the lead blocker *does* lead
+  (2× velocity, which over-leads a cutting defender) during the approach
+  and then, on contact, stops tracking entirely and drives a **frozen**
+  axis for 15–30 frames. An earlier version of this file lumped all
+  three together as one anti-pattern — a tidy generalisation that was
+  wrong in two of the three cases. Diagnose each steering complaint from
+  its own code.
+* **"Overwritten every frame" is a real architectural pattern here.**
+  The engagement manager runs *after* the per-player AI loop, so its
+  locomotion writes win. An AI state can be computing perfectly good
+  steering that is then discarded — which means "I found the code that
+  steers this player" is not the same as "I found what moves him".
+  Establish write *order*, not just write *sites*.
 * **Agency is asymmetric — but check the exact boundary.** A captured
   blocker is passive until a timer the *defender* set expires. The first
   version of this lesson said "the offense has no shed contest at all";
@@ -186,6 +197,49 @@ produced six P0 corrections. The patterns worth internalising:
 * Doc claims should carry their hazards: several conclusions rested on
   unflagged branch-likely / REGIMM / `movz` instructions even in docs
   whose own convention is to flag them.
+
+## Part 8 — Three passes to one answer: an anatomy
+
+The lead-blocker question (`lead-blocker-targeting.md`) took three
+investigations, and the sequence is worth keeping because each pass
+failed differently:
+
+1. **Pass 1 produced a tidy, wrong story.** It read `s3 = s1 + 992` as
+   "the target" when it is *self's own engagement record*, and from that
+   single misattribution derived a whole narrative — "the blocker
+   abandons his route to drive at the defender's current position".
+   Everything downstream was internally consistent and externally false.
+2. **Pass 2 (adversarial) killed the claim but could not replace it.** It
+   correctly showed the stores were a mutual lock-in, not a chase — and
+   correctly reported that the *cause* was now unknown, because the
+   values were staged by code nobody had walked. This is the right
+   outcome for a verification pass: it is allowed to leave a hole.
+3. **Pass 3 walked the missing writer and produced the real mechanism** —
+   which vindicated the *observed behaviour* from pass 1 while relocating
+   it entirely (contact, not approach; frozen axis, not tracking; and a
+   2× lead that pass 1 had claimed was absent).
+
+Lessons that generalise:
+
+* **A retraction is not an answer.** After pass 2 the doc said "we don't
+  know", which was honest but left a hole where the fix spec needed
+  detail. Budget a third pass to *close* what verification opens.
+* **Do not patch a document whose spine was removed — rewrite it.** The
+  interim version asserted the override in its summary, retracted it in
+  the middle, and re-listed it as proven at the end. It was unreadable,
+  and the reader could not tell what was known. If the load-bearing claim
+  changes, restructure around known-vs-open.
+* **Behavioural reports from players are evidence about behaviour, not
+  about code.** The community independently described the over-run, which
+  raised the prior that a real mechanism existed and made pass 3 worth
+  funding — but it could not have confirmed the specific instructions,
+  and the instructions were wrong. Use such reports to prioritise
+  searches and to sanity-check conclusions; never to promote a code claim
+  that failed verification.
+* **Terminology can carry a wrong model.** "Kind 4 = approaching" was an
+  early guess that hardened into vocabulary across three documents; kind
+  4 is *contact*. Once a label is wrong, every sentence using it is
+  subtly wrong too.
 
 ## Standing debts
 
