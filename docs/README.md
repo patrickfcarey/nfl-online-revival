@@ -60,6 +60,7 @@ New to the repo? Read in this order:
 | `tackle-contest.md` | why break tackle doesn't feel like break tackle, and a four-word fix (#13) |
 | `rating-thresholds.md` | does the engine use rating thresholds? (#19) |
 | `catch-and-fumble.md` | the process of the catch, post-catch strips, and what governs fumbles (#22) |
+| `press-and-routes.md` | the jam contest, whether LBs can press, and what governs route running (#20/#20b/#21) |
 | `ai-play-calling.md` | the small play pool, the steep favourite, and the missing plan (#18) |
 
 **Forward work**:

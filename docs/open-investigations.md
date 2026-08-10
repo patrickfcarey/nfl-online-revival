@@ -591,20 +591,32 @@ complaint); and what winning/losing does — animation, speed penalty,
 route delay, knock-off-path — and for how long.
 
 **Owner's requirement (2026-08-10):** **linebackers need to be able to
-jam at the line.** Stated plainly, as a capability gap: *it is not
-football if a linebacker cannot jam a much smaller slot receiver.* If
-state 37's CB-only position gate is the engine's only jam path, that
-capability does not exist and needs to be added. Also under
-investigation: whether man coverage (state 22) has its own press contest
-or only a pre-snap alignment with no contact mechanic behind it — a
-defender who lines up pressed but has no jam code would be a distinct
-failure mode.
+jam at the line** — *it is not football if a linebacker cannot jam a much
+smaller slot receiver.*
 
-Note the reconciliation problem: the community reports TEs being jammed
-*constantly*, so somebody is jamming them. If 2004 permits only CBs, then
-either a slot CB was doing it, the earlier titles gated it differently,
-or a second jam path exists that we have not found. The M02/M03 half is
-**blocked on materials**.
+**Status: RESOLVED, and the premise was wrong — `press-and-routes.md`.**
+Recorded here as a capability gap on 2026-08-10; investigation shows
+**linebackers can already jam**, on three of the four jam paths, and one
+of those arms is *explicitly* position-gated to linebackers. The shared
+eligibility helper has **no position check**, and a closed field census
+finds **zero position reads and no size field anywhere** in the jam. The
+contest even favours an LB over a TE.
+
+**The real gap is zone, not man.** An LB in man coverage jams at
+assignment and every frame after; an LB in the underneath hook zone can
+only jam a receiver **already inside his zone rectangle**, which a TE
+releasing off the line is not yet. Targeted fix: pull that zone
+rectangle's near edge back to the LOS (data, per zone kind, low risk).
+Verify on the rig first — the prediction is that LB man-coverage jams
+already happen today.
+
+**The jam contest itself:** `P(win) = 65 + (50/255)·[(dSTR+dAGI)/2 −
+(rSTR+rAGI)/2]` vs one d100. Strength confirmed, **awareness refuted —
+the second term is agility**. Every realistic matchup lands in **57–74%**
+because the base is a flat 65. One play-shell modifier adds a **flat
++50**, taking any matchup to a guaranteed win. Difficulty does not appear
+in the jam code at all. "Constantly" is attempt *frequency* — the roll
+retries every frame the geometry allows.
 
 ## 20b. Receivers held up by traffic while releasing (a separate issue)
 
@@ -626,12 +638,17 @@ offensive player who brushes a defender is captured and held for the
 (`lead-blocker-targeting.md`, the hang-up section). A tight end releasing
 inline runs straight through blitz traffic.
 
-To settle: can a route-running receiver (state 31) be captured by the
-pairing at all, is anything exempt, and does he have any escape? If he
-can, the visible result is indistinguishable from a jam — meaning
-behaviour alone cannot tell #20 and #20b apart, and only the code can.
-
-**Status: open, 2004-native, in progress (Lane W).**
+**Status: CONFIRMED — `press-and-routes.md`.** A route-running receiver
+**can** be captured, there is **no exemption** for him, and he has **no
+escape** — the shed move is unreachable from the route state's AI-think
+*and* its USER-think. Worse, the route state's own code checks its
+engagement kind and **abandons the route entirely** when engaged, handing
+the receiver to the frozen shove axis. He is passive for 15–30 frames,
+re-armed on every re-contact. On screen this is indistinguishable from a
+jam through a completely different code path — which is exactly why
+player reports cannot separate #20 from #20b. Fixes are code caves; the
+honest one is a **capture exemption** that prevents an engagement which
+should never have formed.
 
 **Status: open, 2004-native, in progress (Lane W).**
 
