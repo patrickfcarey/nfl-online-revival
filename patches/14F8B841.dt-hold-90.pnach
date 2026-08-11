@@ -1,5 +1,5 @@
 gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
-comment=DT-HOLD-90 v3 -- ONE word: the helper's kind-8 attachment holds 76-89 ticks.
+comment=DT-HOLD-90 v4 -- ONE word: the helper's kind-8 attachment holds 76-89 ticks.
 
 // ---------------------------------------------------------------------------
 // R6a. v3 after the five-lane hostile review (docs/dt-hold-90-review/).
@@ -27,8 +27,17 @@ comment=DT-HOLD-90 v3 -- ONE word: the helper's kind-8 attachment holds 76-89 ti
 // 7->8 and re-zeroed each 8->7, so the patch is INERT there (lane 3). Slot 7
 // regression run retained as confirmation.
 //
-// Encoding: 30->90 changes only the LOW BYTE (0x1E->0x5A, second byte 0x00 in
-// both), so even a width-misparse of `extended` produces the intended word.
+// Encoding v4 (lane 5): `word` type, PROVEN 32-bit in this fork from repo
+// history (protocol-notes.md:212's working .text patch), instead of leading-2
+// `extended`, which is UNVERIFIED here. The 30->90 delta is low-byte-only so
+// the risk was low either way; `word` removes it entirely.
+//
+// EXECUTION PROOF (lane 5's T4, stronger than a memory read-back): sample the
+// helper's +0x432 during the run. Baseline initialisation cannot exceed 30,
+// so any read >= 61 proves the patched immediate EXECUTED through the
+// recompiler -- settling the cache question the dt44 null result could not
+// (lane 5 showed 0x001f6b08 branches past that word for state-2 defenders,
+// so dt44 discriminated nothing).
 //
 // Acceptance vs slot 9 frozen-seed baseline (operator pre-registered:
 // hold + outcome): dt_last_hold_frame 43 -> well past (~120+ if the helper
@@ -36,4 +45,4 @@ comment=DT-HOLD-90 v3 -- ONE word: the helper's kind-8 attachment holds 76-89 ti
 // sees linemen STAYING on the double. R5 arm: slot 6 (dt_detect it first).
 // ---------------------------------------------------------------------------
 
-patch=1,EE,201ef918,extended,2403005a
+patch=1,EE,001ef918,word,2403005a
