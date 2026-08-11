@@ -345,3 +345,38 @@ that still releases at frame 43 changes nothing on screen. **Duration first.**
 `block-cycle.md`'s "14-30-frame rigid two-body translation" is now identified as
 describing this exact window. It was never a bug report; it is the design, and
 the design is the problem.
+
+## The real pushback: 15 inches, and the operator called it
+
+Episode-scoped, measured only while `dt_role == 2`:
+
+| defender | frames | dy | dx | distance |
+|---|---|---|---|---|
+| DE (pos 10) | 17 | **+0.410 yd** | -0.090 | **15.1 in** |
+| LB (pos 13) | 13 | **-0.213 yd** | -1.184 | 43 in, but *forward* and lateral |
+
+Against the whole-play figures I quoted: +0.873 and **+3.178** yd. The 3.178 was
+almost entirely pursuit after the block ended.
+
+The operator, watching, said "maybe a few inches" and "I don't see much at all".
+Both readings were correct and both of my numbers were wrong, for the second
+time on the same run. **Fifteen inches over seventeen frames is the true
+baseline for R3**, and one of the two doubled men is not driven backwards at all.
+
+### R6 duration candidate — `0x001f6b0c`
+
+```
+001f6b0c  2402001e  addiu v0, zero, 30
+```
+
+The only immediate 30 in the block-cycle region `0x001F4000-0x001F7000`, which
+also holds five immediate 20s. `block-cycle.md` describes the block as a
+"14-30-frame rigid two-body translation", and the measured durations were 13,
+17 and 30 frames — the 30 lands exactly on the observed maximum.
+
+**Candidate 10x test:** `2402001E` -> `2402012C` (30 -> 300), one word, data-free
+and reversible. **Unverified**: it has not been confirmed to be the duration of
+*this* window rather than some other 30-frame timer in the same file, and it
+must be tested alone against slot 9 with `double_team.py` before being combined
+with anything (rule 2). The acceptance signal is `dt_role == 2` persisting past
+frame 43 and the episode-scoped pushback exceeding 15 inches.
