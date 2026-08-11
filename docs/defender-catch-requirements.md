@@ -99,12 +99,12 @@ live hazard, not a theoretical one.
 
 ## Open questions that gate this — do not build past them
 
-**Q1. Is there a distinct defender catch roll at all, or do receivers and
-defenders run the same code?** UNKNOWN. This is the blast-radius question: if
-the roll is shared, then satisfying this requirement changes **every receiver
-catch in the game**, which is a far larger change than the one being asked for
-and would need its own regression suite. Nothing may be designed until this is
-answered against the binary.
+**Q1 — ANSWERED 2026-08-11 against the image: YES, they share the path.**
+See "Q1 in full" below. Side is a *parameter* inside shared code, not a router
+to separate code — but the side-dependent branches are few, localised, and
+**two of them are defender-only**, so a fix does not have to touch receiver
+behaviour. That last part materially narrows the blast radius the requirement
+first appeared to carry.
 
 **Q2. What does the roll read today — and is it reached at all?** UNKNOWN, and
 the operator's near-100% failure rate means the second half is the more urgent
@@ -123,6 +123,122 @@ meaningful after that answers yes.
 is a per-frame hands check for ~10 ticks *after* possession, but a pre-catch
 "ball arrived in the catch radius" event with its own roll is unlocated.
 Without it there is no place to hang the requirement.
+
+## Q1 in full — receivers and defenders share the catch path
+
+Derived from `SLUS_207.52`, 2026-08-11. Two of our own published addresses for
+this area are mid-prologue (`catch-and-fumble.md`'s hazard note); the real
+entries used here are **`0x00255248`** (ball-arrival resolver) and
+**`0x002565E0`** (interaction handler).
+
+### The chain is single-threaded
+
+| function | callers |
+|---|---|
+| interaction handler `0x002565E0` | **1** — `0x00203f20` |
+| ball-arrival resolver `0x00255248` | **1** — `0x002566b4`, inside that handler |
+
+There is no second entry point. A ball meeting a player goes through one
+handler into one resolver whichever side the player is on.
+
+### The side test does not route to different code
+
+At `0x00203eec`, immediately before the handler call:
+
+```
+00203eec  jal 0x00260598          ; offense_team()
+00203ef0  lbu s0, 1(s1)           ; the player's side byte (+1)
+00203ef4  bne s0, v0, 0x00203f1c  ; DIFFERENT side -> straight to the handler
+00203efc  lw s0, 192(s2)          ; SAME side -> read a timestamp
+00203f04  addiu s0, s0, 5         ; +5 frames
+00203f0c  bne s0, zero, 0x00203f1c
+00203f14  beq zero, zero, 0x00203f2c   ; lockout unexpired -> skip the handler
+00203f20  jal 0x002565e0          ; BOTH sides arrive here
+```
+
+`0x00260598` is `[0x00601F4C]+0x40` — the spot object, the same pointer the LOS
+comes from. The function immediately after it, `0x002605b0`, is byte-identical
+plus `xori v0, v0, 1`, so the pair is **offense_team() / defense_team()**.
+
+That `+5` is the "**5 frames** offense re-contest lockout" already recorded in
+`catch-and-fumble.md`'s window-constant list, which confirms the direction
+independently: **the lockout falls on the offence.** A defender reaches the
+handler with no such delay. At this level the engine favours the defender.
+
+Inside the handler there is no side test at all — only `kind == 1` (this is a
+player) and an optional `state == 28` gate.
+
+### The four places side actually matters
+
+All four are inside shared functions. None of them selects a different one.
+
+| site | effect |
+|---|---|
+| `0x00203ef4` | 5-frame re-contest lockout, **offence only** |
+| `0x002553e0` | the same event resolves to code **153 for a receiver, 179 for a defender** |
+| `0x0025545c` | **defender-only** admission gate — see below |
+| `0x00255ff4` | "is on offence" computed by `xor` and passed as a boolean into `0x00255538` |
+
+`0x002553e0` reads with care because the answer sits in a delay slot:
+
+```
+002553ec  bne v0, v1, 0x002553f8
+002553f0  addiu v0, zero, 179     ; delay slot -- ALWAYS executes
+002553f4  addiu v0, zero, 153     ; only when the branch is NOT taken
+```
+
+Branch taken means `offense_team() != player_side`, i.e. a **defender**, and the
+stored code is **179**. A receiver falls through and overwrites with **153**.
+
+### The lead: a defender-only gate that can refuse outright
+
+At `0x0025545c`, on dispatch code 68:
+
+```
+0025545c  jal 0x002605b0          ; defense_team()
+00255464  lbu v1, 1(s1)           ; player side
+00255468  bnel v0, v1, 0x00255484 ; NOT a defender -> skip (branch-likely)
+00255470  jal 0x00260688          ; defender only
+00255474  daddu a0, zero, zero    ; a0 = 0
+00255478  beq v0, zero, 0x002554c8  ; returns 0 -> bail out with 256
+```
+
+`bnel` is branch-*likely*: its delay slot is annulled when the branch is not
+taken, so only a defender falls into the `0x00260688` call.
+
+`0x00260688` is a bit-flag getter — `[0x00601F4C]+0x3C`, returning bit `a0`:
+
+```
+00260688  lw v1, -14244(gp)       ; the spot object
+0026068c  lw v0, 60(v1)           ; +0x3C, a 32-bit flag word
+00260690  srav v0, v0, a0         ; v0 >>= a0   (see the caution below)
+00260698  andi v0, v0, 0x0001
+```
+
+`0x002606a0` is its setter. So **a defender's ball interaction on this dispatch
+code requires bit 0 of a game flag word to be set, and returns "nothing
+happened" (256) if it is clear.** That is exactly the shape of defect the
+operator's near-100% failure rate points at, and it is defender-only, so
+changing it cannot alter a single receiver catch.
+
+**What bit 0 means is NOT established.** It is not yet known to be the cause,
+only to be a defender-only gate capable of producing the symptom. Reading it
+live during a pass — it is one word at `[0x00601F4C]+0x3C` — is the cheapest
+next step and needs no patch.
+
+> **Caution on the listing.** `recon/mipsdis.py` prints `SLLV`/`SRLV`/`SRAV`
+> with `rs` and `rt` swapped (`pass-vs-run-blocking.md`, standing disassembler
+> debt). The shift above was decoded by hand from the word `0x00821007`:
+> rs=`a0`, rt=`v0`, rd=`v0`, funct=7, so it is `v0 = v0 >> a0`. Do not read the
+> printed operand order for these three opcodes.
+
+### What this changes about the requirement
+
+The blast radius is **smaller than feared, not larger**. "Shared path" sounded
+like "any change touches every catch in the game", and that is true of the
+*roll* — but three of the four side-dependent sites are already
+side-conditioned, and two are defender-only. A patch aimed at those cannot
+regress receiver catches, which removes the largest objection to attempting one.
 
 ## A design conflict the operator has to settle
 
