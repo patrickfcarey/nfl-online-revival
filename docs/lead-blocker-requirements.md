@@ -128,6 +128,26 @@ the fallback is legitimate).
 is proximity-first. Ranking by defender position/type is a cave routine that
 wraps or replaces the finder — the largest piece of work here.
 
+### R8 — Zone schemes take a lateral first step before engaging
+
+**Rule.** In a zone blocking scheme the lineman must take a **big lateral
+step playside first**, before he may attempt any block.
+
+**Why.** That first step is the whole basis of zone blocking — it establishes
+the playside track and lets the double-team/climb rules resolve. A lineman who
+engages before stepping is doing man blocking with a zone call.
+
+**Acceptance test.** New metric `first_step_lateral` = the blocker's net
+lateral (x) displacement before his first engagement. Must exceed a step
+(~0.7–1.0 yd) on a zone call, and R1's landmark gate must not fire before it.
+
+**Status: unscoped.** Two unknowns first: whether the shipped engine
+distinguishes a zone call at all in the blocking data (the assignment *class*
+byte may or may not encode scheme), and whether this belongs in state 47 or in
+the ordinary run-block state 33 — most zone-scheme linemen are not lead
+blockers, so this requirement probably lives outside state 47 and outside the
+current patch's blast radius. Do not fold it in until that is settled.
+
 ### R4 — Retarget along the route
 
 **Rule.** He re-picks his man every few frames as defenders flow, rather than
@@ -217,6 +237,20 @@ revisit, rather than tuning until the number moves.
 
 ## Open questions to settle first
 
+* **O2 — RESOLVED 2026-08-11 (partly), and it reframes R1.** For the
+  misdirection pull, the authored landmark is a **bearing only**: state 47's
+  enter writes `record+2` as a 24-bit BAM to `self+0x164` (measured 143.4° on
+  this play) and **branches past the point decode whenever that bearing is
+  non-zero**, leaving `+0x158`/`+0x15C` at their defaults. So this play tells
+  the guard a *direction* and never a *destination* — which is a strong
+  candidate explanation for why he commits at the line: nothing authored says
+  how far to pull. Measured against it, his actual travel is 180.9° (flat
+  left) versus the authored 143.4° (left and downfield). **Consequence for
+  R1:** "engage at your landmark" is not implementable as written for a
+  bearing-only play; the gate needs a distance the play does not supply, so R1
+  must define one (e.g. clear the down-line box along the bearing). Still open:
+  whether any play type uses the point form, and what `+0x158`/`+0x15C` mean
+  when it does.
 * **O1 — the vision cone's reference. RESOLVED 2026-08-11: facing.** The cone
   (`0x001FEC78`) measures each defender's bearing against `player+0x1A8`, the
   blocker's current facing/heading, not his route bearing (`+0x164`). Verified
