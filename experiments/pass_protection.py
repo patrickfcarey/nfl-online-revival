@@ -240,6 +240,15 @@ def _episodes(samples: Samples, entity: str,
     since the headline statistic is computed *per episode*, a spurious
     two-frame episode contributes a garbage decay fraction with the same weight
     as a real 90-frame rep.
+
+    UNSCOPED, deliberately (rule 1): an episode is *not* re-cut when
+    `engagement_link` changes, so a blocker who passes one man off and picks up
+    another without the engagement word ever dropping reads as one long rep.
+    That is a second, narrower episode-boundary question with its own
+    acceptance test -- does the link byte hold steady within a rep at all? --
+    and folding it in here would change every metric in the file on the same
+    run that changed the decay statistics, with no way to attribute the
+    difference. Recorded in `cannot_conclude`.
     """
     runs: List[Tuple[int, int]] = []
     start: Optional[int] = None
@@ -319,23 +328,37 @@ def _steps(samples: Samples, entity: str) -> List[Tuple[int, float]]:
     and irregular -- roughly a dozen changes across two hundred frames -- so
     any statistic taken per *sample* rather than per *change* mostly measures
     how long the value sat still.
+
+    **The chain restarts at every episode**, and that is a correction made
+    2026-08-11. The earlier version carried `previous` across the gap between
+    reps, so the first value of a new engagement was differenced against the
+    last value of the *previous* one. That manufactures a step out of two
+    different blocks -- often against two different men, tens of frames apart --
+    and it fed `worst_drop_late`, whose entire reason for existing is that a
+    comparison spanning two episodes confounds the mechanism with the
+    personnel. It is the same defect class as the double-team metrics that had
+    to be episode-scoped in experiments/double_team.py: a statistic that
+    reaches outside the episode it claims to describe.
+
+    The price is that a recompute happening *between* two reps no longer counts
+    in `recompute_steps`. That is accepted deliberately: `block_episodes`
+    already counts those transitions, and a step that can say which rep it
+    belongs to is worth more than a count that is complete but unattributable.
     """
     out: List[Tuple[int, float]] = []
-    previous: Optional[float] = None
-    committed = set()
     for start, end in _episodes(samples, entity):
-        committed.update(range(start, end + 1))
-    for index, value in samples.series(entity, "contest_power"):
-        if value is None or index not in committed:
-            continue
-        current = float(value)
-        if abs(current) <= 1e-9:
-            continue
-        if previous is not None and abs(current - previous) > 1e-4 and previous > 0:
-            snap = _at(samples, "game", "frames_since_snap", index)
-            out.append((int(snap if snap is not None else index),
-                        (current - previous) / previous))
-        previous = current
+        previous: Optional[float] = None
+        for index, value in samples.series(entity, "contest_power"):
+            if value is None or not start <= index <= end:
+                continue
+            current = float(value)
+            if abs(current) <= 1e-9:
+                continue
+            if previous is not None and abs(current - previous) > 1e-4 and previous > 0:
+                snap = _at(samples, "game", "frames_since_snap", index)
+                out.append((int(snap if snap is not None else index),
+                            (current - previous) / previous))
+            previous = current
     return out
 
 
@@ -361,6 +384,11 @@ def m_qb_dropback(samples: Samples) -> Optional[float]:
     play the QB drops several yards; on the misdirection run he does not. A
     near-zero value here means the wrong state was loaded and every other
     number in the run is about a different play.
+
+    **Whole-play on purpose**, unlike every measurement below it. The question
+    is "which play is this", which is a property of the iteration and not of any
+    engagement in it; scoping it to a block episode would only ask how deep the
+    QB was while someone happened to be blocking.
     """
     los = _los(samples)
     if los is None:
@@ -410,6 +438,10 @@ def m_contest_ever_nonzero(samples: Samples) -> Optional[float]:
     stays at zero, then either the field is not what `addresses.yaml` says it
     is or it is not populated on this path -- and that is a finding about the
     address map, not about pass protection.
+
+    **Whole-play on purpose**: it asks whether the address is ever populated at
+    all, which is a question about the map. Scoping it to episodes would make a
+    map error and an episode-segmentation error produce the same zero.
     """
     count = 0
     for entity in _offense(samples):
@@ -522,11 +554,23 @@ def m_rusher_gain(samples: Samples) -> Optional[float]:
     signs in one run is much stronger evidence that this function is the one
     running than seeing the decay alone, which a dozen other mechanisms could
     also produce.
+
+    **Zeros are excluded from the base, for the reason `_decay_fraction` spells
+    out**: an engagement episode opens a few frames before the contest triple is
+    populated, so the raw series starts at 0.0. This used to test
+    `values[0] <= 0.0` and `continue`, which silently threw away every episode
+    that began that way -- the metric returned None, "the mirror was not
+    observed", on runs where the rise was there to be seen a frame later. A
+    missing measurement that looks like a negative result is worse than a
+    missing measurement that looks missing, and this one had the same root
+    cause as the collapse it sits next to: the episode boundary is not where
+    the field becomes real.
     """
     best = None
     for entity in _defense(samples):
         for start, end in _episodes(samples, entity):
-            values = _span(samples, entity, "contest_overall", start, end)
+            values = [v for v in _span(samples, entity, "contest_overall", start, end)
+                      if abs(v) > 1e-9]
             if len(values) < 3 or values[0] <= 0.0:
                 continue
             rise = (max(values) - values[0]) / values[0]
@@ -559,7 +603,11 @@ def _forward_sign(samples: Samples, los: Optional[float]) -> float:
 def m_carrier_yards(samples: Samples) -> Optional[float]:
     """Net yards for the carrier. On a held-ball pass play this is the QB, so a
     negative value is a sack -- which is the natural end of every iteration
-    here and tells us how long protection actually held."""
+    here and tells us how long protection actually held.
+
+    **Whole-play on purpose**: it is the play's outcome, and an outcome belongs
+    to the play. It is also the one number here the operator can check against
+    the screen without any harness at all, which is worth keeping unscoped."""
     los = _los(samples)
     ys = [y for y in samples.values("game", "carrier_y") if y is not None]
     if los is None or len(ys) < 2:
@@ -570,6 +618,9 @@ def m_carrier_yards(samples: Samples) -> Optional[float]:
 
 
 def m_play_length(samples: Samples) -> Optional[float]:
+    """Samples in the iteration. **Whole-play on purpose**: it is the
+    denominator the count metrics (`decay_steps`, `recompute_steps`) have to be
+    read against, since both scale with how long the run lasted."""
     return float(len(samples))
 
 
@@ -577,7 +628,10 @@ def m_max_snap_frame(samples: Samples) -> Optional[float]:
     """How far the snap counter got. The 0.95 ramp saturates at 180 and the
     0.45 ramp at 300; if this never reaches 180 the run cannot see the top of
     either curve, and the decay metrics are measuring the ramp's early slope
-    rather than its full depth."""
+    rather than its full depth.
+
+    **Whole-play on purpose**: the ramp this spec is chasing is itself keyed to
+    the whole-play counter, so the control for it has to be too."""
     values = [v for v in samples.values("game", "frames_since_snap")
               if v is not None]
     return float(max(values)) if values else None
@@ -739,6 +793,14 @@ def build() -> Trial:
             "path; whether the run path shares the function is untested.",
             "Whether a rep ended because the blocker was beaten or because he "
             "passed his man off. Both read as the engagement word dropping.",
+            "Whether a long episode is one rep or several against different men. "
+            "Episodes are cut on the engagement word alone; a blocker who swaps "
+            "men without that word dropping stays inside one episode, and every "
+            "per-episode statistic then averages two blocks. `engagement_link` "
+            "(+0x3E4) is sampled and would answer it, but re-cutting episodes on "
+            "the link is a change to the segmentation itself and belongs in its "
+            "own run with its own acceptance test, not bundled into a metric "
+            "fix (rule 1).",
             "Whether an iteration is a clean sample of the decay at all, without "
             "the operator's pocket answer. The 4x out-of-pocket swing has no "
             "known memory flag, so a drifting QB contaminates the measurement "

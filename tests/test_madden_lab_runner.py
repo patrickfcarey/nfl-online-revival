@@ -1309,5 +1309,303 @@ class Cli(unittest.TestCase):
         self.assertEqual(0.0, result.metrics["lead_blocker_partners"])
 
 
+# --------------------------------------------------------------------------
+# Episode scoping -- the defect this harness has now shipped three times
+# --------------------------------------------------------------------------
+
+
+def _spec_module(name):
+    """Import an experiment file by path, as a MODULE rather than as a Trial.
+
+    `cli.load_spec` returns the Trial and registers whatever it imported under
+    one fixed name in `sys.modules`. These tests need the metric functions
+    themselves, and need two specs resident at once, so they do the import
+    directly under distinct names. Same reasoning as `load_spec`'s: experiments
+    are not a package and should not become one.
+    """
+    import importlib.util
+
+    path = Path(__file__).resolve().parent.parent / "experiments" / (name + ".py")
+    spec = importlib.util.spec_from_file_location("_spec_" + name, str(path))
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_spec_" + name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _lerp(lo, hi, step, steps):
+    return lo if steps <= 0 else lo + (hi - lo) * (float(step) / steps)
+
+
+class EpisodeScoping(unittest.TestCase):
+    """The slot 9 baseline, rebuilt synthetically, with no emulator.
+
+    Every number below is from the measured run recorded in
+    `docs/double-team-requirements.md`: three pairings of 13, 17 and 30 held
+    frames, all finished by frame 43 of a 308-frame play; +0.410 yd (15 in) of
+    real pushback on the doubled end; 3.178 yd of whole-play travel that was
+    reported as pushback and was really pursuit after the block ended; and a
+    linebacker who moves further than either but forwards and sideways, out of
+    the block rather than back.
+
+    The 0.410 and the 3.178 are put on ONE body here -- in the measured run the
+    3.178 was the linebacker's and the end's whole-play figure was +0.873 --
+    because a single position series that yields both readings is exactly what
+    pins the bug: nothing but the scoping decides which number comes out.
+
+    Those two numbers -- 0.410 and 3.178 -- are the whole point of this class.
+    The same sample data produces both, and which one a metric reports is
+    decided entirely by whether it is scoped to the frames where the pairing was
+    live. 3.178 was reported to the operator as the pushback. The operator,
+    watching the screen, said "maybe a few inches". These tests exist so that
+    the harness cannot quietly go back to agreeing with itself instead of him.
+    """
+
+    ROLE_FREE = 5
+    PLAY_FRAMES = 308
+
+    #: entity -> {role: [frames it holds that role]}. Held frames are COUNTED,
+    #: so the tight end's 30 are deliberately split either side of a gap: 2-16
+    #: as primary and 29-43 as helper, spanning 42 frames. A metric that
+    #: measured `last - first + 1` would call that a 42-frame hold and report
+    #: R6 as nearly satisfied on a play the operator watched fail.
+    HOLDS = {
+        "player:0:9": {0: list(range(2, 10)), 1: list(range(10, 19))},   # RT, 17
+        "player:0:4": {0: list(range(2, 17)), 1: list(range(29, 44))},   # TE, 30
+        "player:0:8": {0: list(range(27, 36)) + list(range(40, 44))},    # RG, 13
+        "player:1:10": {2: list(range(2, 19))},                          # DE, 17
+        "player:1:13": {2: list(range(27, 40))},                         # LB, 13
+    }
+    #: A defender whose role byte reads 2 on exactly ONE frame. PINE reads are
+    #: not synchronised with emulation, so this is what a torn read looks like;
+    #: counted, it would make `dt_shortest_hold` 1 and `dt_last_hold_frame` 100.
+    TORN = ("player:1:16", 100)
+
+    def setUp(self):
+        self.dt = _spec_module("double_team")
+
+    def _roles(self):
+        roles = {}
+        for entity, by_role in self.HOLDS.items():
+            frame_role = {}
+            for role, frames in by_role.items():
+                for frame in frames:
+                    frame_role[frame] = role
+            roles[entity] = frame_role
+        roles[self.TORN[0]] = {self.TORN[1]: 2}
+        return roles
+
+    def _samples(self):
+        roles = self._roles()
+        frames = []
+        for i in range(self.PLAY_FRAMES):
+            values = {
+                ("game", "frames_since_snap"): max(0, i - 4),
+                ("game", "los"): 15.0,
+                # The carrier starts behind the line, so the offence advances
+                # toward increasing y and "driven backwards" is +y. Sampled
+                # rather than assumed -- the spec derives the sign from these.
+                ("game", "carrier_y"): 13.4 + 0.02 * i,
+            }
+            for entity, frame_role in roles.items():
+                role = frame_role.get(i, self.ROLE_FREE)
+                values[(entity, "dt_role")] = role
+                values[(entity, "ai_state")] = 32 if role != self.ROLE_FREE else 20
+                # A helper who is a statue during the block and a sprinter for
+                # the 265 frames afterwards. The whole-play median of this
+                # series is 0.90; the double team's median is 0.05.
+                values[(entity, "speed_cmd")] = (
+                    0.40 if role == 0 else 0.05 if role == 1 else 0.90)
+            values.update(self._defender_positions(i))
+            frames.append(Frame(i, values))
+        return Samples(frames)
+
+    def _defender_positions(self, i):
+        """The doubled end and the doubled linebacker, frame by frame.
+
+        The end is driven from (0.151, 16.280) to (0.061, 16.690) across his 17
+        doubled frames -- dx -0.090, dy +0.410, 0.420 yd of travel, all of it
+        backwards -- and then pursues the ball to y 19.458, which is exactly
+        3.178 above where he started. The linebacker moves 1.184 sideways and
+        0.213 *forwards* while doubled: further than the end, and in the wrong
+        direction for R3.
+        """
+        if i <= 2:
+            end = (0.151, 16.280)
+        elif i <= 18:
+            end = (_lerp(0.151, 0.061, i - 2, 16),
+                   _lerp(16.280, 16.690, i - 2, 16))
+        else:
+            end = (0.061, _lerp(16.690, 19.458, i - 18, self.PLAY_FRAMES - 19))
+        if i <= 27:
+            backer = (1.000, 16.500)
+        elif i <= 39:
+            backer = (_lerp(1.000, -0.184, i - 27, 12),
+                      _lerp(16.500, 16.287, i - 27, 12))
+        else:
+            backer = (-0.184, 16.287)
+        return {("player:1:10", "pos_x"): end[0], ("player:1:10", "pos_y"): end[1],
+                ("player:1:13", "pos_x"): backer[0],
+                ("player:1:13", "pos_y"): backer[1]}
+
+    # -- R6: how long the pairing lasts ------------------------------------
+
+    def test_the_measured_holds_are_reproduced(self):
+        samples = self._samples()
+        self.assertEqual(30.0, self.dt.m_dt_longest_hold(samples))
+        self.assertEqual(13.0, self.dt.m_dt_shortest_hold(samples))
+        self.assertEqual(43.0, self.dt.m_dt_last_hold_frame(samples))
+
+    def test_a_hold_is_frames_held_and_not_the_window_it_spans(self):
+        # The tight end's 30 frames span 2..43. Spanning would say 42.
+        holds = dict((e, h) for e, h, _f in self.dt._holds(self._samples()))
+        self.assertEqual(30, holds["player:0:4"])
+        self.assertEqual(13, holds["player:0:8"])
+        self.assertEqual(17, holds["player:1:10"])
+
+    def test_a_one_frame_role_byte_is_not_a_pairing(self):
+        samples = self._samples()
+        # The torn read sits at frame 100, well past the last real pairing.
+        self.assertEqual(43.0, self.dt.m_dt_last_hold_frame(samples))
+        self.assertEqual(13.0, self.dt.m_dt_shortest_hold(samples))
+        self.assertEqual(5.0, self.dt.m_dt_registered(samples))
+
+    def test_peel_off_does_not_count_as_held(self):
+        # Role 3 is the pairing coming apart. If it counted, the right guard's
+        # 13 frames would become 20 and a patch that only made blockers peel
+        # more slowly would look like a patch that made them hold.
+        roles = self._roles()
+        frames = []
+        for i in range(self.PLAY_FRAMES):
+            values = {("game", "frames_since_snap"): max(0, i - 4)}
+            for entity, frame_role in roles.items():
+                role = frame_role.get(i, self.ROLE_FREE)
+                if entity == "player:0:8" and 44 <= i <= 50:
+                    role = 3
+                values[(entity, "dt_role")] = role
+            frames.append(Frame(i, values))
+        holds = dict((e, h) for e, h, _f in self.dt._holds(Samples(frames)))
+        self.assertEqual(13, holds["player:0:8"])
+
+    # -- R3: pushback, the number that was wrong by 8x ---------------------
+
+    def test_pushback_is_scoped_to_the_frames_the_man_was_doubled(self):
+        samples = self._samples()
+        ys = [v for v in samples.values("player:1:10", "pos_y") if v is not None]
+        # What the old whole-play metric computed from this very series, and
+        # reported as R3 being close to met.
+        self.assertAlmostEqual(3.178, max(ys) - ys[0], places=3)
+        # What the block actually did: fifteen inches.
+        self.assertAlmostEqual(
+            0.410, self.dt.m_defender_pushback(samples), places=3)
+
+    def test_displacement_and_pushback_describe_the_same_body(self):
+        samples = self._samples()
+        # The linebacker travels 1.204 yd, three times the end's 0.420 -- but
+        # forwards and sideways. Reporting his distance beside the end's
+        # pushback would read as a man driven 43 inches backwards.
+        self.assertAlmostEqual(
+            0.420, self.dt.m_defender_displacement(samples), places=3)
+        drive = self.dt._drive(samples, "player:1:13")
+        self.assertAlmostEqual(-0.213, drive[0], places=3)
+        self.assertAlmostEqual(1.203, drive[1], places=3)
+
+    def test_a_defender_who_is_never_doubled_contributes_nothing(self):
+        samples = self._samples()
+        self.assertIsNone(self.dt._drive(samples, self.TORN[0]))
+
+    # -- R2: the statue ----------------------------------------------------
+
+    def test_speeds_are_scoped_to_the_role_the_player_held(self):
+        samples = self._samples()
+        # Unscoped, both roles converge on running speed and the gap vanishes:
+        # that is how "R2 nearly satisfied" was reported off a play where the
+        # helper stood still.
+        whole_play = [v for v in samples.values("player:0:4", "speed_cmd")
+                      if v is not None]
+        self.assertAlmostEqual(0.90, sorted(whole_play)[len(whole_play) // 2])
+        self.assertAlmostEqual(0.05, self.dt.m_helper_speed(samples), places=6)
+        self.assertAlmostEqual(0.40, self.dt.m_primary_speed(samples), places=6)
+
+    def test_a_man_who_holds_both_roles_lands_on_both_sides_by_frame(self):
+        # The tight end is primary 2-16 and helper 29-43. A per-player split
+        # would put all 308 of his frames on one side of the comparison.
+        samples = self._samples()
+        self.assertIn("player:0:4", self.dt._role_holders(samples, 0))
+        self.assertIn("player:0:4", self.dt._role_holders(samples, 1))
+        self.assertEqual(list(range(2, 17)),
+                         self.dt._role_frames(samples, "player:0:4", (0,)))
+
+    # -- the spec still declares what it measures --------------------------
+
+    def test_the_spec_carries_the_r6_metrics_as_its_headline(self):
+        from tools.madden_lab import __main__ as cli
+        root = Path(__file__).resolve().parent.parent
+        trial = cli.load_spec(str(root / "experiments" / "double_team.py"))
+        names = [m.name for m in trial.metrics]
+        for required in ("dt_longest_hold", "dt_shortest_hold",
+                         "dt_last_hold_frame", "defender_pushback",
+                         "defender_displacement"):
+            self.assertIn(required, names)
+        # R6 is the primary requirement, so duration leads the report.
+        self.assertEqual("dt_longest_hold", names[0])
+
+
+class PassProtectionEpisodes(unittest.TestCase):
+    """The same defect, in the file where it was first found.
+
+    A composite that resets at every lock-in cannot be summarised over the
+    play, and a *step* in it cannot be taken across the gap between two reps:
+    that differences one block against another, which is the confound
+    `worst_drop_late` exists to avoid.
+    """
+
+    def setUp(self):
+        self.pp = _spec_module("pass_protection")
+
+    @staticmethod
+    def _blocker(power_by_frame, engaged, entity="player:0:6", frames=40):
+        values = []
+        for i in range(frames):
+            row = {("game", "frames_since_snap"): i,
+                   (entity, "engagement"): 4 if i in engaged else 0}
+            if i in power_by_frame:
+                row[(entity, "contest_power")] = power_by_frame[i]
+            values.append(Frame(i, row))
+        return Samples(values)
+
+    def test_a_step_is_never_taken_across_an_episode_boundary(self):
+        # Two reps: 0-9 at ~1000 decaying once, then 20-29 recomputed to 800.
+        power = {}
+        for i in range(0, 10):
+            power[i] = 1000.0 if i < 5 else 900.0
+        for i in range(20, 30):
+            power[i] = 800.0 if i < 25 else 850.0
+        samples = self._blocker(power, set(range(0, 10)) | set(range(20, 30)))
+        steps = self.pp._steps(samples, "player:0:6")
+        # 900 -> 800 across the gap is not a decay step; it is one man's second
+        # block being differenced against his first.
+        self.assertEqual([5, 25], [snap for snap, _f in steps])
+        self.assertAlmostEqual(-0.1, steps[0][1], places=6)
+        self.assertAlmostEqual(0.0625, steps[1][1], places=6)
+        self.assertEqual(1.0, self.pp.m_decay_steps(samples))
+        self.assertEqual(1.0, self.pp.m_recompute_steps(samples))
+
+    def test_a_rusher_whose_field_fills_in_late_is_still_measured(self):
+        # The episode opens before the contest triple is populated, so the
+        # series starts at 0.0. Basing the rise on that zero threw the whole
+        # episode away and reported "no mirror observed".
+        frames = []
+        for i in range(20):
+            row = {("game", "frames_since_snap"): i,
+                   ("player:1:3", "engagement"): 4 if i < 10 else 0}
+            row[("player:1:3", "contest_overall")] = (
+                0.0 if i < 2 else 100.0 if i < 5 else 120.0)
+            frames.append(Frame(i, row))
+        gain = self.pp.m_rusher_gain(Samples(frames))
+        self.assertIsNotNone(gain)
+        self.assertAlmostEqual(0.2, gain, places=6)
+
+
 if __name__ == "__main__":
     unittest.main()

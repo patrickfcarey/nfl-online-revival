@@ -362,6 +362,36 @@ structs:
           reads 0 -- side 0 index 0, the quarterback -- and the other 21 read
           255. The dump is practice mode with the human on offence, so this
           also identifies the human-controlled player.
+      flags_0c:
+        offset: 0x0C
+        type: u32
+        confidence: code
+        source: double-team-requirements.md; disassembled at 0x001e8184 and
+          observed live once, 2026-08-11
+        note: >-
+          A per-player flag word, and the reason a blocked man can look like a
+          statue. BIT 2 IS A ONE-SHOT TRIGGER. At 0x001e8184 the engine reads
+          `lw v1, 12(s0)`, tests `andi v0, v1, 0x0004` and takes
+          `beq v0, zero, 0x001e8234` -- bit 2 clear skips the whole block at
+          0x001e8180-0x001e822c, speed write included. That block grants
+          speed_cmd (+0x1E8) and then clears bit 2 itself, masking with
+          0xFFFFFFFB at 0x001e81a8/0x001e81b0; bit 11 is cleared in the same
+          block with 0xFFFFF7FF at 0x001e81cc. Observed live on a single player
+          sampled every frame the poll loop could reach -- frame 442 flags
+          0x00040004 with bit 2 set and speed 0.0, frame 443 flags 0x00040000
+          with bit 2 cleared and speed 0.1908, then 0.1660 and 0.1380 over the
+          following frames. So a man is not HELD at zero: he is granted speed
+          once, on entry, and it decays from there. A statue is a man whose
+          trigger has not fired recently. Graded `code` rather than `dump`
+          because the mechanism comes from the instructions and the live
+          sighting is ONE transition on ONE player -- and that sighting carries
+          two limits worth repeating before anyone patches against it. It was
+          caught in ai_state 62, not 32, so the block is shared and not
+          double-team-specific; and the transient lasts a single frame, which an
+          11-player four-read-per-player loop missed entirely on its first
+          attempt. Reading this field needs a single-player probe, not a
+          22-player sweep, which is why experiments/double_team.py deliberately
+          leaves it out of its sample spec.
       pos_x:
         offset: 0x190
         type: f32
