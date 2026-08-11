@@ -32,36 +32,37 @@ EXPERIMENTS = REPO / "experiments"
 #: Big enough to see a distribution, small enough to finish inside an hour.
 DEFAULT_ITERATIONS = 20
 
-#: Calibrated against 148 completed iterations of the lead-blocker spec:
-#: mean **11.490 MB/iteration**, standard deviation **1.18% of the mean**,
-#: p5-p95 of 11.432-11.495. The distribution is tight and **right-skewed** --
-#: nearly every play costs the same, and the tail is entirely play length (a
-#: run that breaks for 11 yards lasts longer than one stuffed for one).
+#: Calibrated for COVERAGE, not precision: the job of this range is that the
+#: real number lands inside it, so it is deliberately wide and deliberately
+#: **asymmetric**. Measured over 148 completed iterations of the lead-blocker
+#: spec: mean 11.490 MB, min 11.432 (-0.5%), max 13.053 (+13.6%). The low side
+#: has essentially no spread -- every play costs at least this much -- while
+#: the tail runs high, because play length is the only variable and a run that
+#: breaks lasts longer than one stuffed at the line.
+#:
+#: So the band is not mean +/- x. It is a floor just under the observed
+#: minimum and a ceiling well above the observed maximum, which contained
+#: 100% of measured iterations with room for play types not yet seen. A
+#: symmetric band would spend its width on a low end that cannot occur.
 MB_PER_ITERATION = 11.49
+MB_PER_ITERATION_LOW = 11.0      # under the observed 11.432 minimum
+MB_PER_ITERATION_HIGH = 15.0     # 15% above the observed 13.053 maximum
 
-#: +/-5%, which is over four standard deviations of the bulk, so the quoted
-#: range holds for essentially every ordinary iteration. Derived from the
-#: measurement above rather than picked for comfort.
-ESTIMATE_BAND = 0.05
-
-#: The worst iteration actually observed, 13.053 MB (+13.6%) -- outside the
-#: +/-5% band, because the band describes the typical run and this describes
-#: the worst one. **The fit check uses this, not the band.** The two failure
-#: modes are not symmetric: a conservative "will it fit" answer costs nothing,
-#: while an optimistic one kills an hour-long run at 95% with a full disk.
-MB_PER_ITERATION_WORST = 13.06
+#: The fit check uses the ceiling too -- a conservative "will it fit" answer
+#: costs nothing, an optimistic one kills an hour-long run at 95% with a full
+#: disk.
+MB_PER_ITERATION_WORST = MB_PER_ITERATION_HIGH
 
 
 def size_estimate(iterations: int):
-    """`(low_mb, high_mb, worst_mb)` for a run of `iterations`.
+    """`(low_mb, high_mb, worst_mb)` -- a range chosen to CONTAIN the truth.
 
-    Two numbers with different jobs, which is why this returns both: the
-    `low..high` band is the honest +/-5% estimate of what the run will
-    actually take, and `worst` is the observed-maximum figure the disk-fit
-    check must use so it can never under-warn.
+    Wide on purpose. The failure this guards against is an operator deciding
+    a run fits when it does not, so the range is calibrated so the real size
+    lands inside it rather than to look precise.
     """
-    mid = iterations * MB_PER_ITERATION
-    return (mid * (1 - ESTIMATE_BAND), mid * (1 + ESTIMATE_BAND),
+    return (iterations * MB_PER_ITERATION_LOW,
+            iterations * MB_PER_ITERATION_HIGH,
             iterations * MB_PER_ITERATION_WORST)
 
 
@@ -166,10 +167,10 @@ def main(argv=None) -> int:
     if free_mb is None:
         print("  disk       : could not read free space for that path")
     else:
-        print("  est. size  : %s to %s  (+/-5%%, from 148 measured iterations)"
+        print("  est. size  : %s to %s  (range contained 148/148 measured runs)"
               % (_human(low), _human(high)))
-        print("  disk       : %s free of %s  (worst case needs %s)"
-              % (_human(free_mb), _human(total_mb), _human(worst)))
+        print("  disk       : %s free of %s"
+              % (_human(free_mb), _human(total_mb)))
         if worst > free_mb:
             print("  !! NOT ENOUGH SPACE -- the run would fill the disk and die "
                   "partway. Choose another path or fewer iterations.")
