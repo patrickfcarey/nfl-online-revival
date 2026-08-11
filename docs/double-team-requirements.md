@@ -446,3 +446,41 @@ also have changed nothing.
 `reselect_timer`. `0x001f6730` and `0x001f68e0` both `sb v0, 1079(a0)` — writes
 to the role byte — and `0x001f672c` loads the immediate 3 directly before one
 of them. That is the peel-off write, and its guard is the real target.
+
+## R6 FINAL TARGET — delay `reselect_timer` on double teams
+
+> "it seems like the double team stops being important to it super quickly, if
+> ever … which is why even trying to adjust the duration would make no change …
+> so we need to delay the reselect_timer on double teams … probably a second"
+
+`addresses.yaml` already carries the decisive line, from
+`lead-blocker-targeting.md`:
+
+> **`reselect_timer`, +0x432, u16 — "Initialised to 30 − blockRating/16."**
+
+That single note closes the loop on everything above:
+
+* It is **computed per player**, not a constant. A 30-frame literal cannot
+  produce 13, 17 and 30 on three blockers; `30 - blockRating/16` can. This is
+  why patching `0x001f6b0c` changed nothing and why the five immediate 20s
+  would not have either.
+* It is a **re-selection** clock, not a hold duration — matching the operator's
+  reading that the blocker re-targets rather than times out.
+* **Better blockers re-select SOONER** (higher rating subtracts more). A
+  99-rated lineman abandons his double team faster than a 60-rated one, which
+  is precisely backwards from football and may be a defect in its own right,
+  independent of double teams.
+
+**The requirement:** while a double team is live (`dt_role` 0 or 1) and the
+doubled defender has not been displaced, `reselect_timer` must be extended by
+roughly **one second (60 frames)** — the operator's figure. The base 30 becomes
+~90, or the double-team case takes its own branch.
+
+**Anti-goal:** do not extend re-selection globally. Every blocker in the game
+uses this timer, so a blanket change would freeze single blockers onto their men
+and is the "must not break" surface in R5.
+
+**Next step, static:** find the write to `+0x432` (u16, so `sh`) and the site
+computing `30 - blockRating/16`. A sweep at `+0x430` returns nothing — the
+offset is `0x432`, and getting that wrong wastes a pass. Then gate the extension
+on `dt_role` being 0 or 1, which is readable at `+0x437` in the same struct.
