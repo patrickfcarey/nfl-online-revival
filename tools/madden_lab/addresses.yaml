@@ -178,6 +178,29 @@ globals:
     confidence: doc
     note: Stride inferred from 18 rows over the span; contents not decoded.
 
+  rng_context:
+    addr: 0x006046BC
+    type: ptr
+    confidence: code
+    source: experiments/pass_protection.py (decay derivation); 0x002f93b0 disassembly
+    note: >-
+      The engine RNG's context pointer. 0x002f93b0 -- the roll the
+      pass-protection decay calls once per component -- reads it gp-relative
+      (lw a1, -4148(gp)), takes a CHANNEL index in a0 (masked to 8 bits), and
+      indexes an array of per-channel seed words at [ctx+0x14] + channel*4,
+      advancing the seed via 0x00468fa8. Channel 0 additionally increments two
+      counters at ctx+8 / ctx+12. 205 call sites.
+      WHY IT MATTERS: the seeds live in EE memory, so a savestate freezes the
+      dice -- which is the whole mechanism behind the harness's bit-identical
+      replays (every zero-width IQR measured 2026-08-11). Replaying live
+      without a reload resumes the streams mid-sequence, which is why the same
+      play against the same call plays out differently at the console.
+      CAPABILITY, untested: writing a different seed per iteration would turn
+      one savestate into N distinct worlds with everything else held constant
+      -- exactly what defender-catch-requirements.md flags as needed for any
+      Bernoulli measurement. The seed array's element format and channel
+      assignments are NOT decoded; do not write to it until they are.
+
   handle_kind_dispatch:
     addr: 0x0057B680
     type: u32

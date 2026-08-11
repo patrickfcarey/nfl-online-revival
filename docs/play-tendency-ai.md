@@ -123,3 +123,45 @@ no data beyond the generic allocator and DB engine.
 | franchise save/load of the ring | `0x0024e458` (`'STPG'` in `GBIN`) |
 | practice gate | `0x00172960` (`'prac'` +382) |
 | Madden Cards list `'madt'` ctor / effect getters | `0x00116668` / `0x00116898`, `0x00116a58`, `0x00116b50` |
+
+## Practice mode, verified live (2026-08-11)
+
+The "hard-zeroed in practice" claim above is **confirmed — but the mechanism is
+in the getters, and the tracker itself keeps working**. Both matter.
+
+Live read, in practice mode (`prac+382` = 1), after the operator had repeated
+one play:
+
+```
+stored repetition f = 0.041667      <- exactly 1/24: ONE recent repeat at the
+stored success    s = 0.000000         top recency weight. The table works.
+ring: two 16-byte records, same play id 0xa11 in both
+```
+
+So the ring **records play calls in practice** and the recompute runs and
+stores real factors. What zeroes practice is the read side: both getters call
+the practice check `0x00172960` FIRST and return 0.0 without touching the
+stored float when it says practice —
+
+```
+0024e190  jal 0x00172960          ; in practice?
+0024e198  beq v0, zero, ->read    ; no: fall through to the real value
+0024e1a0  mtc1 zero, f0           ; yes: return 0.0
+```
+
+Every consumer goes through these getters, so **no ptrk effect reaches play in
+practice mode** — but a live read of the raw structure shows non-zero factors,
+which is exactly the trap: probing `[0x00601eb4]+0` directly says the tracker
+is boosting the CPU in practice, and it is not. Probe the getters' behaviour,
+not the store.
+
+Consequence for experiment design: rep-to-rep variation in practice with the
+same play selected is **not** ptrk — it is the RNG streams resuming
+mid-sequence (`rng_context` in addresses.yaml). In real game modes ptrk DOES
+add adaptation on top, growing ~1/24 per recent repeat, and a savestate freezes
+both: the ring is EE memory, so every harness reload resets the reputation too.
+
+Ring record shape, observed not derived: 16 bytes -- {u32 play id, u32
+0x4eda (undecoded), u32 4 (undecoded), u32 flags-like}. Two records after two
+manual reps; the harness's own iterations do not accumulate because each one
+reloads the state.
