@@ -544,3 +544,38 @@ have either.
 **Regression surface stays R5:** every blocker in the game shares this timer.
 All three rules must be gated on `dt_role` being 0 or 1, or single-block line
 play changes with them.
+
+## Why this should generalise — and the two qualifiers
+
+> "this seems like it should patch cleanly for all plays as its just the
+> 'correct way' to do double teams in football"
+
+Largely right, and it is a stronger position than the lead-blocker work. That
+one needed the play file, because a pulling guard's route is authored per play.
+This does not: **the engine already registers the pairing itself, with roles, on
+every play where one exists.** The patch reads state the engine maintains and
+changes a decision. Nothing play-specific has to be authored, so one change
+covers every play that produces a double team.
+
+Two qualifiers before "all plays" is taken literally:
+
+**It does not reach pass plays yet.** DT-1 (`0x001F6560`) restricts registration
+to run blocking, confirmed live on slot 8 — a pass down with zero registrations
+on any of 22 players. The fix lands on run plays and silently does nothing on
+pass protection until DT-1 is applied as well. A second patch, not a flaw.
+
+**Zone and gap schemes may want different peel triggers.** In a gap/power
+double the pair drives and the peel is on displacement, which is what R6b
+specifies. In a zone combo the climb is usually triggered by the linebacker
+*declaring*, not by how far the down lineman was moved. Same principle,
+different trigger. The operator already flagged that schemes differ when he
+required a lateral first step for zone in `lead-blocker-requirements.md` (R8).
+R6b may need linebacker flow as a second peel condition — or displacement may
+prove a good enough proxy for both. Untested either way.
+
+**What actually decides whether it patches cleanly** is narrower than the
+football logic: `reselect_timer` (+0x432) is shared by **every blocker in the
+game**. Correct gating on `dt_role` makes the change invisible to single blocks
+and universal to doubles; incorrect gating makes every lineman stickier. That is
+the entire risk, and it is why R5's no-regression check runs on its own
+savestate before anything is combined.
