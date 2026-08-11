@@ -34,10 +34,17 @@ for line in open(SRC):
     if '"sample"' not in line:
         continue
     r = json.loads(line)
-    if r.get("entity") != WHO:
-        continue
+    # The `game`/`los` test has to come BEFORE the entity filter. It used to sit
+    # after it, which made it unreachable: every row that reached it had already
+    # been required to equal WHO, and WHO is a player. The tool silently used
+    # the 15.000 fallback on every file, including files that carried the
+    # engine's own value -- the fix for the LOS bias was written and then never
+    # ran.
     if r.get("entity") == "game" and r.get("field") == "los" and r.get("value"):
         los_seen = float(r["value"])          # prefer the engine's own value
+        continue
+    if r.get("entity") != WHO:
+        continue
     if r["field"] == "xyz":
         routes[r["iteration"]].append((r["tick"], r["value"]))
     elif r["field"] == "engagement" and r["value"] >= 2:
@@ -63,21 +70,32 @@ d.text((14, sy(LOS) - 30), "LINE OF SCRIMMAGE", font=font(20, True), fill=(255, 
 
 # Translucent overlay: with many runs the identical ones stack into a bright
 # core and the outliers stay visibly faint, which is the point of the fan.
-lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-ld = ImageDraw.Draw(lay)
+# One layer per iteration, composited in turn. A single shared layer does NOT
+# stack: PIL's ImageDraw replaces the pixels it touches instead of blending into
+# them, so N identical routes at alpha 60 drew a line of alpha 60 and the fan
+# looked the same whether the engine was deterministic or not -- which is the
+# only thing the fan is for. Every fan this tool produced before 2026-08-11 has
+# this defect; the pictures are not wrong about *where* the routes go, only
+# about how many runs agree.
+alpha = max(25, min(140, int(1300 / max(1, len(routes)))))
+canvas = im.convert("RGBA")
 depths = []
 for it in sorted(routes):
+    lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ld = ImageDraw.Draw(lay)
     pts = [(sx(p[0]), sy(p[1])) for _t, p in routes[it]]
     if len(pts) > 1:
-        ld.line(pts, fill=(255, 193, 7, 60), width=3, joint="curve")
+        ld.line(pts, fill=(255, 193, 7, alpha), width=3, joint="curve")
     ct = commits.get(it)
     if ct is not None:
         cp = next((p for t, p in routes[it] if t >= ct), None)
         if cp:
             depths.append(cp[1] - LOS)
             X, Y = sx(cp[0]), sy(cp[1])
-            ld.ellipse([X - 9, Y - 9, X + 9, Y + 9], outline=(255, 23, 68, 120), width=3)
-im = Image.alpha_composite(im.convert("RGBA"), lay).convert("RGB")
+            ld.ellipse([X - 9, Y - 9, X + 9, Y + 9],
+                       outline=(255, 23, 68, min(255, alpha * 2)), width=3)
+    canvas = Image.alpha_composite(canvas, lay)
+im = canvas.convert("RGB")
 d = ImageDraw.Draw(im)
 d.rectangle([0, 0, W, 50], fill=(12, 42, 16))
 d.text((14, 12), "Pulling guard: %d runs overlaid" % len(routes), font=font(23, True),

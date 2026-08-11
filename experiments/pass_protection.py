@@ -93,16 +93,26 @@ from tools.madden_lab.trial import (EntitySelector, Frame, InputEvent,
 from tools.madden_lab.world import Handle
 
 # --------------------------------------------------------------------------
-# Cost declaration -- see menu.py. UNMEASURED: these are estimates carried
-# over from lead_blocker.py scaled by field count (14 field-slots here against
-# its 9) and by the longer play. Replace both with measured values after the
-# first full run, exactly as that spec's comment records having done.
+# Cost declaration -- see menu.py.
+#
+# MEASURED 2026-08-11: 20 iterations wrote 670.1 MB in about 4 minutes, so
+# 33.5 MB and ~12 s each.
+#
+# The first declaration here was (14.0, 32.0) and it was WRONG ON THE HIGH SIDE
+# -- the real figure sits just outside it. Not because the estimate was
+# careless, but because three fields (pos_x on the offence, pos_x/pos_y on the
+# defence) were added to the sample spec *after* the range was written, and
+# nothing recomputes a hand-declared constant. A cost declaration is coupled to
+# the field list above it; changing one without the other silently makes the
+# menu's disk estimate lie to the operator.
 # --------------------------------------------------------------------------
 
 #: Wall-clock seconds per iteration, including savestate load and confirm.
-SECONDS_PER_ITERATION = 13.0
-#: Output megabytes per iteration. Deliberately wide while unmeasured.
-MB_PER_ITERATION = (14.0, 32.0)
+SECONDS_PER_ITERATION = 12.0
+#: Output megabytes per iteration. Measured mean is 33.5; this is that +-8%,
+#: which is wider than the +-5% used elsewhere because it rests on one run's
+#: mean rather than on a per-iteration spread.
+MB_PER_ITERATION = (31.0, 36.0)
 
 SIDE_OFFENSE = 0
 SIDE_DEFENSE = 1
@@ -619,7 +629,11 @@ OFFENSE_FIELDS = (
     "contest_power",      # +0x414 -- verified this session as 16(s1), s1=base+0x404
     "contest_finesse",    # +0x418
     "contest_overall",    # +0x41C
-    "pos_y",              # for the QB dropback control
+    # Both coordinates, not just pos_y. pos_y alone serves the dropback control
+    # but cannot draw anything: a pocket is a shape, and half a coordinate pair
+    # plots a line. Costs ~1/13th more output per iteration.
+    "pos_x",              # +0x190
+    "pos_y",              # +0x194
 )
 
 DEFENSE_FIELDS = (
@@ -628,6 +642,12 @@ DEFENSE_FIELDS = (
     "engagement",
     "engagement_link",
     "contest_overall",    # the rusher's +0x41C, which the same function raises
+    # Defenders were sampled without coordinates in every spec so far, which is
+    # why the lead-blocker overlays could never draw the man being blocked and
+    # had to caption him instead. A block is a relationship between two bodies;
+    # sampling one of them makes the picture unfalsifiable.
+    "pos_x",
+    "pos_y",
 )
 
 METRICS = (
