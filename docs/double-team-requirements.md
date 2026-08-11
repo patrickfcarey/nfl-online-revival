@@ -410,3 +410,39 @@ the region are unlikely to be it for the same reason.
 Likely a rand-scaled span (`lo + rand*(hi-lo)`) near the engagement-timer write
 (`engage_timer` +0x42C). That is a static search for the *arithmetic*, not for
 a literal.
+
+## R6 REFRAMED — it is target re-selection, not duration (operator, 2026-08-11)
+
+> "it was never related to duration but target priority right"
+
+Almost certainly right, and it explains the refutation above better than the
+refutation did. Three lines of evidence:
+
+1. **Three different durations in one play** — 13, 17 and 30 frames on three
+   blockers, reproducible across runs. A shared duration constant produces one
+   number. Three blockers releasing at three different moments is three
+   independent *decisions*.
+2. **`dt_role` 3 is "peel-off"** (`block-cycle.md`). The engine has an explicit
+   role for *leaving* a double team. A pure timer would not need one.
+3. **`reselect_timer`** exists on the player struct, and
+   `pass-vs-run-blocking.md`'s **P2** is already named "**soften the
+   assignment-drop test** so a pass blocker cannot shed his man during the
+   approach", at `0x001ca0a8` / `0x001ca0c8` / `0x001ca104`. That is the same
+   mechanism described for a different symptom.
+
+The operator's own description — "a right guard briefly touch someone and then
+go to the second level" — is a blocker who **re-targeted a linebacker**, not one
+whose clock expired. Climbing to the second level is what a combo blocker is
+*supposed* to do; the defect is that he does it immediately instead of after
+driving the down lineman.
+
+**R6 restated:** the helper must not re-select a new target while the double
+team is live and the doubled defender has not been displaced. The lever is the
+assignment-drop / re-selection test, not a duration constant — which is why
+patching a literal 30 changed nothing, and why the five immediate 20s would
+also have changed nothing.
+
+**Next static search:** what writes `dt_role` 3 (peel-off), and what feeds
+`reselect_timer`. `0x001f6730` and `0x001f68e0` both `sb v0, 1079(a0)` — writes
+to the role byte — and `0x001f672c` loads the immediate 3 directly before one
+of them. That is the peel-off write, and its guard is the real target.
