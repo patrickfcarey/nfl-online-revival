@@ -5,6 +5,21 @@ A design spec for fixing the pulling guard on the misdirection play, agreed
 test in the harness.** The definitive patch ships when the tests pass, not
 when a number looks better. Nothing is patched until this doc is settled.
 
+## !! O2 AND THE ROUTE-RELATIVE R1 ARE WITHDRAWN (hostile review, 2026-08-11) !!
+
+The "authored direction with no destination" reading is **refuted**. The branch
+tests a **play-role code** from `0x001B5228`, not the bearing; the "skipped"
+code decodes a **distance** (`record+1` x 1/7, yards) and a **speed**
+(`record+3` x 1/255) and computes a genuine **destination at `+0x150/+0x154`**;
+and on this play it **ran**. Authored bearing is **199.69°** with a first leg of
+**0.857 yd**, then a chained state-72 record. The 143.4° figure was a per-frame
+steering output, not authorship. **Do not build R1's gate on O2 as written.**
+
+**Separately: every absolute yardage in this document is biased ~0.78 yd.** The
+engine's LOS is at `[0x00601F4C]+0x10` = 15.000; the harness used the centre's
+body y (14.219). Corrected, the guard commits **behind** the line (-0.25 yd) and
+the play gains **~0.17 yd**. Relative comparisons stand; absolutes do not.
+
 ## REVISED DIAGNOSIS — 2026-08-11, after measuring the guard directly
 
 **The original diagnosis in this doc was wrong, and most of R1-R3 with it.**
