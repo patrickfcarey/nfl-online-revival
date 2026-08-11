@@ -1,0 +1,40 @@
+gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
+comment=DT-DURATION-10x -- double-team hold 30 -> 300 frames. TEST PATCH, one word.
+
+// ---------------------------------------------------------------------------
+// R6 (double-team persistence), candidate patch, UNVERIFIED.
+//
+// Measured baseline on slot 9 (I-Form HB lead dive vs a 3-4 nose), 3 runs,
+// identical: double teams register at frame 2 and are ALL finished by frame 43
+// of a 308-frame play. Per-player hold: RT 17 frames, TE 30, RG 13. The
+// operator watching the screen described it as "a right guard briefly touch
+// someone and then go to the second level", and episode-scoped pushback on the
+// doubled DE was 0.410 yd -- fifteen inches.
+//
+// block-cycle.md describes a block as a "14-30-frame rigid two-body
+// translation". 0x001f6b0c holds the ONLY immediate 30 in the block-cycle
+// region 0x001F4000-0x001F7000, and 30 lands exactly on the observed maximum
+// hold. That is the whole basis for this address.
+//
+//   001f6b0c  2402001e  addiu v0, zero, 30
+//                    -> addiu v0, zero, 300   (0x012C)
+//
+// WHAT IS NOT ESTABLISHED: that this is the duration of the double-team hold
+// rather than some other 30-frame timer sharing the region. The region also
+// holds five immediate 20s. If the patch moves nothing, the constant is wrong,
+// not the theory -- try the 20s next.
+//
+// Place field is 1 (apply every frame), not 0 (apply once at boot). That is
+// deliberate: loading a savestate restores EE memory including this code word,
+// so a boot-time patch would be silently reverted by the first `load_state`
+// and every measurement would be of unpatched code.
+//
+// Test alone, never combined (CLAUDE.md rule 2). Acceptance, against the
+// baseline above:
+//   * dt_role == 2 persists past frame 43
+//   * episode-scoped pushback on the doubled defender exceeds 15 inches
+//   * operator sees a lineman driven backwards
+// Regression surface: ordinary single-block line play must not change.
+// ---------------------------------------------------------------------------
+
+patch=1,EE,001f6b0c,extended,2402012c
