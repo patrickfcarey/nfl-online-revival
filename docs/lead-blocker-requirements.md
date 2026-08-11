@@ -5,7 +5,81 @@ A design spec for fixing the pulling guard on the misdirection play, agreed
 test in the harness.** The definitive patch ships when the tests pass, not
 when a number looks better. Nothing is patched until this doc is settled.
 
-## The problem, measured
+## REVISED DIAGNOSIS — 2026-08-11, after measuring the guard directly
+
+**The original diagnosis in this doc was wrong, and most of R1-R3 with it.**
+Measured over a full play (318 sampled frames, offense index 9, the pulling
+RG), plus the operator watching the same play repeatedly:
+
+| observation | measured |
+|---|---|
+| engagement kinds over the whole play | `{0: 232, 2: 86}` — **kind 4 (contact) never occurs** |
+| who he targets | a **DT** (defence idx 1), 86 frames, acquired tick 82 |
+| authored direction | 143.4° — mostly **left** |
+| actual travel | 122.9° — mostly **upfield** (~20° too early a turn) |
+| who makes the tackle | the **blitzing CB**, behind the line, every play |
+
+So the sequence is: he pulls, the nearest man in his forward cone is an
+interior **down lineman the O-line already has**, he targets it, turns upfield
+inside the tackle box to chase it, **never makes contact with anybody**, and
+the blitzing corner he was supposed to seal comes free off the edge and makes
+the tackle behind the line.
+
+**He is not blocking the right man too early. He is chasing the wrong man and
+blocking nobody.**
+
+### Why the corner is never targeted — and why that is the whole fix
+
+`fb-wr-blocking.md` Gate B: the defender list at `0x001f2cd8` admits only
+states 2, 30, 51 and human-controlled. **A corner in coverage is not an
+eligible block target for anyone** — so the one man who must be blocked on
+this play *cannot be selected*, by design. The guard then picks the only
+eligible thing near him: a DT.
+
+**This invalidates the approach R1-R3 were built on.** None of them can fix
+this play:
+
+* **R1 (engage at the landmark)** — he never engages at all. A gate on *when*
+  he may commit does nothing for a blocker who never makes contact.
+* **R2 (narrow the cone)** — a narrower cone removes candidates. The corner is
+  not a candidate at any width, so this cannot add him.
+* **R3 (prefer the second level)** — **backwards for this play.** He needs to
+  prefer the **edge threat**, not climb. And no preference ordering can rank a
+  defender the eligibility filter never offers.
+
+### What the fix actually has to be
+
+1. **Make the blitzing corner eligible.** `fb-wr-blocking.md`'s **C1** — admit
+   coverage-state defenders to the block-target pool (`0x001F2D60`), or the
+   narrower C1b. **Nothing else in this document matters until this is done**,
+   because until then the correct target is invisible to the engine.
+2. **Then** prefer the edge/force threat over an interior lineman another
+   blocker already owns — a target-preference change, but ranked by *threat to
+   the play side*, not by "second level".
+3. **Route adherence** (the 20° early turn) is a real, separate defect worth
+   its own requirement, but it may be a *consequence* of targeting the DT
+   rather than an independent bug — he turns up because he is chasing. Do not
+   patch it until (1) and (2) are tested, or the fix may be aimed at a symptom.
+
+### Requirement status after this revision
+
+| req | status |
+|---|---|
+| R1 engage at landmark | **suspended** — he never engages; revisit after C1 |
+| R2 vision cone | **suspended** — cannot add an ineligible target |
+| R3 prefer 2nd level | **wrong for this play** — needs to be "prefer the edge threat" |
+| R4 retarget | still valid, untested |
+| R5 awareness | still valid, untested |
+| R6 honest misses | still valid |
+| R7 no regression | **more important than ever** — C1 changes the defender pool for *every* blocker, not just lead blockers |
+| R8 zone first step | still correctly unscoped |
+
+**R7 deserves emphasis.** C1 widens the *global* block-target pool, so unlike
+a state-47-only change it touches ordinary line play and every other blocking
+situation. It must be isolation-tested against every row of the "situations
+this must not break" table before it is combined with anything.
+
+## The original problem statement (superseded — kept for the record)
 
 On the misdirection play (single-back, RG pulls), against the live game:
 
