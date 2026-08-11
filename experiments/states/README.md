@@ -14,6 +14,7 @@ Load one into the slot its spec names, then run the spec. `state_slot` in the
 | `lead_blocker_slot6.p2s` | 6 | `lead_blocker.py` | misdirection **run**, single-back 3-WR, pulling right guard |
 | `pass_protection_slot7.p2s` | 7 | `pass_protection.py` | **pass**, same formation, RB and TE both stay in to block |
 | `ball_in_air_slot8.p2s` | 8 | — (probe only) | **mid-play, ball in flight**; used to test the bit-0 catch gate and to read live `dt_role`/`speed_cmd` |
+| `double_team_slot9.p2s` | 9 | `double_team.py` | **I-Form HB lead dive vs a 3-4 nose**; the only state known to register a double team |
 
 ## The two states share a formation
 
