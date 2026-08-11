@@ -28,10 +28,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.madden_lab import EXPECTED_CRC  # noqa: E402
 from tools.madden_lab import compare as cmp  # noqa: E402
 from tools.madden_lab import results as res  # noqa: E402
-from tools.madden_lab.runner import (OperatorQueue, PreflightError,  # noqa: E402
+from tools.madden_lab import runner as runner_mod  # noqa: E402
+from tools.madden_lab.runner import (DeterminismReport, IterationResult,  # noqa: E402
+                                     OperatorQueue, PreflightError,
                                      Runner, ScriptPlayer, StallError,
                                      WorldFrameClock, make_provenance)
-from tools.madden_lab.trial import (EntitySelector, InputEvent,  # noqa: E402
+from tools.madden_lab.trial import (EntitySelector, Frame, InputEvent,  # noqa: E402
                                     LoadConfirm, Metric, OperatorAsk,
                                     SampleSpec, Samples, StopCondition, Trial,
                                     Write)
@@ -177,11 +179,21 @@ class FakeEmu:
     def wait_until(self, predicate, timeout=10.0, interval=0.0):
         """Layer 1's signature exactly: the predicate takes the Emu, and a
         timeout raises rather than returning False. Getting this wrong in the
-        fake is how a suite passes against an emulator that does not exist."""
+        fake is how a suite passes against an emulator that does not exist.
+
+        The world advances one frame per poll, because that is what makes the
+        fake honest: a real emulator keeps running while the harness waits,
+        and the stale-world confirmation bug was only visible at all because
+        the outgoing play kept advancing under the poll loop. A frozen fake
+        would certify a confirmation strategy that reality rejects.
+        """
         for _ in range(200):
             if predicate(self):
                 return 0.0
-        raise TimeoutError("condition still false")
+            self.world.advance(1)
+            self._settle()  # a pending load lands because time passes, not
+            self.memory[0x00700054] = self.world.frames_since_snap()
+        raise TimeoutError("condition still false")  # only because reads happen
 
 
 class FakePad:
@@ -217,8 +229,16 @@ class DrivenClock:
 def simple_trial(**overrides):
     kwargs = dict(
         name="t", state="s.p2s", state_slot=3, question="q?",
+        # require_reset=False is a deliberate opt-out, not a default: this
+        # fake's pointer predicate is true in every world, and its short plays
+        # park the snap counter at 0, so a handover is genuinely invisible --
+        # the exact situation the runner's docstring tells a real spec to
+        # solve with a window predicate. The edge contract has its own tests
+        # (StaleWorld below); the forty tests using this helper are about
+        # everything else.
         load_confirm=LoadConfirm(addr=0x00601280, expected=0x00700000,
-                                 description="player array pointer is populated"),
+                                 description="player array pointer is populated",
+                                 require_reset=False),
         sample=SampleSpec(entities=(
             EntitySelector("player", ("block_mode", "engagement")),
             EntitySelector("game", ("frames_since_snap",)))),
@@ -379,7 +399,11 @@ class ConfirmedReset(unittest.TestCase):
         runner = Runner(emu, world, clock=DrivenClock(world), printer=silent)
         result = runner.run_iteration(simple_trial(load_confirm=self.CONFIRM), 0)
         self.assertEqual("ok", result.status)
-        self.assertEqual("declared", result.confirmed)
+        # The label records that this predicate was already true before the
+        # load was issued -- accepted on iteration 0, but marked, because a
+        # vacuous confirmation carries less proof than a false -> true one and
+        # the result file should say which kind this run got.
+        self.assertEqual("declared-vacuous-first", result.confirmed)
 
     def test_without_a_load_confirm_the_first_iteration_is_marked_unverified(self):
         world = FakeWorld()
@@ -483,13 +507,23 @@ class ProductionClock(unittest.TestCase):
         with self.assertRaises(StallError):
             clock.tick()
 
-    def test_a_counter_reset_is_a_tick_not_a_rewind(self):
-        # frames_since_snap resets to 0 at play init; that is the next frame,
-        # not a negative delta.
+    def test_a_rewind_is_reported_not_masked(self):
+        """This test used to assert the opposite, and the opposite was a bug.
+
+        The old contract smoothed any backward movement into `+1` on the
+        theory that a resetting counter is "the next frame". That smoothing
+        is exactly what hid a savestate load landing mid-iteration: the clock
+        jumped 179 -> 74, the mask turned it into 180, and every frame number
+        after it described a world that no longer existed. A rewind is the
+        single most important event this clock can witness -- it means the
+        world was replaced -- so it is returned as itself and kept as
+        evidence.
+        """
         world = self.Counter([300, 0])
         clock = WorldFrameClock(world, sleep=lambda _s: None)
-        self.assertEqual(1, clock.tick())
-        self.assertEqual(301, clock.now())
+        self.assertEqual(-300, clock.tick())
+        self.assertEqual(0, clock.now())
+        self.assertEqual([(300, 0)], clock.rewinds)
 
     def test_no_frame_counter_degrades_loudly(self):
         world = self.Counter([0], has_counter=False)
@@ -995,6 +1029,191 @@ class Comparison(unittest.TestCase):
 # --------------------------------------------------------------------------
 # The CLI
 # --------------------------------------------------------------------------
+
+
+class StaleWorld(unittest.TestCase):
+    """The 179 bug, replayed forever.
+
+    The first determinism run confirmed iteration 1's load with a predicate
+    that was already true in iteration 0's still-running world. Its first
+    samples photographed that outgoing world -- tick 179, the previous
+    iteration's final frame -- and the analyzer convicted the engine of the
+    instrument's crime. These tests pin the contract that killed it.
+    """
+
+    CONFIRM = LoadConfirm(addr=0x00601280, expected=0x00700000,
+                          description="player array pointer is populated")
+
+    def test_a_vacuous_confirm_on_a_later_iteration_needs_a_clock_edge(self):
+        world = FakeWorld()
+        emu = FakeEmu(world, load_lag=3)
+        runner = Runner(emu, world, clock=DrivenClock(world), printer=silent)
+        trial = simple_trial(load_confirm=self.CONFIRM,
+                             stop=StopCondition(max_frames=30))
+        first = runner.run_iteration(trial, 0)
+        self.assertEqual("ok", first.status)
+        # Iteration 1: the outgoing play is at tick ~30 and still satisfies
+        # the predicate. The lagged load lands three polls in, rewinding the
+        # clock -- and only that rewind may confirm it.
+        second = runner.run_iteration(trial, 1)
+        self.assertEqual("ok", second.status)
+        self.assertEqual("declared-edge", second.confirmed)
+
+    def test_a_failed_load_under_a_vacuous_confirm_is_refused_not_sampled(self):
+        world = FakeWorld()
+        emu = FakeEmu(world, load_fails=True)
+        runner = Runner(emu, world, clock=DrivenClock(world), printer=silent)
+        trial = simple_trial(load_confirm=self.CONFIRM,
+                             stop=StopCondition(max_frames=30))
+        self.assertEqual("ok", runner.run_iteration(trial, 0).status)
+        # The predicate stays true -- it describes the stale world perfectly.
+        # Without the edge requirement this samples 30 frames of a world the
+        # trial believes it replaced; with it, the iteration refuses.
+        second = runner.run_iteration(trial, 1)
+        self.assertEqual("load_unconfirmed", second.status)
+        self.assertEqual(0, second.frames)
+        self.assertIn("clock edge", second.reason)
+
+    def test_a_window_confirm_rejects_the_world_that_ran_past_it(self):
+        # The spec-side fix: a window is false in the outgoing world, so it
+        # confirms as an ordinary false -> true transition, no edge needed.
+        world = FakeWorld()
+        emu = FakeEmu(world, load_lag=2)
+        runner = Runner(emu, world, clock=DrivenClock(world), printer=silent)
+        confirm = LoadConfirm(addr=0x00700054, lo=1, hi=6,
+                              description="snap counter inside the state's window")
+        trial = simple_trial(load_confirm=confirm,
+                             stop=StopCondition(max_frames=40))
+        # Drive the world well past the window before "loading" over it.
+        world.advance(30)
+        emu.memory[0x00700054] = world.frames_since_snap()
+        result = runner.run_iteration(trial, 1)
+        self.assertEqual("ok", result.status)
+        self.assertEqual("declared", result.confirmed)
+
+    def test_a_window_admitting_zero_is_refused_at_construction(self):
+        # Unmapped reads return 0, so a window containing 0 would confirm on
+        # a drifted address forever.
+        with self.assertRaises(ValueError):
+            LoadConfirm(addr=0x00700054, lo=0, hi=6)
+
+
+class CertifiedWorld(FakeWorld):
+    """A fake with layer 3's certified batch: values keyed to the tick."""
+
+    def __init__(self, tear_at=(), **kwargs):
+        FakeWorld.__init__(self, **kwargs)
+        self.tear_at = set(tear_at)
+        self.batch_calls = 0
+
+    def certified_batch(self, parts):
+        self.batch_calls += 1
+        tick = self._snap
+        decoded = []
+        for player, fields in parts:
+            decoded.append({name: getattr(player, name, None) for name in fields})
+        after = tick
+        if tick in self.tear_at:
+            self.tear_at.discard(tick)     # tear once, then read clean
+            after = tick + 1
+        return tick, after, decoded
+
+
+class CertifiedSampling(unittest.TestCase):
+    def _runner(self, world):
+        return Runner(FakeEmu(world), world, clock=DrivenClock(world),
+                      printer=silent)
+
+    def test_rows_carry_the_batch_tick_and_its_certificate(self):
+        world = CertifiedWorld()
+        sink = res.MemorySink()
+        self._runner(world).run_iteration(
+            simple_trial(stop=StopCondition(max_frames=8)), 0, sink=sink)
+        rows = sink.of_kind("sample")
+        self.assertTrue(rows)
+        self.assertTrue(all(row["certified"] for row in rows))
+        self.assertTrue(all(row["tick"] is not None for row in rows))
+
+    def test_a_torn_batch_is_retried_rather_than_recorded(self):
+        world = CertifiedWorld(tear_at={2})
+        sink = res.MemorySink()
+        self._runner(world).run_iteration(
+            simple_trial(stop=StopCondition(max_frames=8)), 0, sink=sink)
+        # The tear at tick 2 forces a second batch; every recorded row is
+        # still certified because the retry read clean.
+        self.assertTrue(all(row["certified"] for row in sink.of_kind("sample")))
+
+    def test_the_game_clock_row_is_the_certified_tick_itself(self):
+        # A separate read of frames_since_snap would reintroduce the skew the
+        # batch exists to remove; the emitted value must be the bracket tick.
+        world = CertifiedWorld()
+        sink = res.MemorySink()
+        self._runner(world).run_iteration(
+            simple_trial(stop=StopCondition(max_frames=8)), 0, sink=sink)
+        for row in sink.of_kind("sample"):
+            if row["entity"] == "game" and row["field"] == "frames_since_snap":
+                self.assertEqual(row["tick"], row["value"])
+
+
+class TickAlignedVerdict(unittest.TestCase):
+    """The analyzer that acquitted the engine, pinned.
+
+    Ordinal comparison called a bitwise-reproducible engine DIVERGENT because
+    iterations started sampling at different moments of the play. Aligned on
+    the game clock, every disagreement in that capture was bitwise-equal to
+    the other run one or two ticks away -- sampling phase. The verdict must
+    keep those two things distinct forever.
+    """
+
+    @staticmethod
+    def _result(index, stream):
+        frames = [Frame(tick - stream[0][0], dict(values), tick=tick,
+                        certified=True)
+                  for tick, values in stream]
+        samples = Samples(frames)
+        return IterationResult(index=index, frames=len(frames),
+                               digest="d%d" % index, status="ok", reason="",
+                               dropped=0, wall_ms=0.0, samples=samples,
+                               confirmed="declared")
+
+    def test_pure_phase_shift_is_deterministic_not_divergent(self):
+        key = ("player:0:1", "block_mode")
+        a = self._result(0, [(t, {key: 0 if t < 10 else 2}) for t in range(5, 15)])
+        # The same transition, observed one tick later by the second run.
+        b = self._result(1, [(t, {key: 0 if t < 11 else 2}) for t in range(5, 15)])
+        fields, common, _un = runner_mod._tick_aligned_agreement([a, b])
+        report = DeterminismReport(trial="t", repeats=2, digests=["x", "y"],
+                                   identical=False, first_divergence=None,
+                                   seeded=False, fields=fields,
+                                   common_ticks=common, uncertified=0)
+        self.assertEqual("DETERMINISTIC (phase noise only)", report.verdict)
+        self.assertIn("phase", report.describe())
+
+    def test_a_value_matching_nothing_nearby_is_a_real_divergence(self):
+        key = ("player:0:1", "ai_state")
+        a = self._result(0, [(t, {key: 32}) for t in range(5, 15)])
+        b_vals = [(t, {key: 32}) for t in range(5, 15)]
+        b_vals[4] = (9, {key: 77})       # 77 appears nowhere in run A
+        b = self._result(1, b_vals)
+        fields, common, _un = runner_mod._tick_aligned_agreement([a, b])
+        report = DeterminismReport(trial="t", repeats=2, digests=["x", "y"],
+                                   identical=False, first_divergence=None,
+                                   seeded=False, fields=fields,
+                                   common_ticks=common, uncertified=0)
+        self.assertEqual("DIVERGENT", report.verdict)
+        self.assertIn("REAL", report.describe())
+        self.assertIn("tick 9", report.describe())
+
+    def test_uncertified_samples_are_excluded_not_compared(self):
+        key = ("player:0:1", "engagement")
+        a = self._result(0, [(t, {key: 4}) for t in range(5, 10)])
+        b = self._result(1, [(t, {key: 4}) for t in range(5, 10)])
+        # Make one of B's frames torn, with a wild value: it must not count.
+        b.samples.frames[2].certified = False
+        b.samples.frames[2].values[key] = 999
+        fields, _common, uncertified = runner_mod._tick_aligned_agreement([a, b])
+        self.assertEqual(1, uncertified)
+        self.assertTrue(all(f.real == 0 for f in fields))
 
 
 class Cli(unittest.TestCase):

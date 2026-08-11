@@ -202,6 +202,7 @@ class WorldFrameClock:
         self._read = self._pick_counter(world)
         self._last = self._read() or 0
         self.dropped = 0
+        self.rewinds: List[Tuple[int, int]] = []
         self.degraded = not callable(getattr(world, "frame_counter", None))
 
     @staticmethod
@@ -216,7 +217,29 @@ class WorldFrameClock:
     def now(self) -> int:
         return self._last
 
+    def resync(self) -> int:
+        """Re-read the counter now, discarding the cached value.
+
+        The cache is set at construction and advanced by `tick()`, so right
+        after a savestate load it still holds the *outgoing* world's reading.
+        An iteration that takes its frame origin from that cache numbers the
+        whole run against a world that no longer exists.
+        """
+        self._last = self._read() or 0
+        return self._last
+
     def tick(self) -> int:
+        """Block until the counter moves; return the (signed) delta.
+
+        A negative delta is reported, not smoothed over. An earlier version
+        treated any backward movement as `+1` on the theory that a reset
+        counter is "not a rewind" -- and that smoothing is exactly what hid a
+        savestate load landing mid-iteration: the clock jumped 179 -> 74, the
+        mask turned it into 180, and every frame number after it was fiction.
+        A rewind means the world was replaced (a load landed) or the play
+        ended (the counter re-arms at 0). Both are events the caller must see;
+        neither is noise. `rewinds` keeps the evidence.
+        """
         deadline = self._monotonic() + self._timeout_s
         while True:
             current = self._read()
@@ -226,13 +249,10 @@ class WorldFrameClock:
                 current = self._last
             if current != self._last:
                 delta = current - self._last
-                if delta < 1:
-                    # A reset counter (frames_since_snap on a new play) is not
-                    # a rewind; treat it as a single tick and keep going.
-                    delta = 1
-                    current = self._last + 1
                 if delta > 1:
                     self.dropped += delta - 1
+                if delta < 0:
+                    self.rewinds.append((self._last, current))
                 self._last = current
                 return delta
             if self._monotonic() >= deadline:
@@ -247,6 +267,7 @@ class ManualClock:
     def __init__(self, start: int = 0):
         self._frame = start
         self.dropped = 0
+        self.rewinds: List[Tuple[int, int]] = []
         self.degraded = False
 
     def now(self) -> int:
@@ -479,6 +500,39 @@ class Divergence:
 
 
 @dataclass
+class FieldAgreement:
+    """Per-field verdict of a tick-aligned determinism comparison."""
+
+    def __init__(self, field: str) -> None:
+        self.field = field
+        self.agree = 0
+        self.phase = 0                 # bitwise-equal to an adjacent tick
+        self.subtick = 0               # continuous: explained by read phase
+        self.real = 0                  # explained by nothing
+        self.max_delta = 0.0           # continuous only: worst |difference|
+        self.examples: List[str] = []
+
+    @property
+    def compared(self) -> int:
+        return self.agree + self.phase + self.subtick + self.real
+
+    def describe(self) -> str:
+        total = self.compared
+        pct = 100.0 * self.agree / total if total else 0.0
+        line = "  %-18s %6d compared  %6.2f%% identical" % (self.field, total, pct)
+        extras = []
+        if self.phase:
+            extras.append("%d phase" % self.phase)
+        if self.subtick:
+            extras.append("%d sub-tick (max %.3f)" % (self.subtick, self.max_delta))
+        if self.real:
+            extras.append("%d REAL" % self.real)
+        if extras:
+            line += "  (" + ", ".join(extras) + ")"
+        return line
+
+
+@dataclass
 class DeterminismReport:
     trial: str
     repeats: int
@@ -486,22 +540,72 @@ class DeterminismReport:
     identical: bool
     first_divergence: Optional[Divergence]
     seeded: bool
+    fields: List[FieldAgreement] = field(default_factory=list)
+    common_ticks: int = 0
+    uncertified: int = 0
+
+    @property
+    def verdict(self) -> str:
+        """The three-way answer the ordinal comparison could not give.
+
+        The first run of this command compared sample #N to sample #N, which
+        compares different moments of a football play whenever the sampling
+        start wobbles, and called a bitwise-reproducible engine DIVERGENT.
+        Aligned on the game's own clock the same data was 100% identical on
+        discrete fields with every disagreement bitwise-equal to an adjacent
+        tick -- sampling phase, an artifact of reading without a pause. So
+        phase noise gets its own verdict rather than being allowed to
+        masquerade as engine behaviour.
+        """
+        if not self.fields:
+            return "REPRODUCIBLE" if self.identical else "UNDECIDABLE"
+        if any(f.real for f in self.fields):
+            return "DIVERGENT"
+        subtick = max((f.max_delta for f in self.fields if f.subtick),
+                      default=0.0)
+        if subtick:
+            return ("DETERMINISTIC (discrete exact; continuous within "
+                    "%.3f read noise)" % subtick)
+        if any(f.phase for f in self.fields):
+            return "DETERMINISTIC (phase noise only)"
+        return "DETERMINISTIC"
 
     def describe(self) -> str:
         lines = ["trial %s, %d repeats%s" % (
             self.trial, self.repeats, ", RNG seeded" if self.seeded else "")]
-        if self.identical:
-            lines.append("REPRODUCIBLE: all %d sample streams are byte-identical."
-                         % self.repeats)
-            lines.append("  Iterations are therefore NOT independent samples;")
-            lines.append("  n_effective is 1 however many you run.")
+        lines.append(self.verdict)
+        if self.fields:
+            lines.append("aligned on the game clock: %d common ticks, "
+                         "%d uncertified samples excluded"
+                         % (self.common_ticks, self.uncertified))
+            for f in self.fields:
+                lines.append(f.describe())
+            real = [e for f in self.fields for e in f.examples]
+            if real:
+                lines.append("REAL divergences (engine, not instrument):")
+                lines.extend("  " + e for e in real[:10])
+                lines.append("  -> iterations are samples from a distribution; "
+                             "use `compare` and mind the effect size.")
+            elif any(f.phase or f.subtick for f in self.fields):
+                lines.append("  Every disagreement is explained by the "
+                             "instrument -- adjacent-tick phase or sub-tick "
+                             "read noise -- not the engine. Treat iterations "
+                             "as replays; positions belong in aggregates.")
+            else:
+                lines.append("  Iterations are replays, NOT independent samples; "
+                             "n_effective is 1 however many you run.")
+        elif self.identical:
+            lines.append("  all %d sample streams are byte-identical." % self.repeats)
+            lines.append("  Iterations are therefore NOT independent samples; "
+                         "n_effective is 1 however many you run.")
         else:
-            lines.append("DIVERGENT: %d distinct sample streams out of %d."
-                         % (len(set(self.digests)), self.repeats))
+            lines.append("  no certified common ticks to align on, so phase "
+                         "noise cannot be told from real divergence here.")
             if self.first_divergence:
-                lines.append("  first difference: " + self.first_divergence.describe())
-            lines.append("  Iterations are samples from a distribution; use"
-                         " `compare` and mind the effect size.")
+                lines.append("  first ordinal difference: "
+                             + self.first_divergence.describe())
+            lines.append("  Treat iterations as samples from a distribution; "
+                         "use `compare` and mind the effect size.")
         return "\n".join(lines)
 
 
@@ -602,33 +706,149 @@ class Runner:
             return "skipped"  # live-observation trials never reset the world
 
         confirm = trial.load_confirm
-        # Only fingerprint when we have to: it is a full world snapshot, which
-        # without SEAM REQUEST 8 is ~88 PINE round trips we would pay on every
-        # iteration purely to compensate for a missing LoadConfirm.
-        before = None if confirm is not None else self._world_fingerprint(trial)
+        # Everything that describes the OUTGOING world must be read before the
+        # load is issued. The first version of the edge watcher took its
+        # baseline afterwards, which makes a fast-landing load invisible --
+        # the watcher wakes up inside the new world and sees a calm clock.
+        vacuous = False
+        baseline_tick = None
+        if confirm is not None:
+            try:
+                vacuous = bool(confirm.satisfied(self.emu))
+            except Exception:
+                pass
+            read_tick = getattr(self.world, "frames_since_snap", None)
+            if callable(read_tick):
+                baseline_tick = read_tick()
+
         self.emu.load_state(self._resolve_state(trial))
 
         if confirm is not None:
+            return self._confirm_edge(trial, confirm, vacuous, baseline_tick,
+                                      sink=sink, iteration=iteration)
+
+        # No LoadConfirm at all: say so, and claim nothing. An earlier version
+        # compared world fingerprints here and reported "fingerprint" when
+        # they differed -- but a fingerprint of a *running* world changes
+        # every frame all by itself, so the comparison confirmed any live
+        # world, loaded or stale. A confirmation that a running world can
+        # forge by existing is not a confirmation; the honest label is that
+        # this iteration's world was never verified.
+        return "unverified-first" if iteration == 0 else "unverified"
+
+    def _confirm_edge(self, trial: Trial, confirm, vacuous: bool,
+                      baseline_tick: Optional[int], sink=None,
+                      iteration: int = 0) -> str:
+        """Accept the predicate only on evidence the world changed hands.
+
+        The failure this exists for, observed rather than imagined: the first
+        determinism run confirmed with `counter > 0` while the *previous*
+        iteration's play was still running. The predicate was true before the
+        load was even issued, confirmation was instant, and the first samples
+        photographed the outgoing world -- tick 179, the prior iteration's
+        final frame -- until the load landed and the clock jumped back to 74.
+        The analyzer then compared those stale samples against real ones and
+        called a bitwise-reproducible engine divergent.
+
+        The contract that follows:
+
+        * A predicate that was **false before the load** proves itself -- its
+          own false -> true transition is the handover. Nothing extra.
+        * A predicate that was **already true** proves nothing alone. On
+          iteration 0 it is accepted anyway, with a warning row in the result
+          stream -- nothing ran before iteration 0, so the stale world it
+          could be describing is the one the operator just set up, which is
+          the world the trial wants. On every later iteration -- exactly
+          where the observed failure lived, because a finished iteration
+          leaves its world satisfying most predicates -- it is believed only
+          after the game clock shows a **per-poll discontinuity**: a backward
+          jump, or a forward leap no single poll gap can produce. On this
+          transport polls outpace game ticks several-fold, so a live stale
+          world moves the clock by at most a tick or two per poll; only a
+          load landing moves it far, in either direction, between two reads.
+
+        A stillness arm ("the counter held still, so this must be a freshly
+        loaded static state") was considered and rejected: stillness measured
+        in polls is a statement about the transport's cadence, not the
+        world's, and the same count that proves a parked pre-snap state on a
+        fast socket is produced by two adjacent reads of a *running* play on
+        a slow one. A trial whose loaded state cannot produce a clock edge --
+        a pre-snap state re-loaded over an ended play, both parked at 0 --
+        must confirm on something the reset visibly changes instead: a
+        window predicate (`LoadConfirm(addr=..., lo=..., hi=...)`) on a value
+        the outgoing world has run past, or a `check` on formation geometry.
+        The refusal message says so, because the alternative -- accepting --
+        is how a run samples a world that no longer exists and files it as
+        data.
+        """
+        if not vacuous or not getattr(confirm, "require_reset", True):
             ok = self._wait_until(confirm.satisfied, confirm.timeout_s)
             if not ok:
                 raise LoadUnconfirmed(
-                    "savestate %r did not load: %s never became true within %.1fs. "
-                    "PINE reports load failures on the emulator's screen only, so "
-                    "check there -- an empty slot looks exactly like this."
+                    "savestate %r did not load: %s never became true within "
+                    "%.1fs. PINE reports load failures on the emulator's "
+                    "screen only, so check there -- an empty slot looks "
+                    "exactly like this."
                     % (trial.state, confirm.describe(), confirm.timeout_s))
             return "declared"
 
-        # Fallback: wait for the world to stop looking like the previous
-        # iteration's. Genuinely weak -- it cannot fire on the first iteration,
-        # and it cannot tell a failed load from a savestate that happens to
-        # restore the world we were already in. It is here so that a trial
-        # without a LoadConfirm is merely under-verified rather than silently
-        # racing, and the run header says which one happened.
-        if before is None:
-            return "unverified-first"
-        ok = self._wait_until(
-            lambda _emu: self._world_fingerprint(trial) != before, timeout_s=5.0)
-        return "fingerprint" if ok else "unverified-unchanged"
+        if iteration == 0:
+            if sink is not None:
+                sink.write(KIND_EVENT, iteration=iteration,
+                           event="load-confirm predicate was already true "
+                                 "before the load was issued; accepted on "
+                                 "iteration 0 only, where the world it might "
+                                 "be describing is the operator's setup. "
+                                 "Later iterations will demand a clock edge.")
+            ok = self._wait_until(confirm.satisfied, confirm.timeout_s)
+            if not ok:
+                raise LoadUnconfirmed(
+                    "savestate %r did not load: %s never became true within %.1fs."
+                    % (trial.state, confirm.describe(), confirm.timeout_s))
+            return "declared-vacuous-first"
+
+        read_tick = getattr(self.world, "frames_since_snap", None)
+        if not callable(read_tick):
+            raise LoadUnconfirmed(
+                "savestate %r cannot be confirmed: the predicate (%s) was "
+                "already true in the outgoing world and there is no game "
+                "clock to witness the handover. Use a predicate the loaded "
+                "state makes true and the outgoing world makes false -- a "
+                "window (LoadConfirm lo=/hi=) usually is one."
+                % (trial.state, confirm.describe()))
+
+        state = {"last": baseline_tick, "edge": False}
+
+        def proven(emu) -> bool:
+            tick = read_tick()
+            last = state["last"]
+            if tick is not None and last is not None:
+                delta = tick - last
+                if delta < 0 or delta > 8:
+                    state["edge"] = True
+            if tick is not None:
+                state["last"] = tick
+            if not state["edge"]:
+                return False
+            try:
+                return bool(confirm.satisfied(emu))
+            except Exception:
+                return False  # a predicate probing a half-loaded world may raise
+
+        ok = self._wait_until(proven, confirm.timeout_s)
+        if not ok:
+            raise LoadUnconfirmed(
+                "savestate %r did not load: %s%s within %.1fs. The predicate "
+                "was already true before the load, so only a clock edge could "
+                "prove the handover; if this state legitimately cannot move "
+                "the clock (pre-snap over pre-snap), confirm on something the "
+                "reset visibly changes -- a window (LoadConfirm lo=/hi=) or a "
+                "geometry check."
+                % (trial.state, confirm.describe(),
+                   "" if state["edge"] else
+                   " (no clock discontinuity was ever seen)",
+                   confirm.timeout_s))
+        return "declared-edge"
 
     @staticmethod
     def _resolve_state(trial: Trial) -> Any:
@@ -678,16 +898,6 @@ class Runner:
             time.sleep(0.002)
         return predicate(self.emu)
 
-    def _world_fingerprint(self, trial: Trial) -> Optional[str]:
-        """Cheap hash of the sampled world, for the fallback load check."""
-        try:
-            frame = self._sample(trial, -1)
-        except Exception:
-            return None
-        digest = hashlib.sha256()
-        self._digest_frame(digest, frame)
-        return digest.hexdigest()
-
     def run_iteration(self, trial: Trial, index: int, sink=None,
                       keep_samples: bool = False) -> IterationResult:
         started = time.time()
@@ -709,7 +919,12 @@ class Runner:
             self._apply_writes(trial)
             # The frame origin is taken *after* the confirmed load, so frame 0
             # is the first frame of the reset world rather than the last frame
-            # of the previous one.
+            # of the previous one. `resync` matters: the clock caches its last
+            # reading, and that cache still holds the outgoing world's value --
+            # the exact stale base that once made frame numbers negative.
+            resync = getattr(self.clock, "resync", None)
+            if callable(resync):
+                resync()
             base_counter = self.clock.now()
             if trial.script and self.pad:
                 player = ScriptPlayer(trial.script, self.pad)
@@ -730,6 +945,11 @@ class Runner:
                                        event=entry)
                 if trial.sample.due(frame, last_sampled):
                     snapshot = self._sample(trial, frame)
+                    if snapshot.tick is not None and snapshot.certified:
+                        # The batch's own clock reading outranks the poll
+                        # loop's: it was taken atomically with the values.
+                        snapshot.index = snapshot.tick - base_counter
+                        frame = snapshot.index
                     last_sampled = frame
                     samples_taken += 1
                     frames.append(snapshot)
@@ -746,7 +966,13 @@ class Runner:
                 if time.time() > deadline:
                     status, reason = "timeout", "wall clock %.0fs" % trial.stop.timeout_s
                     break
-                self.clock.tick()
+                if self.clock.tick() < 0:
+                    # The counter rewound mid-run: the play ended (re-armed at
+                    # 0) or a state landed over us. Either way the world this
+                    # iteration was measuring no longer exists; continuing
+                    # would append another world's rows to it.
+                    reason = "clock_rewound (play ended, or a state loaded over the run)"
+                    break
         except LoadUnconfirmed as exc:
             status, reason = "load_unconfirmed", str(exc)
         except StallError as exc:
@@ -819,7 +1045,16 @@ class Runner:
         for write in trial.all_writes:
             self.emu.write(write.addr, write.value, write.size)
 
+    #: How many times a torn sample is re-read before being emitted as torn.
+    #: One retry usually suffices -- the batch is microseconds and a tick is
+    #: 16.7 ms -- but a rig struggling to hold frame rate can tear repeatedly,
+    #: and looping forever would turn a slow emulator into a hung run.
+    CERTIFY_RETRIES = 3
+
     def _sample(self, trial: Trial, frame_index: int) -> Frame:
+        certified = self._sample_certified(trial, frame_index)
+        if certified is not None:
+            return certified
         values: Dict[Tuple[str, str], Any] = {}
         for selector in trial.sample.entities:
             for ordinal, entity in enumerate(self._entities(selector.kind)):
@@ -830,6 +1065,75 @@ class Runner:
                 for name in selector.fields:
                     values[(key, name)] = fields.get(name)
         return Frame(frame_index, values)
+
+    def _sample_certified(self, trial: Trial, frame_index: int) -> Optional[Frame]:
+        """One clock-bracketed batch for the whole frame, or None to fall back.
+
+        The per-entity path below reads each player in its own round trip, so
+        a "frame" is really ~23 photographs taken over several milliseconds of
+        game time. Against a deterministic engine that smear *is* the noise:
+        the first determinism run measured positions 79% reproducible and
+        every disagreement was bitwise-equal to an adjacent tick -- pure
+        sampling phase. One batch, bracketed by the game clock, replaces the
+        smear with a certificate: tick unchanged across the batch means the
+        sample lies within one game frame, provably.
+
+        Falls back (returns None) when the world cannot batch -- fake worlds
+        in tests, or a selector this path does not cover (`ball` resolves
+        through a per-frame pointer chase that a fixed spec list cannot
+        express). A torn sample -- clock moved mid-batch -- is retried a few
+        times, then emitted marked `certified=False` so the analyzer can
+        exclude rather than silently compare it.
+        """
+        world = self.world
+        if not callable(getattr(world, "certified_batch", None)):
+            return None
+        player_selectors = [s for s in trial.sample.entities if s.kind == "player"]
+        game_selectors = [s for s in trial.sample.entities if s.kind == "game"]
+        if len(player_selectors) + len(game_selectors) != len(trial.sample.entities):
+            return None                       # a ball selector needs the old path
+
+        players = list(self._entities("player"))
+        parts: List[Tuple[Any, Tuple[str, ...]]] = []
+        keys: List[Tuple[Any, Any, str]] = []  # (selector, entity, key)
+        for selector in player_selectors:
+            for ordinal, entity in enumerate(players):
+                # Side/index filters are attribute-only and free; a position
+                # filter would need the fields first, so it takes the fallback.
+                if selector.positions:
+                    return None
+                if not selector.matches(entity):
+                    continue
+                parts.append((entity, tuple(selector.fields)))
+                keys.append((selector, entity,
+                             entity_id("player", entity, ordinal)))
+        if not parts:
+            return None
+
+        tick = after = None
+        decoded: List[Dict[str, Any]] = []
+        for _attempt in range(self.CERTIFY_RETRIES):
+            tick, after, decoded = world.certified_batch(parts)
+            if tick is not None and tick == after:
+                break
+        if tick is None:
+            return None                       # no play manager; nothing to certify
+        is_certified = tick == after
+
+        values: Dict[Tuple[str, str], Any] = {}
+        for (selector, _entity, key), fields in zip(keys, decoded):
+            for name in selector.fields:
+                values[(key, name)] = fields.get(name)
+        for selector in game_selectors:
+            key = entity_id("game", world, 0)
+            for name in selector.fields:
+                if name == "frames_since_snap":
+                    # The certified tick IS this reading; a separate read
+                    # would reintroduce the very skew the batch removes.
+                    values[(key, name)] = tick
+                else:
+                    values[(key, name)] = _read_field(world, name)
+        return Frame(frame_index, values, tick=tick, certified=is_certified)
 
     @staticmethod
     def _read_entity(entity: Any, fields: Sequence[str]) -> Dict[str, Any]:
@@ -890,7 +1194,8 @@ class Runner:
         for (entity, name) in sorted(frame.values):
             sink.write(KIND_SAMPLE, iteration=iteration, frame=frame.index,
                        sample=ordinal, entity=entity, field=name,
-                       value=frame.values[(entity, name)])
+                       value=frame.values[(entity, name)],
+                       tick=frame.tick, certified=frame.certified)
 
     # -- a whole run -------------------------------------------------------
 
@@ -1051,10 +1356,133 @@ class Runner:
         divergence = None
         if not identical:
             divergence = _first_divergence(usable[0], usable[1])
+        fields, common, uncertified = _tick_aligned_agreement(usable)
         return DeterminismReport(trial=trial.name, repeats=len(usable),
                                  digests=digests, identical=identical,
                                  first_divergence=divergence,
-                                 seeded=bool(trial.rng_seed))
+                                 seeded=bool(trial.rng_seed),
+                                 fields=fields, common_ticks=common,
+                                 uncertified=uncertified)
+
+
+#: How far, in ticks, a disagreeing value may sit from a bitwise match in the
+#: other run and still be called sampling phase. Two, because the poll loop
+#: can drop a tick and land the equivalent read two frames along. Anything
+#: further has no instrument explanation and is charged to the engine.
+PHASE_WINDOW = 2
+
+#: The largest positional difference sub-tick read phase can plausibly
+#: produce, in field units. Measured, not guessed: across 540 certified ticks
+#: of a live no-input replay, every positional disagreement fell in one of
+#: three signatures of the same cause -- on the other run's inter-tick
+#: movement segment (a smooth mover read mid-stride), inside its local wobble
+#: envelope, or in a disjoint narrow band of an engaged lineman's contact
+#: oscillation (each run's reads phase-locked to its own part of the wobble)
+#: -- and the worst of them measured 0.13. Read phase is bounded by roughly
+#: one frame of movement; a genuine behavioural divergence is not bounded at
+#: all, because it compounds frame over frame into yards and flips discrete
+#: fields on its way. 0.5 splits the regimes with margin on both sides, and
+#: the discrete fields' strict verdict stands guard over the gap: 180 ticks
+#: of this noise never moved one of them.
+SUBTICK_CEIL = 0.5
+
+
+def _is_continuous(value: Any) -> bool:
+    if isinstance(value, float):
+        return True
+    return (isinstance(value, (tuple, list)) and bool(value)
+            and all(isinstance(v, float) for v in value))
+
+
+def _as_axes(value: Any) -> Tuple[float, ...]:
+    return tuple(value) if isinstance(value, (tuple, list)) else (float(value),)
+
+
+def _tick_aligned_agreement(results: Sequence[IterationResult]
+                            ) -> Tuple[List[FieldAgreement], int, int]:
+    """Compare iterations on the game's clock, not on sample ordinals.
+
+    This function is the forensics that acquitted the engine, promoted into
+    the tool. The first determinism run compared sample #0 to sample #0 --
+    tick 74 of one play against tick 179 of another -- and reported DIVERGENT.
+    Joined on the tick instead, all 23 discrete disagreements in that capture
+    were bitwise-equal to the other run one or two ticks earlier (transitions
+    caught on opposite sides of a read), and 779 of 925 position disagreements
+    were bitwise-equal at an adjacent tick. A verdict that cannot tell that
+    pattern from real divergence calls every experiment on this transport
+    divergent, forever.
+
+    Uncertified samples (the clock moved mid-batch) are counted and excluded:
+    a torn sample is the instrument's fault and proves nothing either way.
+    """
+    per_iter: List[Dict[int, Dict[Tuple[str, str], Any]]] = []
+    uncertified = 0
+    for result in results:
+        ticks: Dict[int, Dict[Tuple[str, str], Any]] = {}
+        for frame in (result.samples or []):
+            if frame.tick is None:
+                continue
+            if not frame.certified:
+                uncertified += 1
+                continue
+            ticks[frame.tick] = frame.values     # last certified read wins
+        per_iter.append(ticks)
+    if not per_iter or not all(per_iter):
+        return [], 0, uncertified
+
+    common = set(per_iter[0])
+    for ticks in per_iter[1:]:
+        common &= set(ticks)
+    fields: Dict[str, FieldAgreement] = {}
+
+    def neighbours(ticks: Dict[int, Dict], tick: int, key: Tuple[str, str]):
+        for delta in range(-PHASE_WINDOW, PHASE_WINDOW + 1):
+            if delta == 0:
+                continue
+            row = ticks.get(tick + delta)
+            if row is not None and key in row:
+                yield row[key]
+
+    baseline = per_iter[0]
+    for tick in sorted(common):
+        row_a = baseline[tick]
+        for other in per_iter[1:]:
+            row_b = other[tick]
+            for key in row_a.keys() & row_b.keys():
+                name = key[1]
+                agg = fields.setdefault(name, FieldAgreement(name))
+                va, vb = row_a[key], row_b[key]
+                if va == vb:
+                    agg.agree += 1
+                elif (any(vb == n for n in neighbours(baseline, tick, key))
+                      and any(va == n for n in neighbours(other, tick, key))):
+                    # Both directions must be explained by a shift. One-way
+                    # matching is not enough: a genuinely wrong value in run B
+                    # would still count as phase whenever run A's value merely
+                    # persists into B's neighbourhood -- which, for a discrete
+                    # field that rarely changes, is always.
+                    agg.phase += 1
+                elif _is_continuous(va) and _is_continuous(vb):
+                    delta = max(abs(p - q) for p, q in
+                                zip(_as_axes(va), _as_axes(vb)))
+                    if delta <= SUBTICK_CEIL:
+                        agg.subtick += 1
+                        agg.max_delta = max(agg.max_delta, delta)
+                    else:
+                        agg.real += 1
+                        if len(agg.examples) < 4:
+                            agg.examples.append(
+                                "tick %d %s.%s: %r != %r (delta %.3f exceeds "
+                                "sub-tick read noise)"
+                                % (tick, key[0], name, va, vb, delta))
+                else:
+                    agg.real += 1
+                    if len(agg.examples) < 4:
+                        agg.examples.append(
+                            "tick %d %s.%s: %r != %r (no bitwise match within "
+                            "%d ticks either side)"
+                            % (tick, key[0], name, va, vb, PHASE_WINDOW))
+    return ([fields[k] for k in sorted(fields)], len(common), uncertified)
 
 
 def _first_divergence(a: IterationResult, b: IterationResult) -> Optional[Divergence]:

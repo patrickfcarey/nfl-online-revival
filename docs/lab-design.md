@@ -227,3 +227,51 @@ Two harness defects follow, both worth fixing before the numbers are trusted:
    As written it will call every real experiment divergent.
 2. `LoadConfirm` should wait for a *specific* clock value, not merely
    non-zero, so every iteration starts at the same point in the play.
+
+### Resolution (2026-08-11): the instrument now agrees with the operator
+
+The operator watched the three loads and reported the same steps, the same
+spin move, the same tackle spot. The tool said DIVERGENT. Both could not be
+right, and the tool was wrong four separate ways:
+
+1. **Sampling smear.** A "frame" was ~23 per-entity round trips spread over
+   several milliseconds of game time. Replaced by one clock-bracketed batch
+   per frame: the game clock is read at both ends of the batch, and equal
+   readings certify the whole sample lies within one tick.
+2. **A clock that hid the evidence.** `WorldFrameClock` smoothed any backward
+   movement into `+1`, which is precisely how a savestate load landing
+   mid-iteration went unseen. Rewinds are now returned as themselves and kept.
+3. **A vacuous load confirmation.** `counter > 0` was already true in the
+   outgoing world, so iteration 1 confirmed instantly and photographed the
+   previous iteration's play (tick 179) until the real load landed at 74.
+   Vacuous predicates are now accepted only on iteration 0, with a warning in
+   the result stream; later iterations demand a clock discontinuity, and the
+   spec-side fix is a window predicate that the outgoing world has run past
+   (`LoadConfirm(addr=..., lo=..., hi=...)`).
+4. **Ordinal comparison.** Sample #N against sample #N compares different
+   moments of a play. The analyzer now joins on the game clock, compares only
+   certified samples, and classifies each disagreement: bitwise-equal at an
+   adjacent tick in both directions = phase; a continuous value within 0.5
+   units = sub-tick read noise (measured ceiling: 0.152); anything else =
+   REAL, listed with its tick and values.
+
+Rerun live after the fixes, 3 repeats, 180 aligned certified ticks:
+
+    DETERMINISTIC (discrete exact; continuous within 0.152 read noise)
+      ai_state / block_mode / position / frames_since_snap: 100.00%
+      engagement: 99.97% (2 adjacent-tick phase)
+      xyz: 80.04% bitwise + 141 phase + 1440 sub-tick, max 0.152, zero REAL
+
+The residual "0.2%" from the first run is fully accounted for: all 23
+discrete disagreements were transitions caught on opposite sides of a
+misaligned read (every one bitwise-matched the other run one or two ticks
+earlier), and the positional noise is sub-tick read phase in three
+signatures -- mid-stride segment reads, wobble-envelope reads, and engaged
+linemen's contact oscillation sampled at each run's own locked phase. None
+of it is the engine. The engine replays a play bit-for-bit.
+
+Consequences for every future experiment: iterations are replays, so a
+handful suffice and any discrete difference between a baseline and a patched
+arm is the patch; positions carry up to ~0.15 units of instrument noise and
+belong in aggregates, never in frame-by-frame equality; and `compare`'s
+refusal to do statistics on identical streams is the expected path.

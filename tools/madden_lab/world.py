@@ -775,6 +775,82 @@ class World:
         base = int(spec["addr"]) + int(spec["stride"]) * state_id
         return read_many(self.reader, [(base + 4 * i, 4) for i in range(6)])
 
+    def certified_batch(self, parts: Sequence[Tuple["Player", Sequence[str]]]
+                        ) -> Tuple[Optional[int], Optional[int],
+                                   List[Dict[str, Any]]]:
+        """Every requested field of every requested player, in ONE batch,
+        bracketed by two reads of the game clock.
+
+        Returns `(tick_before, tick_after, decoded)` where `decoded[i]` maps
+        field name to value for `parts[i]`. When the two ticks are equal the
+        whole sample provably lies within a single game frame; when they are
+        not, the caller knows the sample straddled a boundary and can retry or
+        mark it torn.
+
+        The point is what it replaces. Sampling one entity at a time was ~23
+        round trips smeared across game time, so a "frame" mixed values from
+        two or three real frames -- which is precisely what made a bitwise-
+        deterministic engine measure as 79% reproducible on positions. The
+        PINE server executes a whole message in one pass over one buffer with
+        no socket waits inside it (layer 1), so a single batch is as close to
+        atomic as this transport can get; the clock bracket turns "close to"
+        into a per-sample certificate instead of a hope.
+
+        The clock is the play manager's frames-since-snap counter, resolved
+        through its pointer *before* the batch is built -- a batch spec is a
+        list of fixed addresses and cannot chase a pointer mid-flight. The
+        pointer is stable for the life of a play; if there is no play (the
+        pointer is null) certification is impossible and both ticks are None.
+        """
+        clock_specs: List[Spec] = []
+        obj = self.deref("play_manager")
+        if obj != 0:
+            f = self.map.field("play_manager", "frames_since_snap")
+            clock_specs = [(obj + f.offset, f.width)]
+
+        #: The two derived triples: not map fields but compositions of three.
+        #: `Player.xyz`/`.velocity` exist so the axes are read in one batch;
+        #: here the whole world already is one batch, so they simply expand.
+        composites = {"xyz": ("pos_x", "pos_y", "pos_z"),
+                      "velocity": ("vel_x", "vel_y", "vel_z")}
+
+        specs: List[Spec] = list(clock_specs)
+        spans: List[List[Tuple[str, List[Field], int]]] = []
+        for player, fields in parts:
+            plan: List[Tuple[str, List[Field], int]] = []
+            for name in fields:
+                members = [self.map.field("player", part)
+                           for part in composites.get(name, (name,))]
+                s: List[Spec] = []
+                for member in members:
+                    s.extend(member.specs(player.base))
+                plan.append((name, members, len(s)))
+                specs.extend(s)
+            spans.append(plan)
+        specs.extend(clock_specs)
+
+        raw = read_many(self.reader, specs)
+        pos = len(clock_specs)
+        tick_before = raw[0] if clock_specs else None
+        tick_after = raw[-1] if clock_specs else None
+
+        decoded: List[Dict[str, Any]] = []
+        for plan in spans:
+            out: Dict[str, Any] = {}
+            for name, members, n in plan:
+                if len(members) == 1:
+                    out[name] = members[0].decode(raw[pos:pos + n])
+                else:
+                    parts_raw, cursor = [], pos
+                    for member in members:
+                        width = len(member.specs(0))
+                        parts_raw.append(member.decode(raw[cursor:cursor + width]))
+                        cursor += width
+                    out[name] = tuple(parts_raw)
+                pos += n
+            decoded.append(out)
+        return tick_before, tick_after, decoded
+
     # -- the whole world ---------------------------------------------------
     def snapshot(self) -> Dict[str, Any]:
         """One tidy dict of everything, bracketed by the frame counter.

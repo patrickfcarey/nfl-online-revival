@@ -199,6 +199,18 @@ class LoadConfirm:
 
     A fixed sleep is not an acceptable substitute and is deliberately not
     offered: it converts a detectable failure into an undetectable one.
+
+    `require_reset` exists because a predicate can be **vacuously true in the
+    outgoing world**. The first determinism run confirmed with `counter > 0`
+    while the previous iteration's play was still running: the confirm passed
+    instantly, the first samples photographed the stale world (tick 179 -- the
+    prior iteration's final frame -- then a backward jump to 74 as the load
+    landed), and the tool concluded the engine diverged. With `require_reset`
+    the runner additionally waits until the game clock shows a discontinuity
+    -- a backward jump, or a forward leap far larger than the poll interval
+    allows -- before it will believe the predicate. A level can lie about a
+    load; an edge cannot. Set it False only for a state whose clock genuinely
+    cannot jump on load, and say why in the trial.
     """
 
     addr: int = 0
@@ -207,17 +219,33 @@ class LoadConfirm:
     check: Optional[Callable[[Any], bool]] = None
     description: str = ""
     timeout_s: float = 10.0
+    require_reset: bool = True
+    lo: Optional[int] = None
+    hi: Optional[int] = None
 
     def __post_init__(self) -> None:
+        window = self.lo is not None or self.hi is not None
+        if window and (self.lo is None or self.hi is None or self.addr <= 0):
+            raise ValueError("a window LoadConfirm needs addr=, lo= and hi=")
+        if window and not 0 < self.lo <= self.hi:
+            raise ValueError(
+                "LoadConfirm window [%r, %r] must satisfy 0 < lo <= hi: a "
+                "window admitting 0 confirms on an unmapped read, and an "
+                "inverted one admits nothing." % (self.lo, self.hi))
+        if window:
+            return
         if self.check is None and (self.addr <= 0 or self.expected is None):
             raise ValueError(
-                "LoadConfirm needs either check=, or addr= and expected=")
+                "LoadConfirm needs either check=, addr=+expected=, or "
+                "addr=+lo=+hi=")
         if self.expected == 0 and self.check is None:
             raise ValueError(
                 "LoadConfirm expecting 0 at 0x%08X proves nothing: unmapped "
                 "reads return 0. Anchor on a known-nonzero word." % self.addr)
 
     def satisfied(self, emu: Any) -> bool:
+        if self.lo is not None:
+            return self.lo <= emu.read(self.addr, self.size) <= self.hi
         if self.check is not None:
             return bool(self.check(emu))
         return emu.read(self.addr, self.size) == self.expected
@@ -225,6 +253,8 @@ class LoadConfirm:
     def describe(self) -> str:
         if self.description:
             return self.description
+        if self.lo is not None:
+            return "%d <= [0x%08X] <= %d" % (self.lo, self.addr, self.hi)
         return "0x%08X == 0x%X" % (self.addr, self.expected or 0)
 
 
@@ -271,13 +301,30 @@ class StopCondition:
 
 
 class Frame:
-    """One sampled frame, keyed (entity, field). Handed to stop predicates."""
+    """One sampled frame, keyed (entity, field). Handed to stop predicates.
 
-    __slots__ = ("index", "values")
+    `index` is the game tick offset from the iteration's base tick; `tick` is
+    the absolute counter value the sample was read at. They are separate
+    because cross-iteration comparison must join on the *game's* clock: the
+    first determinism run compared sample-ordinal to sample-ordinal, which
+    compares different moments of the play, and called a bitwise-reproducible
+    engine DIVERGENT.
 
-    def __init__(self, index: int, values: Dict[Tuple[str, str], Any]):
+    `certified` records that the game clock read the same value immediately
+    before and after the batch that produced these values -- the whole sample
+    provably lies within one game tick. An uncertified sample may mix two
+    adjacent frames (PINE cannot pause the EE) and is excluded from
+    determinism verdicts rather than silently compared.
+    """
+
+    __slots__ = ("index", "values", "tick", "certified")
+
+    def __init__(self, index: int, values: Dict[Tuple[str, str], Any],
+                 tick: Optional[int] = None, certified: bool = False):
         self.index = index
         self.values = values
+        self.tick = index if tick is None else tick
+        self.certified = certified
 
     def get(self, entity: str, field_name: str, default: Any = None) -> Any:
         return self.values.get((entity, field_name), default)
