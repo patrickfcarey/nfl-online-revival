@@ -484,3 +484,63 @@ and is the "must not break" surface in R5.
 computing `30 - blockRating/16`. A sweep at `+0x430` returns nothing — the
 offset is `0x432`, and getting that wrong wastes a pass. Then gate the extension
 on `dt_role` being 0 or 1, which is readable at `+0x437` in the same struct.
+
+## R6 final design — prioritise the double team, peel on outcome not on a clock
+
+> "we need to prioritise the double team greatly and we need to make it so they
+> peel off after x amount of time to reselect appropriately, and sometimes the
+> answer is to just double team a big 3-4 nose center to the ground"
+
+This is the whole requirement in one line: **the engine peels on a timer;
+football peels on an outcome.** A combo blocker leaves when the down lineman is
+*controlled* — and if he never is, he never leaves.
+
+### R6a — Priority: the double team outranks re-selection
+
+While `dt_role` is 0 or 1 and the pairing is live, the double team must dominate
+target priority rather than being one candidate among many. The measured
+behaviour is that it "stops being important super quickly, if ever" — the
+blocker's re-selection does not appear to weight the active pairing at all.
+
+*Acceptance:* the pairing survives at least ~60 frames (one second) rather than
+the measured 13-30, unless R6b fires first.
+
+### R6b — Peel on displacement, with a floor and a ceiling
+
+Peel-off (`dt_role` 3, written near `0x001f672c`/`0x001f6730`) should be gated on
+the doubled defender actually being **controlled** — displaced backwards past a
+threshold, or neutralised — not on a clock running out.
+
+*Acceptance:* the helper releases only after the defender is driven past a set
+distance, subject to:
+* a **floor** — never peel before ~30 frames, so a touch-and-go cannot count;
+* a **ceiling** — peel by some maximum so a blocker is not welded on for the
+  whole play when the second level is unblocked.
+
+The floor and ceiling are the "x amount of time"; the displacement test is what
+makes the peel *appropriate* rather than arbitrary.
+
+### R6c — Sometimes you never peel: bury him
+
+Against a defender the pair cannot displace — the archetypal case being a big
+3-4 nose head-up on the centre, which is exactly what slot 9 presents — the
+correct football answer is **not to peel at all**. Both men stay and drive him
+into the ground. A rule that always releases at a ceiling gets this case wrong.
+
+*Acceptance:* where the doubled man's rating or mass exceeds a threshold
+relative to the pair, R6b's ceiling is suspended and the pairing holds to the
+whistle. The doubled defender ends the play displaced by yards, not inches.
+
+### Why this cannot be a single constant
+
+Restating, because three attempts have now failed on it: the hold is
+`reselect_timer` (+0x432) initialised to **`30 - blockRating/16`**, a per-player
+computed value. R6a extends it, R6b replaces its *expiry* with a displacement
+test, and R6c suspends the test entirely for a dominant defender. That is a
+small state machine gated on `dt_role`, not a number to edit — which is why
+patching a literal 30 moved nothing, and why the five immediate 20s would not
+have either.
+
+**Regression surface stays R5:** every blocker in the game shares this timer.
+All three rules must be gated on `dt_role` being 0 or 1, or single-block line
+play changes with them.
