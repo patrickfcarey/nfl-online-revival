@@ -164,6 +164,37 @@ it must be *shown*, or a yardage gain could be the O-line breaking, not the fix.
 **Acceptance test.** `pool_blockers` and the linemen's `block_mode`/engagement
 distributions are unchanged from baseline (within run-to-run noise).
 
+## Testing protocol — a standing rule
+
+Every patch is tested **individually before it is combined with any other**,
+and only then as an integrated whole. No patch reaches the integration step
+until it has passed in isolation.
+
+**1. Per-patch, in isolation.** Apply exactly one patch, nothing else. It
+passes only if **both** hold:
+
+* *It does its job* — it moves its own requirement's acceptance metric in the
+  intended direction (e.g. R1's patch moves `lead_blocker_commit_vs_landmark`
+  toward zero).
+* *It breaks nothing* — the regression surface is unchanged within noise: R7
+  (ordinary line play), and every row of the "situations this must not break"
+  table, each on its own savestate. A patch that fixes the iso and collapses
+  the screen has failed, not half-passed.
+
+**2. Integration.** With all patches applied together, run the **full
+acceptance suite** — every requirement's metric across every play-type
+savestate — plus the automated unit/regression suite (`python3
+tests/test_madden_lab_*.py`, currently green) to prove the harness itself is
+sound. The definitive patch ships only when the whole suite passes.
+
+**Design consequence for O3.** "Test each patch individually" is in tension
+with "collapse R1–R3 into one cave routine." A single monolithic routine
+cannot be isolation-tested per requirement. So the cave must be built with
+**per-requirement toggles** (a byte or a branch each, flipped off to disable
+that requirement), or R1–R3 stay as separable hooks. Either is fine; a
+routine that can only be tested all-at-once is not. This is now an input to
+the O3 decision, not an afterthought.
+
 ## The outcome test that matters
 
 R1–R7 are the *mechanism*. The point is the play:
