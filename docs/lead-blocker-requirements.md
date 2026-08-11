@@ -94,11 +94,22 @@ trailing defender abandons the lead.
 **Acceptance test.** New metric `lead_blocker_backward_targets` = frames he is
 engaged with a defender behind him in the attack direction. Must be **0**.
 
-**Mechanism.** The steering already uses a 60° cone (`0x001B61A4/AC`). Two
-things to settle first (open question O1): whether that cone is measured off
-his **facing/heading** or off his **route bearing** — for a puller whose body
-faces across the field these differ sharply. Then: keep the cone forward-only
-and add the already-passed exclusion.
+**Mechanism.** The steering already uses a 60° cone (`0x001B61A4/AC`), and
+**O1 is now resolved: the cone is measured off his current facing/heading**
+(`player+0x1A8`), not his route bearing. So the engine already blocks
+*forward, relative to where he is looking* — R2's core is satisfied by the
+shipped code. What remains is narrower: the 60° half-angle is generous (it
+admits a man up to 60° off his facing, i.e. well off to the side), and a
+man directly behind is already excluded. So R2 becomes **"narrow the cone"**
+(a data-tunable, `0x001B61A4/AC`) rather than "build a vision system", plus a
+confirm that nothing re-adds a passed man. This is much cheaper than feared.
+
+**How O1 was resolved.** The cone test (`0x001FEC78`) takes each candidate's
+blocker→defender bearing (atan2 at `0x00469E78`) and compares it against the
+reference passed in as `player+0x1A8`, accepting within the 60° half-angle.
+Read against the in-play dump, `+0x1A8` is ~90° (facing downfield) for the
+whole offense, distinct from the authored route bearing at `+0x164` (46.8°
+for everyone — the play direction). So the reference is facing, not route.
 
 ### R3 — Prefer the second level, fall back to nearest
 
@@ -206,9 +217,12 @@ revisit, rather than tuning until the number moves.
 
 ## Open questions to settle first
 
-* **O1 — the vision cone's reference.** Facing/heading vs route bearing at
-  `0x001B61A0`. Resolve by disassembling how the finder's angle argument
-  (`a2`) is derived. Blocks R2.
+* **O1 — the vision cone's reference. RESOLVED 2026-08-11: facing.** The cone
+  (`0x001FEC78`) measures each defender's bearing against `player+0x1A8`, the
+  blocker's current facing/heading, not his route bearing (`+0x164`). Verified
+  against the in-play dump. Consequence: R2 shrinks to "narrow the cone" plus a
+  no-backward-chase confirm; the vision system already exists and is
+  facing-relative. See R2.
 * **O2 — the LOS/hole reference at runtime.** R1 needs "past the down line."
   Is that LOS + a constant, or the actual hole location the play defines?
   Constant is simpler and probably enough; confirm the play doesn't move it.
