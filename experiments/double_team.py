@@ -517,6 +517,34 @@ def m_defender_displacement(samples: Samples) -> Optional[float]:
     return None if drive is None else float(drive[1])
 
 
+def m_carrier_yards(samples: Samples) -> Optional[float]:
+    """Yards the ball carrier gains past the LOS -- the play's outcome, and the
+    number every double-team fix ultimately answers to. **Whole-play on
+    purpose**: forward progress is a property of the play, not of any block
+    episode.
+
+    This metric was missing from the spec's first version, and its absence hid
+    the headline: the operator asked how the run was actually doing, and the
+    honest answer was that nobody had computed it. Computed after the fact from
+    the sampled `carrier_y`/`los`, the baseline is **-0.70 yards on every
+    iteration of every run** -- start 7.97, deepest 14.30 against a 15.00 line.
+    The lead dive behind these 13-30-frame double teams is stuffed behind the
+    line, deterministically. R6's acceptance is stated in hold frames and
+    pushback, but this is the number that says whether any of it mattered.
+
+    Deepest-point form (football's forward-progress rule), same as
+    lead_blocker.py and pass_protection.py: robust to the carrier being driven
+    back after being wrapped up and to the single reset frame at the whistle.
+    """
+    los = _los(samples)
+    ys = [y for y in samples.values("game", "carrier_y") if y is not None]
+    if los is None or len(ys) < 2:
+        return None
+    forward = _forward_sign(samples, los)
+    deepest = max(ys) if forward > 0 else min(ys)
+    return float((deepest - los) * forward)
+
+
 def m_max_snap_frame(samples: Samples) -> Optional[float]:
     """How far the snap counter got. **Whole-play on purpose** -- it is the
     control that says whether the run was long enough for DT-2's 60-frame
@@ -571,6 +599,10 @@ METRICS = (
     Metric("defender_displacement", m_defender_displacement, "yards",
            "2-D distance that same defender travelled while doubled; baseline "
            "0.420. Far above the pushback means sideways, not back"),
+    Metric("carrier_yards", m_carrier_yards, "yards",
+           "OUTCOME: yards the carrier gains past the LOS; baseline -0.70 on "
+           "every iteration -- the dive is stuffed behind the line",
+           higher_is="better"),
     Metric("max_snap_frame", m_max_snap_frame, "frames",
            "CONTROL: below 60 and a negative proves nothing"),
     Metric("play_length", m_play_length, "frames", "duration control"),
