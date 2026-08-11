@@ -48,6 +48,7 @@ New to the repo? Read in this order:
 | `slider-behavior.md` | the options/slider system end to end: storage, the universal transform, penalty ramps, the UI binding layer |
 | `play-tendency-ai.md` | the `ptrk` anti-repetition tracker (the real "CPU cheat"), and Madden Cards |
 | `lessons-learned.md` | tooling gaps, MIPS traps, method, and engine architecture lessons |
+| `state-dispatch-table.md` | **generated** — all 115 AI states x 6 handler pointers, and the 26 shared handlers a patch must not surprise |
 
 **Answered questions** (community reports, diagnosed):
 

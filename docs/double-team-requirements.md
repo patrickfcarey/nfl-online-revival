@@ -104,13 +104,44 @@ players.
 which is what DT-1 (`0x001F6560`, double teams register on run block only)
 predicts. A double-team baseline needs a run savestate, or DT-1 applied first.
 
-*Next step, not yet done:* locate the write. Candidate zero-stores to `+0x1E8`
-in the state-handler region include `0x001b3584`, `0x001b3ba8`, `0x001b3c88`,
-`0x001be180`, `0x001c2ca4`, `0x001c3dfc`. Choosing between them needs the
-state-32 handler's address, which needs the state dispatch table — **not yet
-enumerated**, and not to be guessed at. The 375-hit sweep for stores to offset
-488 is useless on its own: 488 is also a common stack offset and a field on
-other structs, so the offset alone does not discriminate.
+#### The write, located — and it is not a zero
+
+The state dispatch table is now enumerated (`state-dispatch-table.md`). State
+32's row:
+
+```
+enter 001e7ee0   can_leave 001e8258   ai_think 001e8088
+user_think 001e8318   exit 001b0528 (shared stub)   extra 0
+```
+
+Those sit at `0x001e8xxx`, **outside** the `0x001B0000-0x001C4000` range first
+swept for the write — which is why six irrelevant candidates came back. Across
+all four of state 32's functions there is exactly **one** store to `+0x1E8`:
+
+```
+001e81fc  bne v0, zero, 0x001e8230   ; guard: skip the whole block
+001e8218  lwc1 f0, -26548(gp)        ; 0x005fef3c = 0.46
+001e8224  swc1 f0, 488(s0)           ; speed_cmd = 0.46
+```
+
+**It writes 0.46, not zero**, and `0x005fef3c` has exactly one reader in the
+image. So the earlier framing — "find the zero and remove it" — was wrong.
+Nothing in state 32 zeroes the speed. The block that *grants* speed is behind a
+guard at `0x001e81fc`, and when that guard fails the field is simply left at
+whatever it held, which on the sampled frame was 0.
+
+That relocates R2 entirely:
+
+* The lever is **the guard at `0x001e81fc`**, not a zero constant.
+* `0x005fef3c` (0.46) is a **sole-reader data word**, so it also tunes how fast
+  the man moves once he is moving — the cheapest possible knob if the guard
+  turns out to be right and only the magnitude is wrong.
+* The live sample is consistent: C and RG, in state 33, read exactly **0.4600**
+  — the same constant — while the state-32 man reads 0. Whatever the guard
+  tests, it was failing for him and passing for them.
+
+**What the guard tests is not yet established.** `v0` is set before
+`0x001e81f8` and was not traced. That is the next read, and it is static.
 
 ### R3 — The doubled defender is driven backwards
 
