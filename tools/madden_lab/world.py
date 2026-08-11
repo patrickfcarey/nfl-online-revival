@@ -719,6 +719,23 @@ class World:
         f = self.map.field("play_manager", "frames_since_snap")
         return self.reader.read(obj + f.offset, f.width)
 
+    def los(self) -> Optional[float]:
+        """The engine's own line of scrimmage, in field units.
+
+        `[0x00601F4C] + 0x10` (the first-down line is `+0x08`); verified
+        15.000 / 25.000 in both dumps. Exposed as a game field so a metric
+        never has to *derive* the line from a player's body position -- doing
+        that put a 0.78 yd bias through every absolute yardage this project
+        reported before 2026-08-11.
+        """
+        spot = self.reader.read(0x00601F4C, 4)
+        if not 0x00100000 <= spot < 0x02000000:
+            return None
+        try:
+            return float(_decode("f32", self.reader.read(spot + 0x10, 4)))
+        except Exception:
+            return None
+
     def carrier_y(self) -> Optional[float]:
         """The ball carrier's downfield (Y) position, or None.
 

@@ -374,3 +374,76 @@ revisit, rather than tuning until the number moves.
 Requirements agreed; **O1–O3 to resolve, then the cave routine is designed
 against R1–R3, then swept against the acceptance tests.** No patch is written
 until O1–O3 are answered and the two new metrics exist to test against.
+
+---
+
+## What the hostile review established (2026-08-11)
+
+Findings from an independent adversarial pass, all re-derived from the binary
+and the two memory dumps. Recorded because several are new facts about the
+engine, not merely corrections.
+
+### The route form is polar: bearing + distance + speed
+
+State 47's enter decodes **three** authored values from the play record, and
+then **computes a real destination point**:
+
+| record byte | scale | lands in | meaning |
+|---|---|---|---|
+| `record+2` | `<<17`, 24-bit mask | `+0x164` | bearing (7 bits of resolution) |
+| `record+1` | `(v>>3) + (v&7)/7` | `+0x158` | **distance in yards**, ⅛-yd resolution |
+| `record+3` | `× 1/255` | `+0x15C` | **speed scalar**, 0..1 |
+
+`0x001B6758`–`0x001B6784` then computes
+**`+0x150/+0x154 = position + distance × unit(bearing)`** — an actual
+destination — and `0x001B52D0` tests arrival with a dot product
+`(dest − pos) · unit(bearing) ≤ 0`. So the tool that paints a landmark should
+paint **`+0x150/+0x154`**, and there is no "bearing XOR point" fork.
+
+### The branch at `0x001B66F8` is a play-role test, not a bearing test
+
+It tests the **return of `0x001B5228`**, which returns 1 only for **role 86**
+(or 85 with a condition), where the role is a halfword looked up over four
+100-byte assignment records via `0x003AD410`. The bearing is merely *passed*
+to it. Even the taken path does something: `0x001B0800` re-encodes the bearing
+to 7 bits and posts a 3-byte message `{0x34, 4|5, bearing7}` to another
+handler.
+
+### On this play the guard's authored pull is only 0.857 yards
+
+`record[1] = 0x06` → `6/7 = 0.857` yd, bearing `record[2] = 0x47` → **199.69°**
+(flat left, very slightly backward — the textbook first leg of a pull), role
+**74**. Then a **chained state-72 record** (`48 31 40 fe`) takes over. **This is
+the most interesting open lead in the investigation**: the authored 47-leg is
+under a yard, so the behaviour that matters may live in the chained record, not
+in state 47 at all.
+
+### `+0x164` is rewritten every frame — it is not authorship
+
+`0x001B5340` stores atan2 of live aim points into it (`0x001B54AC`,
+`0x001B55B0`, `0x001B560C`, `0x001B5624`). A value read mid-play is a
+**steering output**, not the authored bearing. The authored value is only
+recoverable from the play record, or from `+0x164` in the first frames.
+
+### Three admission gates, not one
+
+The cone (±60°, facing-relative) is only one of **three** filters on a
+candidate: also **range < 3.5** and a **lateral corridor test < 1.0** via
+`0x004AE048`. Tuning the angle alone would leave the other two in place.
+
+### The engagement kind `>= 2` test admits kind 9
+
+`m_lead_blocker_block_depth` uses `v >= 2`, which admits **kind 9** — present
+in the mid-play dump and undocumented. Worth pinning before the metric is
+trusted at the margins.
+
+### Corrected baselines
+
+With the LOS bug fixed (`_los` now reads the engine's `[0x00601F4C]+0x10`):
+
+* `lead_blocker_block_depth` ≈ **−0.25 yd** — the guard commits *behind* the
+  line, not half a yard past it.
+* `carrier_yards` ≈ **0.17 yd**, not 0.95.
+
+The defect is **worse** than documented, and the acceptance targets should be
+restated against the engine's line.

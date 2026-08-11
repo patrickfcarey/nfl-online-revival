@@ -423,19 +423,59 @@ def m_coverage_defenders_typical(samples: Samples) -> Optional[float]:
 ENGAGED_KINDS = (4, 5, 6, 7, 8)
 
 
-def _los(samples: Samples) -> Optional[float]:
-    """Line of scrimmage = the offensive centre's downfield Y at the snap.
+#: The engine's own spot object. `[0x00601F4C]` -> the record `0x00260208`
+#: reads; `+0x10` is the line of scrimmage and `+0x08` the first-down line
+#: (verified 15.000 / 25.000 in both dumps -- exactly ten yards apart).
+SPOT_PTR = 0x00601F4C
+SPOT_LOS = 0x10
 
-    Read from the offence samples rather than a separate game field: the
-    centre is the offensive player at position 7, and his Y on the first
-    sampled frame -- sampling begins at the snap -- is the line. 1 unit = 1 yd.
+
+def _los_from_engine(reader) -> Optional[float]:
+    """The LOS the engine itself keeps, or None.
+
+    Reads a live value rather than deriving one. See `_los` for why that
+    distinction cost this project every absolute yardage it had quoted.
     """
+    if reader is None:
+        return None
+    try:
+        base = reader.read(SPOT_PTR, 4)
+        if not 0x00100000 <= base < 0x02000000:
+            return None
+        raw = reader.read(base + SPOT_LOS, 4)
+        return struct.unpack("<f", raw.to_bytes(4, "little"))[0]
+    except Exception:
+        return None
+
+
+def _los(samples: Samples) -> Optional[float]:
+    """Line of scrimmage, in field units.
+
+    **Prefers the engine's own value**, sampled as `game.los`. An earlier
+    version derived the LOS from the *centre's body position* instead, which
+    reads 14.219 while the engine holds 15.000 -- a systematic 0.78 yd bias
+    that contaminated every absolute yardage this experiment reported. A block
+    commit stated as "+0.53 yd past the line" was really a quarter yard
+    *behind* it, and a "1 yard gain" was 0.17. Relative comparisons survived;
+    nothing absolute did.
+
+    The lesson generalises past this function: **never derive a substitute for
+    a value the engine already stores.** Search for the real one first.
+
+    The centre fallback is kept only so an older result file (recorded before
+    `los` was sampled) still reduces rather than erroring -- and it is
+    reported as biased, not silently used as equivalent.
+    """
+    for value in samples.values("game", "los"):
+        if value is not None:
+            return float(value)
     for entity in _offense(samples):
         positions = samples.values(entity, "position")
         if positions and positions[0] == 7:
             ys = [xyz[1] for _i, xyz in samples.series(entity, "xyz")
                   if xyz is not None]
             if ys:
+                # Legacy path: ~0.78 yd shallow. Only reachable on old files.
                 return float(ys[0])
     return None
 
@@ -640,7 +680,7 @@ def build() -> Trial:
                 # play, not of where the play has got to. The clock is
                 # frames_since_snap and the "what is he doing" signal is
                 # ai_state, both of which this spec already samples.
-                EntitySelector("game", ("frames_since_snap", "carrier_y")),
+                EntitySelector("game", ("frames_since_snap", "carrier_y", "los")),
             ),
             # Every frame. Block mode transitions are single-frame events and
             # the whole experiment is about catching one.
