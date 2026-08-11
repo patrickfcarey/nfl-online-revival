@@ -69,6 +69,8 @@ New to the repo? Read in this order:
 | `ai-play-calling.md` | the small play pool, the steep favourite, and the missing plan (#18) |
 | `fb-wr-blocking.md` | why the FB and the slot WR block nobody — a corner in coverage is not a legal target (#15) |
 | `fact-check-2026-08.md` | **read before patching** — eight verification passes over every doc here; what survived and what did not |
+| `lead-blocker-requirements.md` | the agreed requirements + acceptance tests for the lead-blocker fix, before any patch |
+| `field-overlay-tool.md` | design: paint proven world points (landmarks, routes) onto a game screenshot for visual review |
 | `human-readable.md` | every gameplay finding in plain English, for readers who do not read disassembly |
 
 **Forward work**:
