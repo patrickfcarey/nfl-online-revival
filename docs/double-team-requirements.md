@@ -380,3 +380,33 @@ and reversible. **Unverified**: it has not been confirmed to be the duration of
 must be tested alone against slot 9 with `double_team.py` before being combined
 with anything (rule 2). The acceptance signal is `dt_role == 2` persisting past
 frame 43 and the episode-scoped pushback exceeding 15 inches.
+
+## R6 patch attempt 1 — `0x001f6b0c` REFUTED
+
+Deployed `patches/14F8B841.dt-duration-10x.pnach`, verified in memory, ran
+`double_team.py` on slot 9. Durations came back **17 / 30 / 13 frames, ending
+at 36 / 43 / 43** — identical to the unpatched baseline in every figure.
+`0x001f6b0c` does not control the double-team hold.
+
+Two things worth carrying:
+
+**The patch applied as a BYTE write, not a word.** `patch=1,EE,001f6b0c,extended,2402012c`
+put `0x2402002C` in memory, not `0x2402012C` — only the low byte took, so the
+immediate became 44 rather than 300. That was still a valid test of the
+address (44 > 30, so any real duration constant would have moved something)
+but the `extended` type cannot be trusted to write 32 bits here. Verify the
+patched word over PINE before every measurement; the pnach being *parsed*
+("Found 1 cheats in ..." in the log) says nothing about what landed.
+
+**The durations are not one constant.** 13, 17 and 30 frames on three blockers
+in the same play, reproducible across runs. `block-cycle.md` describes the
+block as a "**14-30**-frame" translation and its steering as "recomputed only
+every **15-30** frames". A single immediate cannot produce three different
+values — so the hold is **computed or randomised over a range**, and hunting
+individual constants is the wrong shape of search. The five immediate 20s in
+the region are unlikely to be it for the same reason.
+
+**Next:** find where the 14-30 range is produced rather than where a 30 sits.
+Likely a rand-scaled span (`lo + rand*(hi-lo)`) near the engagement-timer write
+(`engage_timer` +0x42C). That is a static search for the *arithmetic*, not for
+a literal.
