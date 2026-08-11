@@ -255,8 +255,35 @@ a caveat worth carrying: an earlier version of it matched only
 the gate and the writer. Same false-negative class as the gp-relative misses.
 Re-derive before relying.
 
-Reading `[0x00601F4C]+0x3C` live during a pass is still the confirming step;
-`World.spot_flags()` now exposes it.
+### TESTED 2026-08-11 — bit 0 is NOT the cause
+
+Read live from slot 8, a savestate the operator set up with **the ball in the
+air**:
+
+```
+frames_since_snap = 207    spot_flags = 0x00004009    bit0 = 1
+frames_since_snap = 248    spot_flags = 0x00004009    bit0 = 1
+```
+
+**Bit 0 is already set while the ball is in flight.** It is a latch, so once set
+it cannot clear again for the rest of the play — which means the defender-only
+gate at `0x0025545c` is **open** for every ball interaction that follows. It
+cannot be what refuses the corner's catch.
+
+The candidate is dead, and that is worth recording rather than quietly dropping:
+81 read sites, one writer, a clean latch mechanism and a plausible story, and it
+is still wrong. The mechanism is real; it just is not this defect's cause. What
+the two stack floats at `0x00253b8c` measure remains unestablished, and bits 3
+and 14 (also set, `0x4009`) are unidentified.
+
+**The investigation returns to Q2:** what the catch roll reads on the defender
+path, and whether it is reached at all. The other three side-dependent sites
+from the Q1 census are untested — in particular `0x002553e0`, where the same
+event resolves to **153 for a receiver and 179 for a defender**, and
+`0x00255ff4`, which passes an "is on offence" boolean into `0x00255538`.
+
+`World.spot_flags()` stays: the word is a general per-play event register with
+~900 call sites, and slot 8 shows bits 0, 3 and 14 live.
 
 > **Caution on the listing.** `recon/mipsdis.py` prints `SLLV`/`SRLV`/`SRAV`
 > with `rs` and `rt` swapped (`pass-vs-run-blocking.md`, standing disassembler

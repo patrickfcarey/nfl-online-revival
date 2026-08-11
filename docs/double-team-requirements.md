@@ -75,6 +75,43 @@ largest gap between this system and the thing it is imitating.
 his displacement along the shared axis is within a small tolerance of the
 primary's. Two men moving together, not one man and a prop.
 
+#### MEASURED 2026-08-11 — the statue is real, and block-cycle.md attributes it wrongly
+
+That item carries **no address**, so it was unproven. Read live from slot 8
+(mid-play, ball in the air), all 22 players:
+
+| player | `ai_state` | `speed_cmd` (+0x1E8) |
+|---|---|---|
+| LT, LG | 33 run blocking | **1.0000** |
+| C, RG | 33 | 0.4600 |
+| **RT** | **32 — scripted two-man block animation** | **0.0000** |
+
+**The zeroing tracks `ai_state` 32, not the double-team role.** In the same
+frame every player's `dt_role` reads **5** and `dt_record` reads **0** — no
+double team is registered anywhere on the field — and the statue is present
+regardless. So R2 is a property of the **two-man block animation** (state 32,
+which `addresses.yaml` already records as owning engagement kinds 5 and 6),
+and a fix aimed at the `dt_role` == 1 helper would miss it entirely.
+
+**New fact: `dt_role` 5 means UNASSIGNED.** `block-cycle.md` gives the enum as
+0 primary / 1 helper / 2 doubled defender / 3 peel-off and does not mention 5.
+The engine tests for it explicitly — `lbu v1, 1079(a0)` then `bne v1, 5` at
+`0x001f66dc` and `0x001f670c` — which reads as an empty-slot check. Any metric
+that treats a non-zero `dt_role` as "in a double team" would count all 22
+players.
+
+**Also answers Q4 for the pass state:** no double team registers on slot 8,
+which is what DT-1 (`0x001F6560`, double teams register on run block only)
+predicts. A double-team baseline needs a run savestate, or DT-1 applied first.
+
+*Next step, not yet done:* locate the write. Candidate zero-stores to `+0x1E8`
+in the state-handler region include `0x001b3584`, `0x001b3ba8`, `0x001b3c88`,
+`0x001be180`, `0x001c2ca4`, `0x001c3dfc`. Choosing between them needs the
+state-32 handler's address, which needs the state dispatch table — **not yet
+enumerated**, and not to be guessed at. The 375-hit sweep for stores to offset
+488 is useless on its own: 488 is also a common stack offset and a field on
+other structs, so the offset alone does not discriminate.
+
 ### R3 — The doubled defender is driven backwards
 
 *Acceptance:* the defender's position moves **away from the offensive backfield
