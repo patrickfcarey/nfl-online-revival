@@ -82,6 +82,27 @@ COVERAGE_STATES = (22, 37, 38, 39, 40, 41)
 #: will need one edit if pad.py chose SDL or DualShock numbering instead.
 SNAP_BUTTON = "cross"
 
+# --------------------------------------------------------------------------
+# Cost declaration -- the framework interface
+#
+# A spec knows what it costs to run; the caller does not. `menu.py` reads these
+# to estimate duration and disk before an operator commits to a long run, and
+# falls back to conservative defaults when a spec omits them. Every experiment
+# should declare both once it has been run enough to measure them, because a
+# hardcoded guess in the caller cannot be right for two specs with different
+# play lengths and sample specs.
+#
+# Measured on this spec, 2026-08-11: 178 iterations in 1854 s and 148
+# completed iterations averaging 11.49 MB (min 11.43, max 13.05).
+# --------------------------------------------------------------------------
+
+#: Wall-clock seconds per iteration, including savestate load and confirm.
+SECONDS_PER_ITERATION = 10.4
+#: Output megabytes per iteration. Range, not a point: the low end sits just
+#: under the observed minimum and the high end well above the observed
+#: maximum, so the estimate CONTAINS the truth rather than looking precise.
+MB_PER_ITERATION = (11.0, 15.0)
+
 SIDE_OFFENSE = 0
 SIDE_DEFENSE = 1
 

@@ -32,38 +32,50 @@ EXPERIMENTS = REPO / "experiments"
 #: Big enough to see a distribution, small enough to finish inside an hour.
 DEFAULT_ITERATIONS = 20
 
-#: Calibrated for COVERAGE, not precision: the job of this range is that the
-#: real number lands inside it, so it is deliberately wide and deliberately
-#: **asymmetric**. Measured over 148 completed iterations of the lead-blocker
-#: spec: mean 11.490 MB, min 11.432 (-0.5%), max 13.053 (+13.6%). The low side
-#: has essentially no spread -- every play costs at least this much -- while
-#: the tail runs high, because play length is the only variable and a run that
-#: breaks lasts longer than one stuffed at the line.
-#:
-#: So the band is not mean +/- x. It is a floor just under the observed
-#: minimum and a ceiling well above the observed maximum, which contained
-#: 100% of measured iterations with room for play types not yet seen. A
-#: symmetric band would spend its width on a low end that cannot occur.
-MB_PER_ITERATION = 11.49
-MB_PER_ITERATION_LOW = 11.0      # under the observed 11.432 minimum
-MB_PER_ITERATION_HIGH = 15.0     # 15% above the observed 13.053 maximum
-
-#: The fit check uses the ceiling too -- a conservative "will it fit" answer
-#: costs nothing, an optimistic one kills an hour-long run at 95% with a full
-#: disk.
-MB_PER_ITERATION_WORST = MB_PER_ITERATION_HIGH
+#: Fallbacks for a spec that has not declared its cost yet. Deliberately
+#: pessimistic: an unmeasured experiment should over-reserve time and disk
+#: rather than surprise an operator an hour in.
+DEFAULT_SECONDS_PER_ITERATION = 15.0
+DEFAULT_MB_PER_ITERATION = (11.0, 20.0)
 
 
-def size_estimate(iterations: int):
-    """`(low_mb, high_mb, worst_mb)` -- a range chosen to CONTAIN the truth.
+def spec_cost(path):
+    """`(seconds, (low_mb, high_mb))` a spec declares, or the fallbacks.
 
-    Wide on purpose. The failure this guards against is an operator deciding
-    a run fits when it does not, so the range is calibrated so the real size
-    lands inside it rather than to look precise.
+    The spec owns these numbers because only it knows its play length and
+    sample spec; a constant in this file could not be right for two specs at
+    once. Reading them costs an import, which is why the values are plain
+    module constants rather than anything that needs `build()` to run.
+
+    A spec that fails to import is not fatal here -- the menu still offers it
+    and the real CLI will report the import error properly.
     """
-    return (iterations * MB_PER_ITERATION_LOW,
-            iterations * MB_PER_ITERATION_HIGH,
-            iterations * MB_PER_ITERATION_WORST)
+    import importlib.util
+    try:
+        spec = importlib.util.spec_from_file_location("_cost_probe", str(path))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except Exception:
+        return DEFAULT_SECONDS_PER_ITERATION, DEFAULT_MB_PER_ITERATION
+    seconds = getattr(module, "SECONDS_PER_ITERATION", DEFAULT_SECONDS_PER_ITERATION)
+    megabytes = getattr(module, "MB_PER_ITERATION", DEFAULT_MB_PER_ITERATION)
+    if isinstance(megabytes, (int, float)):      # a spec may declare a point
+        megabytes = (megabytes, megabytes * 1.3)
+    return float(seconds), (float(megabytes[0]), float(megabytes[1]))
+
+
+def size_estimate(iterations: int, per_iteration):
+    low, high = per_iteration
+    return iterations * low, iterations * high
+
+
+def duration_estimate(iterations: int, seconds: float) -> str:
+    total = iterations * seconds
+    if total < 90:
+        return "%d s" % round(total)
+    if total < 5400:
+        return "%d min" % round(total / 60)
+    return "%.1f h" % (total / 3600.0)
 
 
 def disk_report(target: str):
@@ -133,6 +145,8 @@ def main(argv=None) -> int:
         print("not a listed choice: %r" % choice, file=sys.stderr)
         return 2
 
+    seconds, per_iter = spec_cost(spec)
+
     iterations = ask("how many iterations", str(DEFAULT_ITERATIONS))
     try:
         n = int(iterations)
@@ -160,14 +174,16 @@ def main(argv=None) -> int:
     # ~7 s per play plus load and confirm; deliberately rough, and it is the
     # number that tells the operator whether to wait or walk away.
     print("\n  spec       : %s" % spec)
-    print("  iterations : %d  (roughly %d min)" % (n, max(1, n * 12 // 60)))
+    print("  iterations : %d  (roughly %s at %.1f s/iteration)"
+          % (n, duration_estimate(n, seconds), seconds))
     free_mb, total_mb = disk_report(out)
-    low, high, worst = size_estimate(n)
+    low, high = size_estimate(n, per_iter)
+    worst = high
     print("  output     : %s" % out)
     if free_mb is None:
         print("  disk       : could not read free space for that path")
     else:
-        print("  est. size  : %s to %s  (range contained 148/148 measured runs)"
+        print("  est. size  : %s to %s  (as declared by the spec)"
               % (_human(low), _human(high)))
         print("  disk       : %s free of %s"
               % (_human(free_mb), _human(total_mb)))
