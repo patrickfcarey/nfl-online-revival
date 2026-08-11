@@ -275,3 +275,39 @@ handful suffice and any discrete difference between a baseline and a patched
 arm is the patch; positions carry up to ~0.15 units of instrument noise and
 belong in aggregates, never in frame-by-frame equality; and `compare`'s
 refusal to do statistics on identical streams is the expected path.
+
+---
+
+## Patch mechanism: PINE writes reach DATA, not CODE (2026-08-11)
+
+The first patch experiment looked like it worked -- cone range 3.5->100
+moved carrier_yards 0.81->0.95 -- and it did not. Rigorous check:
+
+* the write lands and persists in RAM (`0x3C014060` -> `0x3C0142C8`, still
+  there after a second of play);
+* but two *different* patches (cone range 100, cone angle 20 deg) gave
+  byte-identical metrics `[1.1, 0.9, 0.9, 0.9]`;
+* and a clean **baseline re-run** gave the same `[1.1, 0.9, 0.9, 0.9]`. The
+  original baseline's `0.3` was one noisy iteration, not a patch effect.
+
+**PCSX2's EE recompiler caches compiled blocks, and a PINE write to code RAM
+does not invalidate the cached block**, so execution keeps running the old
+code. The write is real; the CPU never re-reads it.
+
+Consequences for the harness:
+
+* **`Write` in a trial's `setup` is sound for DATA** -- slider bytes, ratings,
+  the `.data` float pools -- which the game re-reads from RAM every frame. It
+  is **not** sound for `.text`. A code experiment run this way measures the
+  baseline twice and reads the difference as noise, which is the worst kind of
+  wrong: it looks like a result.
+* **Code patches must go through the pnach cheat system** (`patch=1` lines in
+  `patches/14F8B841.pnach`), which PCSX2 applies on a path that invalidates
+  the recompiler. That needs the game booted with the pnach active -- a
+  heavier loop than a per-iteration `Write`, and one that needs the operator
+  to reboot and re-save the mid-play state once.
+* A `setup` Write whose address lands in `.text` should warn, not silently
+  run. (Open item.)
+
+The measurement half is unaffected and stands: baseline carrier_yards ~0.95,
+lead-blocker commit depth ~0.55, both reproducible.
