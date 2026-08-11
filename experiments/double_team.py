@@ -10,20 +10,51 @@ state: down linemen at y 16.28 with the nose at x 0.151 against the centre's
 This is the first savestate in the project that can produce a double team at
 all. Everything in `double-team-requirements.md` needs the baseline it gives.
 
-Three things are being asked at once, in priority order:
+Four things are being asked at once, in priority order:
 
-1. **Does one register?** `dt_role != 5` on anybody. 5 is UNASSIGNED -- read
+1. **Does the pairing PERSIST?** R6, and since 2026-08-11 the *primary*
+   requirement -- `dt_longest_hold`, `dt_shortest_hold`, `dt_last_hold_frame`.
+   The baseline is holds of **13, 17 and 30 frames, every one finished by frame
+   43 of 308**: a fifth to half a second. R1's 1.5x multiplier and R3's pushback
+   are close to irrelevant against a block that short, because a stronger block
+   that still releases at frame 43 changes nothing on screen.
+2. **Does one register?** `dt_role != 5` on anybody. 5 is UNASSIGNED -- read
    live on 22 players with no double team on the field, and confirmed at
    `0x001f66dc`/`0x001f670c` where the engine tests `bne v1, 5`.
    `block-cycle.md`'s published enum omits 5, so a metric written from that doc
    alone would report all 22 players as doubled.
-2. **Is the helper a statue?** His `speed_cmd` (+0x1E8) against the primary's.
-3. **Is the doubled defender driven backwards?** His displacement, which needs
+3. **Is the helper a statue?** His `speed_cmd` (+0x1E8) against the primary's.
+4. **Is the doubled defender driven backwards?** His displacement, which needs
    coordinates on the defence -- sampled here for that reason.
 
 Registration is gated to a **60-frame post-snap window** (`block-cycle.md`
 DT-2), so a run that never reaches frame 60 proves nothing; `max_snap_frame`
 is a metric so that failure is visible rather than silent.
+
+## Every metric here is scoped to the pairing, and that was learned the hard way
+
+The double team occupies 13-30 frames of a 308-frame play. A statistic taken
+over the play is therefore nine parts pursuit and free running to one part
+double team -- and on 2026-08-11 this file quoted three of those to the
+operator as if they described the block:
+
+    defender_pushback   3.178 yd  whole play  ->  0.410 yd  while dt_role == 2
+    helper_speed        0.435     whole play  ->  median while dt_role == 1
+    primary_speed       0.460     whole play  ->  median while dt_role == 0
+
+The operator, watching the screen, said he saw "maybe a few inches" and "a
+right guard briefly touch someone and then go to the second level". He was
+right and the numbers were wrong: 3.178 yd was a defender **flowing to the
+ball after the block had ended**, measured as though he had been driven there.
+
+That is the third time this defect class has shipped in this harness. The other
+two are in experiments/pass_protection.py -- the block-contest composites reset
+at every lock-in, so a whole-play median saw nothing, and `_decay_fraction`
+read an unpopulated field at the top of an episode as a total collapse. The
+rule that keeps being relearned: **on this engine, any statistic not scoped to
+an engagement episode is measuring the wrong thing.** Where a whole-play figure
+is genuinely what is wanted below, its docstring says so in as many words, so
+the next reader can tell a choice from an oversight.
 """
 
 from __future__ import annotations

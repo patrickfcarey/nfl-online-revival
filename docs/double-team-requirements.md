@@ -703,3 +703,37 @@ is secured; it can never be the primary predicate.
 * No goal-line savestate exists. When one is recorded: jumbo personnel, Power O
   or equivalent, inside the 2, against a goal-line front — and the operator
   should expect the double to hold to the whistle as the PASS condition.
+
+### Play-action Power O — identical at the snap, divergent after one beat
+
+> "what about the play action version, should it be identically blocked?"
+
+**At the snap, yes — by design.** The value of play action is that the backers
+read the run picture: same down blocks, same angle-double look, and the guard
+STILL PULLS, because linebackers key guards. The pull is the fake.
+
+**After the first beat, no**, for one rule and one structure:
+
+* **The drive is capped.** Ineligible man downfield: on a pass, a lineman
+  cannot end up past ~1 yard. A double that buries the nose three yards deep
+  has put two blockers three yards downfield — the goal on the run, a flag on
+  the pass. The PA double fires out low, sells one beat, stalls, settles into
+  protection.
+* **Nobody climbs, ever** — no second level exists on a pass play, so the peel
+  question vanishes rather than resolving differently.
+* **The puller changes ends:** same first two steps (selling the key), then
+  logs/seals the edge he pulled toward — a bonus protector, not a lead blocker.
+  The FB runs his run track into traffic and blocks or leaks.
+
+**Engine consequence — R6 is automatically PA-safe.** DT-1 (`0x001F6560`)
+registers doubles on run blocking only; slot 8 confirmed a pass down registers
+zero across 22 players. PA presumably classifies as a pass, so no doubles exist
+on PA and a dt_role-gated patch has nothing to act on. The safe behaviour falls
+out of the existing gate — no PA special case needed, and PA belongs on the R5
+regression list only as a confirmation, not a risk.
+
+**Rider on any future DT-1 lift:** if doubles are ever allowed to register in
+pass protection, PA/pass doubles need the drive cap (~1 yard, then settle) or
+the patch manufactures linemen driving defenders downfield on pass plays.
+Whether this engine models ineligible-man-downfield at all is UNKNOWN — but the
+visual is wrong regardless of whether a flag exists.
