@@ -579,3 +579,75 @@ game**. Correct gating on `dt_role` makes the change invisible to single blocks
 and universal to doubles; incorrect gating makes every lineman stickier. That is
 the entire risk, and it is why R5's no-regression check runs on its own
 savestate before anything is combined.
+
+## R6z — Zone double teams (SPEC'D FOR LATER, unscoped from the current patch)
+
+Explicitly a **future expansion**, kept out of the gap/power patch per rule 1 —
+different trigger logic, and probably partly different code. It is written down
+now so the current patch is built in a shape that can grow into it, rather than
+one that has to be torn up.
+
+### The football difference, stated precisely
+
+| | gap/power double (R6a-c, current scope) | zone combo (this section) |
+|---|---|---|
+| purpose of the pairing | move THIS man off the spot | secure the down lineman WHILE reading a linebacker |
+| peel trigger | displacement of the doubled man | the **linebacker declares** (commits to a gap / crosses the climb track) |
+| who peels | the helper, by rule | whichever of the two the backer's flow takes away — it is decided live |
+| if the backer never shows | drive to the whistle (R6c) | the combo simply never splits; both finish on the down man |
+| first step | straight into contact | **lateral playside step first** (lead-blocker R8) |
+
+Same principle — two men until the block is resolved — but the *resolving event*
+differs: displacement there, linebacker declaration here.
+
+### Requirements, numbered now so they do not drift
+
+* **R6z1 — peel on declaration.** In a zone combo, the climb is triggered by the
+  tracked second-level defender committing (crossing a gap threshold or the
+  climb track), not by the down lineman's displacement and not by a clock.
+* **R6z2 — either man climbs.** Which blocker releases is decided by the
+  backer's flow at the moment of declaration: the man the backer flows AWAY
+  from stays on the double. Not fixed at assignment time.
+* **R6z3 — no declaration, no split.** If the backer sits or walls off, both
+  blockers finish on the down lineman. R6c's "bury him" already covers this
+  case; it must keep doing so under zone.
+* **R6z4 — composes with lead-blocker R8.** The lateral first step precedes the
+  combo. R8 is unscoped there for the same reason this is unscoped here; when
+  either lands, the two must be tested together on a zone savestate.
+
+### DESIGN CONSTRAINT ON THE CURRENT PATCH (this part is in scope NOW)
+
+**The peel decision must be built as a single replaceable predicate** —
+`should_peel(pairing) -> bool` in whatever form the cave takes — with the
+displacement test as its first implementation, not as logic inlined into the
+timer path. The zone expansion then swaps/extends one predicate (displacement
+OR declaration, selected by scheme) instead of restructuring the patch. If the
+gap/power patch hardwires displacement into the reselect flow, R6z starts over
+from scratch; if it isolates the predicate, R6z is an addition. This constraint
+costs nothing today and is the difference between the two futures.
+
+### Gating unknowns, each blocking R6z and none blocking R6a-c
+
+1. **Does the engine know a zone call from a gap call?** Same unknown that
+   gates lead-blocker R8: the assignment-class byte may or may not encode
+   scheme, and the play file is still unread (`play-data.md`). Without a scheme
+   signal, R6z1 has nothing to key on.
+2. **Is there a tracked second-level target?** R6z1 needs the combo to know
+   WHICH linebacker it is reading. The dt record has four member slots
+   (primary, helper, doubled defender, second-level per `block-cycle.md`) — if
+   that fourth slot is real and populated, the hook exists; unverified.
+3. **What does slot 9's play actually run?** The lead dive doubles may already
+   be zone combos, or gap doubles — the play's scheme is not recorded anywhere.
+   Baseline truth needs the operator to call an explicit inside zone and an
+   explicit power from the same formation and compare dt registrations.
+4. **A zone-run savestate does not exist yet.** Slot 9 is a lead dive. R6z
+   acceptance needs its own state, recorded like the others in
+   `experiments/states/`.
+
+### Acceptance (when scoped)
+
+On a zone-run savestate against a 3-4: combo forms playside (R8's lateral step
+first), holds through the backer's read, splits ONLY on declaration with the
+correct man climbing (R6z2), and never splits when the backer walls off (R6z3).
+Regression surface: gap/power doubles from R6a-c must not change, verified on
+slot 9 with the same spec that baselined them.
