@@ -334,7 +334,7 @@ def cmd_verify_determinism(args: argparse.Namespace) -> int:
     """The question the whole harness rests on. Answer it before trusting a run."""
     trial = load_spec(args.spec)
     emu, world, pad = connect(args)
-    runner = Runner(emu, world, pad=pad, allow_writes=args.write)
+    runner = Runner(emu, world, pad=pad, allow_writes=args.write, printer=_progress)
     sink = None
     if args.out:
         sink = JsonlSink(args.out, make_provenance(trial, arm="determinism"))
