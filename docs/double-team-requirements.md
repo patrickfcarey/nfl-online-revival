@@ -651,3 +651,55 @@ first), holds through the backer's read, splits ONLY on declaration with the
 correct man climbing (R6z2), and never splits when the backer walls off (R6z3).
 Regression surface: gap/power doubles from R6a-c must not change, verified on
 slot 9 with the same spec that baselined them.
+
+## The goal-line case — Power O, and why it validates the predicate design
+
+> "how should we handle a power o play on the goalline? whats the football
+> answer?"
+
+**The football answer: on the goal line, the correct double team never peels.**
+
+Power O from jumbo personnel (2-3 TEs) against a 6-man front: playside blocks
+down, and the double is an ANGLE double — playside tackle + TE (or TE + wing)
+on the 4i/5-technique, leverage by alignment. The fullback kicks the edge man
+out, the crease is the body-width between the down-block and the kick-out, and
+the puller wraps to meet the filling backer IN the hole, inside-out, first
+wrong-coloured jersey. Nobody climbs; the backers are at two yards filling at
+the snap and the play is over in ~1.5 seconds. The double's entire job is
+vertical displacement and zero penetration — penetration at 1-yard depth kills
+the play more surely than any unblocked defender.
+
+(Refines the earlier "goal line = 0 spare blockers = useless" line: that was
+correct for the HUNT, in base personnel, counting the interior five. Goal-line
+doubles exist — they come from angles and extra TEs at the point of attack, not
+from an uncovered interior lineman.)
+
+### Two consequences for the design
+
+**1. R6c must EMERGE at the goal line, not be special-cased.** A goal-line play
+runs ~60-90 frames. Against R6b's ~30-frame floor plus the displacement
+precondition, the peel conditions are never satisfied inside the play — so the
+double naturally holds to the whistle. **This makes goal-line Power O the
+discriminating acceptance test for the predicate design: if the patch needs a
+goal-line special case to behave correctly, the predicate is wrong.**
+
+**2. Declaration-triggered peel (R6z1) is hazardous here, recorded as a
+constraint on R6z:** goal-line backers declare AT THE SNAP. A peel keyed on
+declaration alone splits every goal-line double instantly — the exact defect
+being fixed. Declaration may only ever fire as a trigger once the down lineman
+is secured; it can never be the primary predicate.
+
+### Measurement notes for a future goal-line savestate
+
+* `carrier_yards`-style thresholds are meaningless at this scale; acceptance is
+  crossing the plane and a penetration count of zero. Displacement is measured
+  in feet.
+* The plotters' field windows (Y 6..30) assume midfield; a goal-line state
+  needs the window moved or the picture is empty.
+* The puller's landmark logic (lead-blocker R1/R3) compresses naturally: "second
+  level" collapses to "first wrong jersey inside-out in the hole". R3's
+  prefer-second-level-else-nearest already produces that IF its range gate is
+  right — worth checking on a goal-line state when one exists.
+* No goal-line savestate exists. When one is recorded: jumbo personnel, Power O
+  or equivalent, inside the 2, against a goal-line front — and the operator
+  should expect the double to hold to the whistle as the PASS condition.
