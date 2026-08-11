@@ -17,27 +17,38 @@ frame.**
 
 ## The projection, and how it is proven
 
-The engine transforms world → view → projection → screen through a matrix it
-builds each frame and uploads to VU1. The tool needs that world-to-screen
-map `M`. Two ways to get it, in preference order:
+**Corrected 2026-08-11 after a strict review — the first draft of this
+section was mathematically wrong.** See "Review corrections" below.
 
-1. **Solve it from correspondences (self-validating).** We already know the
-   world position of all 22 players (read from memory, `player+0x190/194/198`)
-   and we can see where they render in the screenshot. Six or more
-   world↔screen pairs over-determine `M` (the classic camera DLT), and the
-   fit's **reprojection error in pixels is the proof** — a good `M` puts every
-   projected player on its own sprite.
-2. **Read `M` from memory.** Find where the render code stores the
-   view-projection matrix and read it directly. Cleaner if located; the search
-   is the RE cost.
+The tool needs a world-to-screen map. **It is a homography, not a full camera
+matrix.** Every player stands on the field at `z = 0` (verified: all 22 have
+z exactly 0.0 in the in-play dump), so the correspondences are **coplanar**,
+and a full 3×4 projective camera (the classic DLT) is **degenerate** on
+coplanar points — it cannot be recovered from them. What *can* be recovered,
+and all we need, is the 3×3 homography `H` mapping the ground plane to the
+image: 8 degrees of freedom, **4 correspondences minimum**, well-conditioned
+with 22. This makes the tool simpler than the first draft claimed, not harder.
 
-Either way, **validation is identical and non-negotiable:** project all 22
-known player positions and require they land on the rendered players. The two
-on-screen **name labels are measured anchors** — in the in-play frame the
-"JOHNSON" label sits under the QB and "PITTMAN" under the HB, giving two
-hand-measured screen points to check reprojection error against in pixels. The
-tool reports that error and refuses to paint a landmark if it exceeds a
-threshold: no proof, no overlay.
+* **Fit `H` from ground-plane correspondences.** World `(x, y)` on the field →
+  screen `(u, v)`. Fit on 4+ points, and the **reprojection error on the
+  points not used for the fit is the proof.**
+* **Alternative: read the matrix from memory** if the view-projection matrix
+  can be located. Would also give the airborne case (below). Not required.
+
+**Validation is non-negotiable:** fit on a subset, reproject the rest, report
+error in pixels, and refuse to paint if it exceeds a threshold. No proof, no
+overlay.
+
+**Getting the screen-side of the correspondences costs manual work**, which
+the first draft glossed: memory gives world positions, but where each player
+*renders* has to come from hand-annotating the screenshot once per camera
+setup (or sprite detection). The on-screen selected-player label helps —
+see the corrections below — but it is one point, not a free set.
+
+**Limitation this creates:** a ground-plane homography can only place points
+**on the ground**. That covers landmarks, routes and zones — everything this
+tool is for — but *not* a ball in flight or a jumping player. Painting
+anything airborne needs the full camera matrix from memory.
 
 ## Milestones
 
@@ -46,12 +57,25 @@ threshold: no proof, no overlay.
   (`world.py`, the savestate reader).
 * **M2 — the projection, proven.** Recover `M`, validate by reprojecting the
   22 players, report anchor error in pixels. This is the crux and the RE work.
-* **M3 — the landmark's world coordinates.** Read the lead blocker's authored
-  landmark from the play record (state-47 enter reads `record+1/+3` as a point
-  or `record+2` as a bearing into the fields near `+0x164`). **This is open
-  question O2 from `lead-blocker-requirements.md` — so building this tool
-  resolves O2 as a byproduct**, which is why the landmark work "deserves its
-  own tool" was the right call.
+* **M3 — the landmark's world coordinates. Bigger than the first draft
+  assumed.** State-47's enter (`0x001B66A8`) decodes the play record into
+  three fields, now read precisely off the disassembly:
+    * `record+2` → 24-bit BAM bearing → **`self+0x164`**;
+    * and *only when that bearing is zero*, `record+1` → **`self+0x158`** as
+      `(v>>3) + (v&7)·(1/7)`, and `record+3` → **`self+0x15C`** as `v·(1/255)`.
+
+  So "the point lands near `+0x164`" (first draft) is wrong: `+0x164` is the
+  *bearing*; the other two fields are `+0x158`/`+0x15C`.
+
+  **And they may not be an x/y point at all.** The scale factors argue
+  against it: `1/255` is a *normalisation* to 0..1, not a yard coordinate,
+  and the decoded `+0x158` value is immediately passed as `f12` to
+  `0x004ADC40` — the same routine the cone code calls with an *angle*. A
+  bearing/‌distance or angle/‌fraction pair fits the evidence better than
+  "x and y in yards". **This is unresolved, and it is the real content of
+  O2.** The tool must not paint a landmark until the representation is
+  settled, or it will paint a confident dot in the wrong place — the exact
+  failure this design exists to prevent.
 * **M4 — overlay.** Draw on the screenshot: each player (proof markers), the
   landmark (the headline), optionally the blocker→landmark vector and his
   facing cone. Output an annotated PNG.
@@ -75,8 +99,45 @@ threshold: no proof, no overlay.
   that paints a plausible-but-wrong dot is the exact failure mode this project
   exists to avoid; the error report is the guard.
 
+## Review corrections (2026-08-11, strict pass)
+
+What a hostile read of the first draft found, all verified against the binary
+or the data:
+
+1. **DLT on coplanar points — a real mathematical error.** All 22 players sit
+   at `z = 0`, so a full 3×4 camera cannot be solved from them. Corrected to a
+   ground-plane homography, which needs 4 points instead of 6 and is better
+   conditioned. Caught before any code was written.
+2. **"Two name-label anchors in one frame" — false.** The blue disc + name is
+   the *selected/ball-carrier* marker, and there is **one per frame**. The
+   "JOHNSON" and "PITTMAN" labels cited came from **two different
+   screenshots** (the pre-snap frame and the mid-play frame), not one. So a
+   frame yields **one** hand-measurable anchor, and using it also requires
+   knowing *which* player is selected.
+3. **Landmark fields were imprecise and the interpretation is unproven** —
+   `+0x158`/`+0x15C`, not "near `+0x164`", and probably not an x/y point.
+   See M3.
+4. **The VU1 claim was unverified.** The first draft asserted the engine
+   "builds a matrix each frame and uploads it to VU1" as fact. That is typical
+   PS2 architecture but **was never checked for this game**, and nothing in
+   this design depends on it. Removed rather than left as decoration.
+
+What survived the review:
+
+* **1 field unit = 1 yard — solid.** Independently confirmed: the hash-mark
+  constant in `zone-bunching.md` is ±3.0799999, and real NFL hashes are
+  18′6″ apart = ±3.083 yd from centre. Agreement to 0.003 yd.
+* **The 22 world positions read cleanly** and are internally consistent with
+  the formation in the screenshot.
+* **The 60° cone is a half-angle** (±60°, 120° total): `0x00469FC8` computes
+  `min(diff, 360−diff)`, a true absolute angular difference, tested `< 60°`.
+  So `lead-blocker-requirements.md`'s R2 reasoning — a man directly behind is
+  already excluded, and the cone is generous at the sides — is correct.
+
 ## Status
 
-Design only. M2 (the camera projection) is the crux and the first real work,
-and it is doable offline against the in-play dump. M3 doubles as O2. No overlay
-is trusted until the reprojection proof passes.
+Design only, now corrected. **M3/O2 is the blocker, not M2:** the camera
+homography is a well-understood fit against data already in hand, whereas the
+landmark's *representation* is genuinely unknown and must be settled before
+anything is painted. Sequence: resolve what `+0x158`/`+0x15C` mean, then M2,
+then paint. No overlay is trusted until the reprojection proof passes.
