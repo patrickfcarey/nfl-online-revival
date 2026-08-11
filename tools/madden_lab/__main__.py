@@ -21,6 +21,7 @@ import sys
 from typing import Any, List, Optional, Tuple
 
 from . import EXPECTED_CRC
+from . import analyze
 from .results import JsonlSink, MemorySink, append_answer, pending_asks
 from .runner import PreflightError, Runner, make_provenance
 
@@ -476,6 +477,11 @@ def build_parser() -> argparse.ArgumentParser:
     determinism.add_argument("--out", help="also write the sample rows here")
     determinism.add_argument("--write", action="store_true")
     determinism.set_defaults(func=cmd_verify_determinism, pad=True)
+
+    # `summarize`, `timeline`, `agree` and `slice`. They read one result file
+    # and need no emulator, which is why they register here alongside
+    # `compare` rather than behind the layer-1 bring-up.
+    analyze.add_parsers(subs)
 
     compare = subs.add_parser("compare", help="two result sets in, a verdict out")
     compare.add_argument("baseline")

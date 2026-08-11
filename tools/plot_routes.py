@@ -14,7 +14,12 @@ from PIL import Image, ImageDraw, ImageFont
 SRC = sys.argv[1] if len(sys.argv) > 1 else "base2.jsonl"
 OUT = sys.argv[2] if len(sys.argv) > 2 else "routes.png"
 WHO = sys.argv[3] if len(sys.argv) > 3 else "player:0:9"
-LOS = 14.17
+# The engine's own line of scrimmage, [0x00601F4C]+0x10, verified 15.000 in
+# both dumps. This was 14.17 -- derived from the centre's body position -- and
+# every commit-depth caption this tool printed was ~0.78 yd too deep, the same
+# bias already fixed in lead_blocker._los. A result file that carries a `los`
+# sample overrides this; the constant is only the fallback for older files.
+LOS = 15.000
 
 def font(sz, b=False):
     try:
@@ -24,12 +29,15 @@ def font(sz, b=False):
         return ImageFont.load_default()
 
 routes, commits = collections.defaultdict(list), {}
+los_seen = None
 for line in open(SRC):
     if '"sample"' not in line:
         continue
     r = json.loads(line)
     if r.get("entity") != WHO:
         continue
+    if r.get("entity") == "game" and r.get("field") == "los" and r.get("value"):
+        los_seen = float(r["value"])          # prefer the engine's own value
     if r["field"] == "xyz":
         routes[r["iteration"]].append((r["tick"], r["value"]))
     elif r["field"] == "engagement" and r["value"] >= 2:
@@ -38,6 +46,8 @@ for line in open(SRC):
 for k in routes:
     routes[k].sort()
 
+if los_seen is not None:
+    LOS = los_seen
 W, H = 1400, 1100
 X0, X1, Y0, Y1 = -20., 20., 6., 30.
 sx = lambda x: (x - X0) / (X1 - X0) * W

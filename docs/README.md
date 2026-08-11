@@ -71,6 +71,7 @@ New to the repo? Read in this order:
 | `fact-check-2026-08.md` | **read before patching** — eight verification passes over every doc here; what survived and what did not |
 | `lead-blocker-requirements.md` | the agreed requirements + acceptance tests for the lead-blocker fix, before any patch |
 | `field-overlay-tool.md` | design: paint proven world points (landmarks, routes) onto a game screenshot for visual review |
+| `analysis-tool.md` | design: reading a 1.5 GB harness result file — per-metric summaries, field episodes, tick-aligned agreement, slicing |
 | `human-readable.md` | every gameplay finding in plain English, for readers who do not read disassembly |
 
 **Forward work**:

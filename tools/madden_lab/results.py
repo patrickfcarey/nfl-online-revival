@@ -47,7 +47,7 @@ import subprocess
 import time
 import uuid
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 KIND_RUN = "run"
 KIND_ITERATION = "iteration"
@@ -137,6 +137,12 @@ def _open_read(path: str):
     return io.open(path, "rt", encoding="utf-8")
 
 
+#: The public name. `slice` and any other tool that emits a derived result file
+#: must write it through the same opener, or a `.gz` output silently becomes a
+#: plain file with a misleading extension.
+open_write = _open_write
+
+
 class JsonlSink:
     """Writes rows. Flushes on iteration boundaries, not on every row.
 
@@ -217,33 +223,79 @@ def _jsonable(value: Any) -> Any:
     return str(value)
 
 
-def read_rows(path: str) -> Iterator[Dict[str, Any]]:
-    """Stream rows. A malformed line is reported with its number, not swallowed.
+def read_lines(path: str) -> Iterator[Tuple[int, str, bool]]:
+    """`(line_no, text, is_last)` for every non-blank line, one line at a time.
 
-    Truncation is expected -- a killed run leaves a partial last line -- so a
-    bad *final* line is tolerated silently while a bad line anywhere else
-    raises. Anything else either hides real corruption or makes every
-    interrupted run unreadable.
+    Split out of `read_rows` so a caller can decide *before paying for
+    `json.loads`* whether a line is worth parsing. At 4 million rows the parse
+    is 25 seconds and the read is one, so a tool that filters on a substring
+    first (see `kind_needle`) is an order of magnitude faster than one that
+    cannot.
+
+    `is_last` is the only reason this needs a one-line lookahead: a killed run
+    leaves a partial final line, and that one line -- and no other -- is
+    allowed to be unparseable. The flag is carried out to the caller rather
+    than acted on here, because the caller is the one that knows whether it
+    skipped that line for its own reasons.
     """
     with _open_read(path) as handle:
         pending: Optional[str] = None
         pending_no = 0
         for line_no, line in enumerate(handle, 1):
             if pending is not None:
-                yield _parse_row(pending, pending_no, path)
+                yield pending_no, pending, False
             stripped = line.strip()
             if not stripped:
                 pending = None
                 continue
             pending, pending_no = stripped, line_no
         if pending is not None:
-            try:
-                yield _parse_row(pending, pending_no, path)
-            except ValueError:
-                pass  # truncated tail of a killed run
+            yield pending_no, pending, True
 
 
-def _parse_row(line: str, line_no: int, path: str) -> Dict[str, Any]:
+def kind_needle(kind: str) -> str:
+    """The exact substring a row of `kind` contains, and no other row does.
+
+    Sound rather than heuristic, and the reason is JSON escaping: a quote
+    inside a string *value* is written `\\"`, so the seven characters
+    `"kind":` followed by a quoted token cannot occur inside any value the
+    sink ever writes. The rows are emitted with `separators=(",", ":")`, which
+    is what removes the space that would otherwise make this fragile.
+
+    Used to skip the 99.9% of a result file that is sample rows without
+    parsing them. Only ever used to *reject* -- survivors are still parsed and
+    checked properly -- so an over-match costs time, never correctness.
+    """
+    return '"kind":' + json.dumps(kind)
+
+
+def read_rows(path: str, kinds: Optional[Sequence[str]] = None
+              ) -> Iterator[Dict[str, Any]]:
+    """Stream rows. A malformed line is reported with its number, not swallowed.
+
+    Truncation is expected -- a killed run leaves a partial last line -- so a
+    bad *final* line is tolerated silently while a bad line anywhere else
+    raises. Anything else either hides real corruption or makes every
+    interrupted run unreadable.
+
+    `kinds` restricts to those row kinds and skips the rest without parsing.
+    It is an optimisation with no semantic effect: the same rows come out as
+    filtering the full stream would give, only faster.
+    """
+    needles = tuple(kind_needle(kind) for kind in kinds) if kinds else ()
+    for line_no, text, is_last in read_lines(path):
+        if needles and not any(needle in text for needle in needles):
+            continue
+        try:
+            row = parse_row(text, line_no, path)
+        except ValueError:
+            if is_last:
+                return  # truncated tail of a killed run
+            raise
+        yield row
+
+
+def parse_row(line: str, line_no: int, path: str) -> Dict[str, Any]:
     try:
         row = json.loads(line)
     except ValueError as exc:
@@ -251,6 +303,11 @@ def _parse_row(line: str, line_no: int, path: str) -> Dict[str, Any]:
     if not isinstance(row, dict):
         raise ValueError("%s:%d is not a row object" % (path, line_no))
     return row
+
+
+#: Kept so an older caller (or a test) that reached for the private name still
+#: works; the function is public now because the analysis tools need it.
+_parse_row = parse_row
 
 
 @dataclass
@@ -265,6 +322,10 @@ class RunFile:
     answers: List[Dict[str, Any]]
     samples: int
     events: List[Dict[str, Any]]
+    #: Sample rows whose batch could not be certified to lie within one game
+    #: tick. Counted rather than parsed, and defaulted so an older caller that
+    #: builds a RunFile positionally still works.
+    uncertified: int = 0
 
     @property
     def arm(self) -> str:
@@ -299,6 +360,12 @@ class RunFile:
                 if row.get("digest") and row.get("status") == "ok"]
 
 
+#: Everything except `sample`. The list a summary or a comparison wants, and
+#: the reason `load_run` no longer spends 25 seconds parsing rows it discards.
+NON_SAMPLE_KINDS = (KIND_RUN, KIND_ITERATION, KIND_METRIC,
+                    KIND_ASK, KIND_ANSWER, KIND_EVENT)
+
+
 def load_run(path: str) -> RunFile:
     """Read a whole result file into memory, keeping only what analysis needs.
 
@@ -306,6 +373,11 @@ def load_run(path: str) -> RunFile:
     and gigabytes of them, and every question `compare` asks is answered by the
     metric rows the runner already reduced. A tool that needs the raw frames
     should stream `read_rows` itself.
+
+    Counted by substring rather than by parsing them and throwing them away,
+    which is the difference between 25 seconds and 2 on a 1.5 GB run. The
+    count is still exact -- see `kind_needle` for why the substring cannot
+    appear anywhere but a real sample row's kind.
     """
     header: Dict[str, Any] = {}
     iterations: List[Dict[str, Any]] = []
@@ -314,7 +386,23 @@ def load_run(path: str) -> RunFile:
     answers: List[Dict[str, Any]] = []
     events: List[Dict[str, Any]] = []
     samples = 0
-    for row in read_rows(path):
+    uncertified = 0
+    sample_needle = kind_needle(KIND_SAMPLE)
+    wanted = tuple(kind_needle(kind) for kind in NON_SAMPLE_KINDS)
+    for line_no, text, is_last in read_lines(path):
+        if sample_needle in text:
+            samples += 1
+            if '"certified":false' in text:
+                uncertified += 1
+            continue
+        if not any(needle in text for needle in wanted):
+            continue
+        try:
+            row = parse_row(text, line_no, path)
+        except ValueError:
+            if is_last:
+                break  # truncated tail of a run still being written
+            raise
         kind = row.get("kind")
         if kind == KIND_RUN and not header:
             header = row
@@ -328,8 +416,6 @@ def load_run(path: str) -> RunFile:
             answers.append(row)
         elif kind == KIND_EVENT:
             events.append(row)
-        elif kind == KIND_SAMPLE:
-            samples += 1
     if not header:
         # Concatenated or hand-edited files may have lost the header. Recover
         # what provenance we can from the first row rather than refusing.
@@ -338,7 +424,8 @@ def load_run(path: str) -> RunFile:
                       ("run_id", "spec", "spec_digest", "state", "git_rev", "arm")}
             break
     return RunFile(path=path, header=header, iterations=iterations, metrics=metrics,
-                   asks=asks, answers=answers, samples=samples, events=events)
+                   asks=asks, answers=answers, samples=samples, events=events,
+                   uncertified=uncertified)
 
 
 def append_answer(path: str, ask_id: str, iteration: int, value: str,

@@ -55,6 +55,9 @@ except ImportError:  # pragma: no cover - the package constant is shared with
     # if the shared module is mid-edit.
     EXPECTED_CRC = 0x14F8B841
 
+from .align import (PHASE_WINDOW, SUBTICK_CEIL, FieldAgreement,  # noqa: F401
+                    TickIndex, agreement, as_axes, is_continuous, tick_index,
+                    verdict)
 from .results import (KIND_ASK, KIND_EVENT, KIND_ITERATION, KIND_METRIC,
                       KIND_RUN, KIND_SAMPLE, Provenance, git_revision,
                       new_run_id)
@@ -518,39 +521,6 @@ class Divergence:
 
 
 @dataclass
-class FieldAgreement:
-    """Per-field verdict of a tick-aligned determinism comparison."""
-
-    def __init__(self, field: str) -> None:
-        self.field = field
-        self.agree = 0
-        self.phase = 0                 # bitwise-equal to an adjacent tick
-        self.subtick = 0               # continuous: explained by read phase
-        self.real = 0                  # explained by nothing
-        self.max_delta = 0.0           # continuous only: worst |difference|
-        self.examples: List[str] = []
-
-    @property
-    def compared(self) -> int:
-        return self.agree + self.phase + self.subtick + self.real
-
-    def describe(self) -> str:
-        total = self.compared
-        pct = 100.0 * self.agree / total if total else 0.0
-        line = "  %-18s %6d compared  %6.2f%% identical" % (self.field, total, pct)
-        extras = []
-        if self.phase:
-            extras.append("%d phase" % self.phase)
-        if self.subtick:
-            extras.append("%d sub-tick (max %.3f)" % (self.subtick, self.max_delta))
-        if self.real:
-            extras.append("%d REAL" % self.real)
-        if extras:
-            line += "  (" + ", ".join(extras) + ")"
-        return line
-
-
-@dataclass
 class DeterminismReport:
     trial: str
     repeats: int
@@ -566,27 +536,14 @@ class DeterminismReport:
     def verdict(self) -> str:
         """The three-way answer the ordinal comparison could not give.
 
-        The first run of this command compared sample #N to sample #N, which
-        compares different moments of a football play whenever the sampling
-        start wobbles, and called a bitwise-reproducible engine DIVERGENT.
-        Aligned on the game's own clock the same data was 100% identical on
-        discrete fields with every disagreement bitwise-equal to an adjacent
-        tick -- sampling phase, an artifact of reading without a pause. So
-        phase noise gets its own verdict rather than being allowed to
-        masquerade as engine behaviour.
+        Delegated to `align.verdict` so the offline `agree` command reaches
+        the same conclusion from the same evidence; only the "no fields to
+        align on" case is decided here, because only a live run knows whether
+        the streams were byte-identical.
         """
         if not self.fields:
             return "REPRODUCIBLE" if self.identical else "UNDECIDABLE"
-        if any(f.real for f in self.fields):
-            return "DIVERGENT"
-        subtick = max((f.max_delta for f in self.fields if f.subtick),
-                      default=0.0)
-        if subtick:
-            return ("DETERMINISTIC (discrete exact; continuous within "
-                    "%.3f read noise)" % subtick)
-        if any(f.phase for f in self.fields):
-            return "DETERMINISTIC (phase noise only)"
-        return "DETERMINISTIC"
+        return verdict(self.fields)
 
     def describe(self) -> str:
         lines = ["trial %s, %d repeats%s" % (
@@ -1401,124 +1358,31 @@ class Runner:
                                  uncertified=uncertified)
 
 
-#: How far, in ticks, a disagreeing value may sit from a bitwise match in the
-#: other run and still be called sampling phase. Two, because the poll loop
-#: can drop a tick and land the equivalent read two frames along. Anything
-#: further has no instrument explanation and is charged to the engine.
-PHASE_WINDOW = 2
-
-#: The largest positional difference sub-tick read phase can plausibly
-#: produce, in field units. Measured, not guessed: across 540 certified ticks
-#: of a live no-input replay, every positional disagreement fell in one of
-#: three signatures of the same cause -- on the other run's inter-tick
-#: movement segment (a smooth mover read mid-stride), inside its local wobble
-#: envelope, or in a disjoint narrow band of an engaged lineman's contact
-#: oscillation (each run's reads phase-locked to its own part of the wobble)
-#: -- and the worst of them measured 0.13. Read phase is bounded by roughly
-#: one frame of movement; a genuine behavioural divergence is not bounded at
-#: all, because it compounds frame over frame into yards and flips discrete
-#: fields on its way. 0.5 splits the regimes with margin on both sides, and
-#: the discrete fields' strict verdict stands guard over the gap: 180 ticks
-#: of this noise never moved one of them.
-SUBTICK_CEIL = 0.5
-
-
-def _is_continuous(value: Any) -> bool:
-    if isinstance(value, float):
-        return True
-    return (isinstance(value, (tuple, list)) and bool(value)
-            and all(isinstance(v, float) for v in value))
-
-
-def _as_axes(value: Any) -> Tuple[float, ...]:
-    return tuple(value) if isinstance(value, (tuple, list)) else (float(value),)
+#: `_is_continuous` and `_as_axes` moved to `align.py` with the classifier they
+#: serve, and are re-exported above under their public names. These aliases are
+#: kept because the names appear in the harness's own history and in review
+#: notes, and a NameError is a worse answer than an indirection.
+_is_continuous = is_continuous
+_as_axes = as_axes
 
 
 def _tick_aligned_agreement(results: Sequence[IterationResult]
                             ) -> Tuple[List[FieldAgreement], int, int]:
     """Compare iterations on the game's clock, not on sample ordinals.
 
-    This function is the forensics that acquitted the engine, promoted into
-    the tool. The first determinism run compared sample #0 to sample #0 --
-    tick 74 of one play against tick 179 of another -- and reported DIVERGENT.
-    Joined on the tick instead, all 23 discrete disagreements in that capture
-    were bitwise-equal to the other run one or two ticks earlier (transitions
-    caught on opposite sides of a read), and 779 of 925 position disagreements
-    were bitwise-equal at an adjacent tick. A verdict that cannot tell that
-    pattern from real divergence calls every experiment on this transport
-    divergent, forever.
-
-    Uncertified samples (the clock moved mid-batch) are counted and excluded:
-    a torn sample is the instrument's fault and proves nothing either way.
+    The comparison itself lives in `align.agreement`, because the analysis
+    tool has to run it against a JSONL file recorded elsewhere and cannot
+    build the `IterationResult` list this signature takes. All that is left
+    here is the adaptation: in-memory `Samples` to the tick index both callers
+    speak. See `align.py` for what the classification is defending against.
     """
-    per_iter: List[Dict[int, Dict[Tuple[str, str], Any]]] = []
+    per_iter: List[TickIndex] = []
     uncertified = 0
     for result in results:
-        ticks: Dict[int, Dict[Tuple[str, str], Any]] = {}
-        for frame in (result.samples or []):
-            if frame.tick is None:
-                continue
-            if not frame.certified:
-                uncertified += 1
-                continue
-            ticks[frame.tick] = frame.values     # last certified read wins
+        ticks, torn = tick_index(result.samples or [])
         per_iter.append(ticks)
-    if not per_iter or not all(per_iter):
-        return [], 0, uncertified
-
-    common = set(per_iter[0])
-    for ticks in per_iter[1:]:
-        common &= set(ticks)
-    fields: Dict[str, FieldAgreement] = {}
-
-    def neighbours(ticks: Dict[int, Dict], tick: int, key: Tuple[str, str]):
-        for delta in range(-PHASE_WINDOW, PHASE_WINDOW + 1):
-            if delta == 0:
-                continue
-            row = ticks.get(tick + delta)
-            if row is not None and key in row:
-                yield row[key]
-
-    baseline = per_iter[0]
-    for tick in sorted(common):
-        row_a = baseline[tick]
-        for other in per_iter[1:]:
-            row_b = other[tick]
-            for key in row_a.keys() & row_b.keys():
-                name = key[1]
-                agg = fields.setdefault(name, FieldAgreement(name))
-                va, vb = row_a[key], row_b[key]
-                if va == vb:
-                    agg.agree += 1
-                elif (any(vb == n for n in neighbours(baseline, tick, key))
-                      and any(va == n for n in neighbours(other, tick, key))):
-                    # Both directions must be explained by a shift. One-way
-                    # matching is not enough: a genuinely wrong value in run B
-                    # would still count as phase whenever run A's value merely
-                    # persists into B's neighbourhood -- which, for a discrete
-                    # field that rarely changes, is always.
-                    agg.phase += 1
-                elif _is_continuous(va) and _is_continuous(vb):
-                    delta = max(abs(p - q) for p, q in
-                                zip(_as_axes(va), _as_axes(vb)))
-                    if delta <= SUBTICK_CEIL:
-                        agg.subtick += 1
-                        agg.max_delta = max(agg.max_delta, delta)
-                    else:
-                        agg.real += 1
-                        if len(agg.examples) < 4:
-                            agg.examples.append(
-                                "tick %d %s.%s: %r != %r (delta %.3f exceeds "
-                                "sub-tick read noise)"
-                                % (tick, key[0], name, va, vb, delta))
-                else:
-                    agg.real += 1
-                    if len(agg.examples) < 4:
-                        agg.examples.append(
-                            "tick %d %s.%s: %r != %r (no bitwise match within "
-                            "%d ticks either side)"
-                            % (tick, key[0], name, va, vb, PHASE_WINDOW))
-    return ([fields[k] for k in sorted(fields)], len(common), uncertified)
+        uncertified += torn
+    return agreement(per_iter, uncertified)
 
 
 def _first_divergence(a: IterationResult, b: IterationResult) -> Optional[Divergence]:
