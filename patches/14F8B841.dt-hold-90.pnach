@@ -1,53 +1,39 @@
 gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
-comment=DT-HOLD-90 v2 -- BOTH halves of the double-team hold extended to ~90 ticks.
+comment=DT-HOLD-90 v3 -- ONE word: the helper's kind-8 attachment holds 76-89 ticks.
 
 // ---------------------------------------------------------------------------
-// R6a. TWO words, one per timer initialiser, because the pairing dies when
-// EITHER side's timer expires and v1 of this patch extended only one of them.
+// R6a. v3 after the five-lane hostile review (docs/dt-hold-90-review/).
 //
-// The aggressive re-review of v1 (double-team-mechanism.md, Site B section)
-// found the deployed single word did NOT extend the pairing: Site B stamps
-// p3 -- the PRIMARY blocker, gated `bne v1, 4` on HIS kind -- while the
-// HELPER's own kind-8 timer comes from Site A's kind-7/8 band copy. With only
-// Site B patched, the helper still detached at 15-30 ticks and the double
-// team still died by ~frame 43. The binding constraint was the unpatched word.
+//   201ef918  2403001e -> 2403005a   addiu v1, zero, 30 -> 90
 //
-//   Site A  0x001ef918  2403001e -> 2403005a   addiu v1, zero, 30 -> 90
-//           the re-decision's kind-7/8 band copy: initialises the timer when
-//           a player LOCKS IN to kind 8 (the helper's attachment). The 2-4
-//           band copy at 0x001ef8e8 is NOT touched: ordinary single blocks
-//           (kinds 3/4) keep 30 - rating/16. Kind 7's up-counter (limit 61)
-//           is initialised elsewhere and is not touched either -- review D5's
-//           self-defeat hazard checked on both words.
-//   Site B  0x001f2108  2414001e -> 2414005a   addiu s4, zero, 30 -> 90
-//           the double-team stamp: the PRIMARY's kind-4 contact timer while
-//           doubled. Register audit: s4 set once, consumed once (subu at
-//           0x001f222c), restored. Sole caller 0x001f733c.
+// Site A's kind-7/8 band copy. Lane 1 proved the band exact (only {7,8} reach
+// it; new kind unconditionally 8), the value flow clean, and the timer range
+// 76..89 ticks from measured ratings (+0xB86/+0xB88 = PPBK/PRBK, 38..229).
+// Kind 7 is NOT initialised elsewhere as v2 claimed -- the SAME store stamps
+// it, but with ZERO via the daddu-zero idiom at 0x001ef88c, so the up-counter
+// always starts at 0 and review-D5's self-defeat cannot occur.
 //
-// Both stamped kinds (8 and 4) are DOWN-counters with underflow exits
-// (0x001f5c4c-6c and 0x001f5c84-b4). Effect: both halves hold 90 - rating/16
-// = 75..90 ticks (~1.25-1.5 s) against the baseline 15..30.
+// v2's second word (201f2108, Site B) is REMOVED: lane 2 proved that stamp is
+// a 16-frame REFRESH (defender +0x42C := 16 gates re-stamping), so the
+// primary's kind-4 timer never underflows at 30 or 90 -- the word bought
+// nothing. The pairing is bound solely by the helper's kind-8 timer above.
 //
-// CORRECTED CLAIM from v1: "pass plays structurally unaffected" was FALSE.
-// DT-1 gates the dt REGISTRY, but engagement kind 8 occurs on pass plays --
-// measured on slot 7 (RG oscillating kinds 7<->8 for 130+ frames). Site A
-// fires there, so pass protection CAN move. Slot 7's pass_protection.py run
-// is a REQUIRED regression arm for this patch, not a freebie. Watch the
-// +0x432 reader at 0x001ca0e8 (`slti v0, v0, 61`): a 75-90 timer flips that
-// gate for its first ~29 ticks, a path baseline timers never took.
+// v2's 0x001ca0e8 slti-61 warning is WITHDRAWN: lanes 1 and 3 independently
+// proved that block is gated `bne v1, 3` -- kind-3 only, unreachable for
+// kinds 4/8. Lane 3's closed census (13 readers) found NO comparison that
+// 76-89 crosses and 15-30 does not.
 //
-// Bisect path if acceptance fails: comment out one line and rerun -- the two
-// sites are independently patchable by design.
+// Pass plays: on the measured 7<->8 oscillation the timer is re-stamped each
+// 7->8 and re-zeroed each 8->7, so the patch is INERT there (lane 3). Slot 7
+// regression run retained as confirmation.
 //
-// pnach `extended` width lives in the address's leading digit; 2 = 32-bit.
+// Encoding: 30->90 changes only the LOW BYTE (0x1E->0x5A, second byte 0x00 in
+// both), so even a width-misparse of `extended` produces the intended word.
 //
-// Acceptance vs slot 9 frozen-seed baseline:
-//   dt_last_hold_frame  43    -> materially later (target: past ~100)
-//   carrier_yards      -0.70  -> anything else
-//   operator: linemen STAYING on the double, a visible sustained drive
-// Regression: slot 7 pass_protection.py (required, see above); a single-block
-// run savestate when one exists.
+// Acceptance vs slot 9 frozen-seed baseline (operator pre-registered:
+// hold + outcome): dt_last_hold_frame 43 -> well past (~120+ if the helper
+// holds 76-89 from lock-in ~frame 27); carrier_yards -0.70 -> moves; operator
+// sees linemen STAYING on the double. R5 arm: slot 6 (dt_detect it first).
 // ---------------------------------------------------------------------------
 
 patch=1,EE,201ef918,extended,2403005a
-patch=1,EE,201f2108,extended,2414005a
