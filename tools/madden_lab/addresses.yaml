@@ -464,22 +464,39 @@ structs:
       contest_power:
         offset: 0x414
         type: f32
-        confidence: doc
-        source: pass-rush.md, pass-vs-run-blocking.md
+        confidence: code
+        source: pass-rush.md, pass-vs-run-blocking.md; offset re-derived from
+          the image 2026-08-11 (experiments/pass_protection.py)
+        note: >-
+          Offset confirmed against the binary, not taken from a doc. The pass
+          collapse-decay routine holds the contest block in a register biased
+          off the player base -- 0x001f0c74 `addiu s1, s5, 1028`, where s5 is
+          the blocker (a0) and 1028 is 0x404 -- and then reads and writes
+          `16(s1)`, which is base+0x414. Confirmed live: populated for all
+          seven blockers on the slot 7 pass state.
       contest_finesse:
         offset: 0x418
         type: f32
-        confidence: doc
-        source: pass-rush.md, pass-vs-run-blocking.md
+        confidence: code
+        source: pass-rush.md, pass-vs-run-blocking.md; offset re-derived from
+          the image 2026-08-11
+        note: >-
+          `20(s1)` in the same routine, same base bias. See contest_power.
       contest_overall:
         offset: 0x41C
         type: f32
-        confidence: doc
-        source: pass-vs-run-blocking.md
+        confidence: code
+        source: pass-vs-run-blocking.md; offset re-derived from the image
+          2026-08-11
         note: >-
           NOT a dead field. fact-check-2026-08.md Tier 1 item 3 refutes
-          pass-rush.md's "computed and never read" three times over. Read here,
-          never written.
+          pass-rush.md's "computed and never read" three times over.
+          CORRECTION 2026-08-11: this entry also used to say "read here, never
+          written", and that is wrong. It is `24(s1)` / `24(s2)` in the pass
+          collapse-decay routine and it is *stored back*: 0x001f1070
+          `swc1 f1, 24(s2)` writes the rusher's copy after raising it by a
+          random fraction. Observed changing during a live run
+          (`rusher_gain` in experiments/pass_protection.py).
       tug_power:
         offset: 0x420
         type: f32
