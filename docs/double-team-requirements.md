@@ -177,8 +177,46 @@ state machine drives — the block is plausibly a **once-per-entry** setup that
 runs on the frame the animation starts and never again. If so the man is not
 being held at zero; he is being *granted* speed once and never re-granted.
 
-Untested. `player+0x0C` has no entry in `addresses.yaml` and should get one
-before anything is patched.
+#### PROBED 2026-08-11 — the one-shot trigger is confirmed, and speed decays
+
+Sampled on slot 8, one player, every frame the poll loop could reach (182 of
+455). The transition is visible in a single frame step:
+
+```
+snapf  state  speed     flags+0x0C   eng  bit2
+ 275     33   0.0000    0x00040000    1    0
+ 276     33   0.4600    0x00040000    1    0
+ 304     33   0.7700    0x00040000    2    0
+ 386     62   0.5000    0x00040000    0    0
+ 388     62   0.0000    0x00040000    0    0
+ 442     62   0.0000    0x00040004    0    1     <- trigger armed
+ 443     62   0.1908    0x00040000    0    0     <- consumed, speed granted
+ 444     62   0.1660 ... 447  0.1380              <- and then it decays
+```
+
+**Bit 2 of `player+0x0C` is a one-shot trigger.** It is set, the block runs, the
+block clears it with the `0xFFFFFFFB` mask, and speed is non-zero on the very
+next sample. The "granted once, never re-granted" reading is confirmed as a
+mechanism, and the follow-on decay (0.1908 → 0.1380 over four frames) supplies
+the missing half: **a man is not held at zero, he is granted speed once and
+then decays to zero.** A statue is a man whose trigger has not fired recently.
+
+Three honest limits on this:
+
+* The transient was caught in **state 62**, not 32 — the mechanism is shared,
+  not state-32-specific. This run never entered state 32 at all, so it does not
+  confirm the same sequence there.
+* **0.46 is not state-32-specific either.** Player 10 was in **state 33** and
+  received exactly 0.4600 at frame 276. Whatever writes it is shared, so a
+  patch to `0x005fef3c` would move run blocking too.
+* An 11-player, 4-read-per-player loop sampled ~1 frame in 6 and **missed the
+  window entirely** on the first attempt. A one-frame transient is not
+  observable without cutting the per-frame read count; the useful run polls a
+  single player.
+
+`player+0x0C` still has no entry in `addresses.yaml`. It should get one — a
+per-player flag word whose bit 2 is a one-shot "grant speed on entry" trigger —
+before anything is patched against it.
 
 **Confirmed on the way past:** state 32 does own engagement kinds 5 and 6, and
 advances one to the other itself — `lw v1, 992(s0)` (+0x3E0), `bne v1, 5`,
