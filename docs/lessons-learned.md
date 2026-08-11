@@ -266,3 +266,45 @@ Lessons that generalise:
 3. **Play-file / ISO data reads** — the enabling step for the *data*
    fixes (pull-path depth, per-play targeting delay) and for closing the
    assignment-class → AI-state mapping.
+
+
+---
+
+## Scope-test every new requirement against the blast radius (2026-08-11)
+
+**The rule.** When a new requirement arrives mid-design, do not fold it into
+the change in flight. First ask **which code path the requirement's behaviour
+actually lives in**. If that is not the path the current change modifies, it
+is a *separate work item*: capture it with its acceptance test, mark it
+explicitly unscoped, and record why. Topical similarity is not scope.
+
+**The case that produced it.** While designing a state-47 (lead-blocker) patch,
+a requirement arrived: *"in zone blocking schemes they need to first take a big
+step to the left or right before even attempting to block."* It is a real,
+correct football requirement. It was still **out of scope**, because most
+zone-scheme linemen are not lead blockers — they run the ordinary run-block
+state (33), not state 47 — so the behaviour lives on a code path the patch does
+not touch. Folding it in would have widened the change across a second path and
+risked exactly the cross-scheme breakage the requirements doc exists to prevent.
+It was recorded as R8, unscoped, with the reason.
+
+**Why it is easy to get wrong.** The requirement was *about blocking* and the
+change was *about blocking*, so they feel like the same job. **Blast radius is
+about code paths, not topics.** The pull to accept a related-sounding
+requirement is strongest exactly when the requester is the domain expert and
+the requirement is obviously true — neither of which says anything about where
+the code lives.
+
+**The repeatable test — three questions, every time:**
+
+1. Which state / function / code path does this requirement's behaviour live in?
+2. Is that the same path the current change modifies?
+3. If no → capture it as its own item with its own acceptance test, mark it
+   unscoped, state the reason, and carry on. If unknown → it is an open
+   question that **gates** the design, not an assumption.
+
+**Its counterpart.** This is the design-time twin of the standing test rule
+(each patch verified individually before integration). One keeps unrelated
+behaviour out of a change; the other proves the change did not reach further
+than intended. A project needs both: scope discipline before the code, and
+isolation testing after it.
