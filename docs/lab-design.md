@@ -162,3 +162,56 @@ and always say which trial number the question refers to.
 * **Record the provenance of every row** — savestate, spec, iteration, git
   revision — or the numbers cannot be defended later.
 * **Read-only by default.** `--write` must be explicit.
+
+---
+
+## First measurement: is a trial reproducible? (2026-08-11)
+
+Three loads of one mid-play savestate, no input sent, 180 frames each.
+
+`verify-determinism` reported **DIVERGENT**, and that verdict is wrong — or
+rather, it answers a different question than the one asked. Its first
+difference was `frames_since_snap 74 != 179` at sample 0: the *sampling start
+point* varied, because the load confirmation only waits for the counter to be
+non-zero and the play is already several frames along by then. Comparing
+sample-ordinal to sample-ordinal therefore compares different moments of the
+play.
+
+Re-aligned on the game's own clock, the picture inverts:
+
+| field | agree | differ | identical |
+|---|---|---|---|
+| position | 4488 | 0 | 100% |
+| block_mode | 4483 | 5 | 99.89% |
+| ai_state | 4479 | 9 | 99.80% |
+| engagement | 4479 | 9 | 99.80% |
+| **xyz** | 3563 | **925** | **79.4%** |
+
+Largest positional difference: **0.266 units**.
+
+**The signature is read skew, not engine nondeterminism.** Layer 1 established
+that PINE reads take no lock against the EE thread, so a snapshot is not
+atomic: the clock is read, then the players, and the game advances in between.
+Positions change every frame and so expose that skew; discrete state changes
+rarely and so mostly agrees, with the ~0.2% that disagree being exactly what a
+±1-frame sampling error looks like at a transition.
+
+So the honest conclusions are:
+
+* **Discrete behaviour is reproducible to ~99.8%.** Experiments whose metrics
+  are engagement kinds, block modes or AI states need a handful of iterations,
+  not hundreds.
+* **Positions carry ~0.27 units of measurement noise** that is ours, not the
+  game's. Use them in aggregate — distances, medians, whether a gap opened —
+  never as a frame-by-frame equality.
+* **Determinism itself remains unproven either way**, and cannot be settled
+  with this instrument: proving it needs an atomic snapshot, which needs a
+  pause, which PINE does not have.
+
+Two harness defects follow, both worth fixing before the numbers are trusted:
+
+1. `verify-determinism` must align on the game clock before comparing, and
+   should report per-field agreement rather than one all-or-nothing verdict.
+   As written it will call every real experiment divergent.
+2. `LoadConfirm` should wait for a *specific* clock value, not merely
+   non-zero, so every iteration starts at the same point in the play.

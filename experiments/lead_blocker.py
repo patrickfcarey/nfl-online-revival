@@ -480,8 +480,8 @@ def build() -> Trial:
         # load (SEAM REQUEST 1). Both, or the result is either unreproducible
         # or unrunnable. The operator must have this file in slot 3 -- `doctor`
         # cannot check that, which is why load_confirm below exists.
-        state="SLUS-20752 (14F8B841).03.p2s  [run, lead-blocker ISO]",
-        state_slot=3,
+        state="SLUS-20752 (14F8B841).06.p2s  [pre-snap, scratch]",
+        state_slot=6,
         question=("Does the lead-blocking fullback ever enter the block-assignment "
                   "system, and are coverage defenders ever targeted?"),
         load_confirm=LoadConfirm(
