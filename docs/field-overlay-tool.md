@@ -55,8 +55,10 @@ anything airborne needs the full camera matrix from memory.
 * **M1 — inputs.** From a savestate: the embedded `Screenshot.png` and its
   resolution, and every player's world position. Most of this exists
   (`world.py`, the savestate reader).
-* **M2 — the projection, proven.** Recover `M`, validate by reprojecting the
-  22 players, report anchor error in pixels. This is the crux and the RE work.
+* **M2 — the projection, proven.** Fit the ground-plane homography `H`,
+  validate by reprojecting the players held out of the fit, report error in
+  pixels. Needs the screen-side annotation described above. Well-understood
+  maths against data already in hand — **not** the blocker; M3 is.
 * **M3 — the landmark's world coordinates. Bigger than the first draft
   assumed.** State-47's enter (`0x001B66A8`) decodes the play record into
   three fields, now read precisely off the disassembly:
