@@ -71,6 +71,7 @@ New to the repo? Read in this order:
 | `fact-check-2026-08.md` | **read before patching** — eight verification passes over every doc here; what survived and what did not |
 | `lead-blocker-requirements.md` | the agreed requirements + acceptance tests for the lead-blocker fix, before any patch |
 | `defender-catch-requirements.md` | corners drop balls that hit their hands — operator-observed, near-100% failure rate; Q1 answered (shared catch path, but two defender-only branches) |
+| `double-team-requirements.md` | make double teams real: 1.5x the primary, a helper that is not a statue, and a defender actually driven back |
 | `field-overlay-tool.md` | design: paint proven world points (landmarks, routes) onto a game screenshot for visual review |
 | `analysis-tool.md` | design: reading a 1.5 GB harness result file — per-metric summaries, field episodes, tick-aligned agreement, slicing |
 | `human-readable.md` | every gameplay finding in plain English, for readers who do not read disassembly |

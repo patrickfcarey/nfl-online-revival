@@ -736,6 +736,33 @@ class World:
         except Exception:
             return None
 
+    def spot_flags(self) -> Optional[int]:
+        """The spot object's 32-bit flag word, `[0x00601F4C] + 0x3C`.
+
+        Same base as `los`. The engine reads individual bits of this word
+        through a getter at `0x00260688` (`v0 = word >> n; v0 &= 1`) and sets
+        them through `0x002606a0`; between them they have ~900 call sites, so
+        this is a general per-play event/state register rather than anything
+        catch-specific.
+
+        Exposed because of one of those sites. At `0x0025545c`, inside the
+        ball-arrival resolver and behind a branch-likely that only a *defender*
+        falls through, the engine calls the getter with `n = 0` and abandons the
+        interaction with result 256 when the bit is clear. That makes bit 0 a
+        defender-only admission gate on ball interactions, and the operator
+        reports corners failing to catch balls that reach their hands at close
+        to a 100% rate.
+
+        **Bit 0's meaning is not established.** This accessor exists to find
+        out by watching the word rather than by reasoning about it --
+        `defender-catch-requirements.md` records it as a candidate, not a
+        cause.
+        """
+        spot = self.reader.read(0x00601F4C, 4)
+        if not 0x00100000 <= spot < 0x02000000:
+            return None
+        return self.reader.read(spot + 0x3C, 4)
+
     def carrier_y(self) -> Optional[float]:
         """The ball carrier's downfield (Y) position, or None.
 

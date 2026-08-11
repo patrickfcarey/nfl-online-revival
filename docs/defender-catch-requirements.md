@@ -221,10 +221,42 @@ happened" (256) if it is clear.** That is exactly the shape of defect the
 operator's near-100% failure rate points at, and it is defender-only, so
 changing it cannot alter a single receiver catch.
 
-**What bit 0 means is NOT established.** It is not yet known to be the cause,
-only to be a defender-only gate capable of producing the symptom. Reading it
-live during a pass — it is one word at `[0x00601F4C]+0x3C` — is the cheapest
-next step and needs no patch.
+### Bit 0 has exactly one writer, and it is a latch
+
+Read at **81** sites; set or cleared at **one** — `0x00253ba0`, inside the same
+ball region:
+
+```
+00253b74  jal 0x00260688          ; read bit 0
+00253b78  daddu a0, zero, zero
+00253b7c  bne v0, zero, 0x00253d84 ; ALREADY SET -> skip; this is a latch
+00253b84  lwc1 f1, -23284(gp)      ; 0x005ffbfc = 0.30
+00253b8c  add.s f0, f0, f1         ; [sp+36] + 0.30
+00253b90  c.lt.s f0, f2            ; < [sp+4] ?
+00253b98  bc1f 0x00253c8c          ; not less -> leave the bit clear
+00253ba0  jal 0x002606a0
+00253ba4  addiu a1, zero, 1        ; a1 = 1 -> SET bit 0
+```
+
+So bit 0 is a **once-per-play latch, set when a float clears a 0.30-yard
+margin** — and until it latches, the defender-only gate at `0x0025545c` refuses
+the interaction and returns 256.
+
+That is a coherent mechanism for the reported symptom: a defender whose hands
+meet the ball *before* the latch trips is refused outright, the ball stays in
+flight, and on screen it reads as a corner dropping a ball that hit his hands.
+
+**Still not proven to be the cause.** What the two stack floats measure is not
+established, so "before the latch" cannot yet be turned into "before the ball
+has travelled 0.3 yards past X". The scan that found the single writer also has
+a caveat worth carrying: an earlier version of it matched only
+`addiu a0, zero, K` and reported **zero** sites for bit 0, missing every
+`daddu a0, zero, zero` — the canonical zero idiom, and the form used at both
+the gate and the writer. Same false-negative class as the gp-relative misses.
+Re-derive before relying.
+
+Reading `[0x00601F4C]+0x3C` live during a pass is still the confirming step;
+`World.spot_flags()` now exposes it.
 
 > **Caution on the listing.** `recon/mipsdis.py` prints `SLLV`/`SRLV`/`SRAV`
 > with `rs` and `rt` swapped (`pass-vs-run-blocking.md`, standing disassembler
