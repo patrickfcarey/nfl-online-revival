@@ -220,9 +220,22 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         # in a footnote afterwards.
         checks.append(("emu.wait_until", callable(getattr(emu, "wait_until", None)),
                        "load confirmation; without it the runner polls itself"))
-        checks.append(("world.begin_frame", callable(getattr(world, "begin_frame", None)),
-                       "batched snapshot; without it a frame is ~88 round trips "
-                       "and can tear (SEAM REQUEST 8)"))
+        # SEAM REQUEST 8. This probed `world.begin_frame` for a while, a name
+        # from an earlier draft that was never built -- so it reported the
+        # capability missing while the runner was happily using it. Probe what
+        # layer 3 actually exposes: a reader that batches, and a player
+        # snapshot that takes a field list.
+        player_type = getattr(world, "Player", None) or globals().get("Player")
+        batched = callable(getattr(getattr(world, "reader", None), "read_many", None))
+        snapshot = callable(getattr(player_type, "snapshot", None)) if player_type else None
+        if snapshot is None:                       # no class handle; ask an instance
+            players = getattr(world, "players", None)
+            found = players() if callable(players) else []
+            snapshot = callable(getattr(found[0], "snapshot", None)) if found else False
+        checks.append(("batched snapshot", bool(batched and snapshot),
+                       "one round trip per frame via Player.snapshot(fields); "
+                       "without it a frame is ~88 round trips and can tear "
+                       "(SEAM REQUEST 8)"))
         checks.append(("emu writable", True,
                        "yes -- setup writes permitted" if getattr(emu, "writable", False)
                        else "no (read-only; pass --write on `trial` to opt in)"))
