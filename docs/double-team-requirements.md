@@ -297,3 +297,51 @@ word than by inferring it forever.
 * **No metric-only wins.** A patch that moves the numbers while the animation
   still looks like two action figures has not met "EXACTLY like a real double
   team".
+
+## CORRECTION 2026-08-11 — the operator's eyes beat the metrics
+
+The slot 9 run reported `helper_speed` 0.435 against `primary_speed` 0.460 and
+`defender_pushback` 3.2-4.3 yd, and I read that as "R2 and R3 are close to
+satisfied already". **The operator, watching the screen, said he saw nothing of
+the kind** — only "a right guard briefly touch someone and then go to the second
+level", and asked to extend the duration.
+
+He is right. Measured from the same file, per-player double-team duration:
+
+| player | role | frames | window |
+|---|---|---|---|
+| RT (pos 9) | 0,1 | **17** | 2-36 |
+| TE (pos 4) | 0,1 | **30** | 2-43 |
+| **RG (pos 8)** | 0 | **13** | **27-43** |
+| DE (pos 10) | 2 (doubled) | 17 | 2-36 |
+| **LB (pos 13)** | 2 (doubled) | **13** | **27-43** |
+
+**Every double team on this play is finished by frame 43 of 308** — a fifth to
+half a second. The right guard pairs on a *linebacker* for 13 frames and
+releases, which is precisely what the operator described.
+
+**Why the metrics lied.** `helper_speed` and `defender_pushback` were computed
+over the whole play. The double team occupies 13-30 of 308 frames, so both
+numbers are dominated by what happens *after* it ends — pursuit drift and free
+running. `defender_pushback` in particular measured a defender flowing to the
+ball, not being driven. Both were flagged as needing episode-scoping and both
+were quoted anyway before that was done.
+
+**This is the same defect class as the pass-protection decay**, where a
+whole-play statistic saw nothing because the composites reset at every lock-in.
+The rule that keeps being relearned: **on this engine, any statistic not scoped
+to an engagement episode is measuring the wrong thing.**
+
+### R6 — A double team must persist (NEW, and now the primary requirement)
+
+*Acceptance:* the pairing holds for a target duration under contact rather than
+releasing on contact. Baseline is **13-30 frames**; the operator's ask is
+explicitly to extend it.
+
+This reorders the document. R1's 1.5x multiplier and R3's pushback are close to
+irrelevant against a block that lasts a fifth of a second — a stronger block
+that still releases at frame 43 changes nothing on screen. **Duration first.**
+
+`block-cycle.md`'s "14-30-frame rigid two-body translation" is now identified as
+describing this exact window. It was never a bug report; it is the design, and
+the design is the problem.
