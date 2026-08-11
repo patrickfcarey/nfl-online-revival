@@ -24,3 +24,6 @@ rosters/
 
 # Extracted game executables (not ours to redistribute)
 extract/
+
+# Deploy-time revision stamp: written by tools/deploy_lab.sh, never committed
+tools/madden_lab/REVISION

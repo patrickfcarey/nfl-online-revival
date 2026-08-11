@@ -98,7 +98,19 @@ def git_revision(repo: Optional[str] = None) -> str:
             ["git", "-C", repo, "rev-parse", "HEAD"],
             stderr=subprocess.DEVNULL).decode().strip()
     except Exception:
-        return "unknown"
+        # The measuring machine is usually a deployed copy, not a checkout --
+        # the emulator lives elsewhere and the harness is copied to it. Without
+        # this fallback every row taken on that machine says "unknown", which
+        # is precisely the provenance the runner exists to preserve. `deploy`
+        # writes REVISION next to this file; trust it, but mark it as stamped
+        # so it is never mistaken for a revision read from a live checkout.
+        stamped = os.path.join(os.path.dirname(os.path.abspath(__file__)), "REVISION")
+        try:
+            with open(stamped, "r") as handle:
+                value = handle.read().strip()
+            return value or "unknown"
+        except OSError:
+            return "unknown"
     try:
         dirty = subprocess.check_output(
             ["git", "-C", repo, "status", "--porcelain"],
