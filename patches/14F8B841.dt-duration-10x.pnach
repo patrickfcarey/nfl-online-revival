@@ -1,5 +1,5 @@
 gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
-comment=DT-DURATION-10x -- double-team hold 30 -> 300 frames. TEST PATCH, one word.
+comment=WITHDRAWN -- refuted 2026-08-11. 0x001f6b0c's 30 is a STATE ID, not a duration. Do not deploy. Superseded by 14F8B841.dt-hold-90.pnach.
 
 // ---------------------------------------------------------------------------
 // R6 (double-team persistence), candidate patch, UNVERIFIED.
@@ -37,4 +37,4 @@ comment=DT-DURATION-10x -- double-team hold 30 -> 300 frames. TEST PATCH, one wo
 // Regression surface: ordinary single-block line play must not change.
 // ---------------------------------------------------------------------------
 
-patch=1,EE,001f6b0c,extended,2402012c
+// WITHDRAWN: patch=1,EE,001f6b0c,extended,2402012c  (byte-wrote 44 over a state-id compare; see review-2026-08-11.md)

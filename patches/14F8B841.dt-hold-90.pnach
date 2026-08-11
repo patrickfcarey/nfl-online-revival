@@ -1,0 +1,54 @@
+gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
+comment=DT-HOLD-90 -- the attached double team holds ~90 ticks instead of ~15-30.
+
+// ---------------------------------------------------------------------------
+// R6a, first real patch. One word, gated to double teams BY CONSTRUCTION.
+//
+// The engagement timer +0x432 is initialised at TWO sites (double-team-
+// mechanism.md, reviewed in review-2026-08-11.md D5):
+//
+//   0x001efa34 -- general kind lock-in (kinds 3/4/7...): NOT TOUCHED.
+//   0x001f2230 -- the kind-8 partner stamp, fn 0x001f20f8 (sole caller
+//                 0x001f733c): timer := s4 - rating/16, s4 = 30 at 0x001f2108.
+//
+// The tick fn 0x001f5b60 runs the timer in OPPOSITE directions by kind:
+// kind 8 (double team attached) counts DOWN and breaks below zero; kind 7
+// (double-team approach) counts UP and breaks at 61. Raising the shared
+// formula everywhere would therefore make kind-7 expire on its first tick --
+// the reviewer's D5 finding, and why the "naive 30->90" was never shipped.
+// This patch raises ONLY the kind-8 site. Kind 7 keeps its own initialiser.
+//
+// Register audit of fn 0x001f20f8: s4 is saved, set to 30 (0x001f2108),
+// consumed exactly once (subu v0, s4, v0 at 0x001f222c), restored. No other
+// consumer, so the word changes exactly one quantity.
+//
+//   001f2108  2414001e  addiu s4, zero, 30
+//                    -> addiu s4, zero, 90    (0x5A)
+//
+// Effect: attached-phase timer = 90 - rating/16 = 75..90 ticks (~1.25-1.5 s)
+// against the baseline 30 - rating/16 = 15..30 -- the operator's "probably a
+// second". Ratings are the 0..255 effective scale (review D5).
+//
+// ADDRESS FORMAT LESSON, paid for once already: the pnach `extended` type
+// encodes write width in the address's LEADING DIGIT (0 = 8-bit, 1 = 16-bit,
+// 2 = 32-bit). The previous patch used a bare 001f6b0c and silently applied
+// as a byte. 201f2108 below is a 32-bit write.
+//
+// This file REPLACES 14F8B841.dt-duration-10x.pnach entirely. That patch was
+// refuted (0x001f6b0c's 30 is a STATE ID, not a duration -- review D-list)
+// and its byte-write corrupted a state comparison to 44 in the running
+// session; it must not be deployed again. A fresh boot restores 0x001f6b0c
+// from the ELF, so removal plus restart is the full revert.
+//
+// Acceptance against the slot 9 frozen-seed baseline:
+//   dt_last_hold_frame  43  -> materially later
+//   carrier_yards      -0.70 every run -> anything else (the outcome)
+//   operator's eyes: linemen staying ON the double, a visible drive
+// Regression: single-block savestate unchanged (kinds 3/4 use the untouched
+// initialiser); pass plays structurally unaffected (DT-1: no doubles exist
+// there). Known metric caveat: the duration metrics lack contiguity (review
+// D1), so dt_last_hold_frame and carrier_yards are the honest judges until
+// the metric rework lands.
+// ---------------------------------------------------------------------------
+
+patch=1,EE,201f2108,extended,2414005a
