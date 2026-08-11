@@ -504,6 +504,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _progress(*args, **kwargs):
+    """print(), but flushed.
+
+    A 200-iteration run redirected to a file showed no progress for an hour:
+    Python block-buffers stdout when it is not a tty, so the runner's
+    per-iteration lines sat in a 4 KB buffer while the work streamed into the
+    JSONL. An unattended run must be observable, so every progress line is
+    flushed as it is written.
+    """
+    kwargs.setdefault("flush", True)
+    print(*args, **kwargs)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
