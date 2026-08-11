@@ -207,9 +207,17 @@ UINPUT_PATH = "/dev/uinput"
 #: squat on a real vendor's range. Deliberately not a Sony id: claiming to be
 #: a DualShock would invite SDL to apply a mapping written for a different
 #: axis layout, and a wrong mapping is harder to diagnose than no mapping.
-DEFAULT_VENDOR = 0x1209
-DEFAULT_PRODUCT = 0x2004
-DEFAULT_VERSION = 0x0001
+# Microsoft Xbox 360 pad. Deliberate impersonation, and the reason matters:
+# SDL only assigns an `SDL-N` gamepad index to devices its controller database
+# recognises by vendor/product. Advertising an unregistered id (this was
+# 0x1209/0x2004, the generic "prototype" pair) leaves the device visible as a
+# *joystick* and absent from the gamepad list -- so an emulator binding of
+# `SDL-0/FaceSouth` silently resolves to whatever real pad is plugged in, and
+# every synthetic press goes to a device nobody reads. That failure looks
+# exactly like a dead binding and cost an evening.
+DEFAULT_VENDOR = 0x045E
+DEFAULT_PRODUCT = 0x028E
+DEFAULT_VERSION = 0x0114
 DEFAULT_NAME = "madden-lab virtual pad"
 
 #: PS2 analogue range. Kept as the device's native axis range so a stick value
@@ -943,6 +951,12 @@ class Pad:
     """
 
     def __init__(self, device=None, clock=None) -> None:
+        # One pad per process, and only one pad on the machine. Two virtual
+        # pads is the failure that looks most like a dead binding: a second
+        # device takes the next `SDL-N` index, the emulator stays bound to the
+        # first, and every press lands on a controller nobody reads. If a
+        # keep-alive pad is holding a node open for a binding screen, stop it
+        # before running a trial.
         self.device = UinputDevice() if device is None else device
         self.clock = WallClock() if clock is None else clock
         self._base = NEUTRAL
