@@ -140,8 +140,50 @@ That relocates R2 entirely:
   — the same constant — while the state-32 man reads 0. Whatever the guard
   tests, it was failing for him and passing for them.
 
-**What the guard tests is not yet established.** `v0` is set before
-`0x001e81f8` and was not traced. That is the next read, and it is static.
+#### The guard traced — and it is probably not the statue either
+
+`v0` at `0x001e81fc` is the return of **`0x001f7c98(player)`** (4 callers). That
+function is a compound admission test which **returns 0 on every early exit**
+(`s4` starts at zero and each bail returns it):
+
+```
+001f7cbc  jal 0x00154790          ; a play/mode code
+001f7cc4  beq v0, s2(=4), ...     ; must be 4 ...
+001f7cd8  bne v0, v1(=7), ->ret0  ; ... or 7
+001f7ce0  jal 0x00260598          ; offense_team()
+001f7ce8  bne s0, v0, ->ret0      ; must be ON OFFENCE
+001f7cf8  bne v1, v0(=1), ->ret0  ; must be handle kind 1
+001f7d0c  beq v0, s3(=158), ->ret0 ; a type code must not be 158
+```
+
+The guard skips the speed grant only when this is **non-zero**, so in the
+default case it *permits* the grant. **That makes it an unlikely explanation for
+a statue**, and the third framing of this problem to be wrong. Recorded anyway,
+because "this is not it" is worth as much here as a hit.
+
+**Better candidate, 22 instructions earlier and previously walked past:**
+
+```
+001e8184  lw v1, 12(s0)
+001e8188  andi v0, v1, 0x0004
+001e818c  beq v0, zero, 0x001e8234   ; bit 2 clear -> skip the whole block,
+                                     ;   speed write included
+```
+
+A flag word at `player+0x0C`, bit 2. The same word is masked and rewritten at
+`0x001e81a8`/`0x001e81b0` (clearing bit 2, `0xFFFFFFFB`) and again at
+`0x001e81cc` (clearing bit 11, `0xFFFFF7FF`), so this is a per-frame latch the
+state machine drives — the block is plausibly a **once-per-entry** setup that
+runs on the frame the animation starts and never again. If so the man is not
+being held at zero; he is being *granted* speed once and never re-granted.
+
+Untested. `player+0x0C` has no entry in `addresses.yaml` and should get one
+before anything is patched.
+
+**Confirmed on the way past:** state 32 does own engagement kinds 5 and 6, and
+advances one to the other itself — `lw v1, 992(s0)` (+0x3E0), `bne v1, 5`,
+`sw 6, 992(s0)` at `0x001e81dc`-`0x001e81ec`. That was `addresses.yaml`'s claim
+and it holds.
 
 ### R3 — The doubled defender is driven backwards
 
