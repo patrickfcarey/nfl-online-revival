@@ -564,7 +564,12 @@ def m_play_length(samples: Samples) -> Optional[float]:
 
 
 FIELDS = ("position", "dt_record", "dt_role", "ai_state", "engagement",
-          "engagement_link", "speed_cmd", "pos_x", "pos_y")
+          "engagement_link", "speed_cmd", "pos_x", "pos_y",
+          # T4 (dt-hold-90-review/5-pipeline.md): baseline init cannot exceed
+          # 30, so any reading >= 61 proves the patched immediate EXECUTED
+          # through the recompiler. Sampled, not asserted, so an inert patch
+          # and a non-executing patch are distinguishable from one file.
+          "reselect_timer")
 
 METRICS = (
     Metric("dt_longest_hold", m_dt_longest_hold, "frames",

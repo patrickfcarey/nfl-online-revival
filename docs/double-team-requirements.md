@@ -737,3 +737,37 @@ pass protection, PA/pass doubles need the drive cap (~1 yard, then settle) or
 the patch manufactures linemen driving defenders downfield on pass plays.
 Whether this engine models ineligible-man-downfield at all is UNKNOWN — but the
 visual is wrong regardless of whether a flag exists.
+
+## DT-HOLD-90 RESULT (2026-08-11): zero effect, and the reason reframes R6 again
+
+The five-times-reviewed one-word patch was applied (word verified in memory,
+0x2403005A) and produced windows frame-identical to baseline: 2..36, 2..43,
+27..43. T4 settled why: during the dt windows the doubled blockers' +0x432
+reads 17 / 15 / 6 -- BASELINE-formula values, never the patched 76-89 (which
+appear nowhere on them; their 100+ readings are post-window up-count bands).
+
+**The registry doubles on this run play never use engagement kind 8.** The dt
+registry (dt_role/dt_record) rides on ordinary kind-4 contact; kind 8 -- the
+thing the patch extends -- was measured only in PASS protection (slot 7's
+7<->8 flap). Two systems, and the patch extended the one slot 9 never touches.
+Every static review lane was internally correct; the wrongly-shared premise
+was that registry doubles are kind-8 engagements.
+
+**The operator's screen observations are the new primary evidence:**
+
+> "the right guard attempting the double block but he doesnt actually execute
+> it once he is in position to touch him ... almost behaving like once he
+> touches it he inherently thinks he should not be there anymore ... either
+> that or theres no animation to do it and then it fails and then moves ahead"
+> "[#]72 definitely lets the left guard take over -- i can see him pass over"
+
+Touch -> abort -> pass the man off -> move ahead. The teardown at frames 36/43
+is a DECISION at contact, made per-frame by the registry manage fn 0x001f6640
+(docs/double-team-mechanism.md section 3 has its guard chain partially
+traced), not a timer expiry anywhere.
+
+**Next lever, stated precisely:** trace the manage fn's teardown/exchange
+conditions -- what, at the moment of contact, tells the second man to
+release/pass off. The +0x432 initialisers are the wrong tree for run doubles.
+The kind-8 patch (still deployed, harmless per lanes 1/3) may yet matter for
+PASS doubles, but that is a different requirement.
