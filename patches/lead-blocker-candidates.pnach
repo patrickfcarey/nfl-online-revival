@@ -1,0 +1,103 @@
+gametitle=Madden NFL 2004 (SLUS-20752, CRC 14F8B841)
+comment=State-47 lead-blocker steering candidates -- enable ONE block at a time
+
+// ===========================================================================
+// PURPOSE
+//
+// The pulling guard on the misdirection play commits his block ~0.5 yd past
+// the line (metric lead_blocker_block_depth) and the run stuffs for ~1 yd
+// (metric carrier_yards). The goal: make him pull PAST the first man and
+// engage a linebacker/safety at the second level, so the play breaks bigger.
+//
+// These patch the state-47 steering only (0x001B61A0), which fb-wr-blocking.md
+// established is the lead blocker's OWN targeting -- he is excluded from the
+// general assignment system, so changing this touches only lead blockers and
+// not ordinary line play.
+//
+// HOW TO USE
+//
+//   0. This is a reference sheet, not the loaded file. PenguinScreen2 loads
+//      ONE pnach per game by CRC name: ~/.config/PenguinScreen2/patches/
+//      14F8B841.pnach, with EnablePatches=true (already set on the rig). So a
+//      candidate only runs when its lines are inside THAT file, alongside the
+//      DNAS bypass from patches/14F8B841.pnach in the repo.
+//   1. It must be a CODE patch, so it goes through pnach, not a PINE write:
+//      PCSX2's EE recompiler caches compiled blocks and ignores a bare RAM
+//      write (docs/lab-design.md, 2026-08-11). pnach patch=1 lines apply on a
+//      path that invalidates the recompiler.
+//   2. Assemble the active file: copy the DNAS bypass block from
+//      patches/14F8B841.pnach, append exactly ONE candidate block below with
+//      its `//` removed, and place the result at
+//      ~/.config/PenguinScreen2/patches/14F8B841.pnach on the rig.
+//   3. Reboot PenguinScreen2 (patches apply at boot), get to the misdirection
+//      play, save a mid-play pre-snap state to a scratch slot (6+).
+//   4. Measure: python -m tools.madden_lab trial --spec experiments/lead_blocker.py
+//      and compare carrier_yards / lead_blocker_block_depth to the ~0.95 / ~0.55
+//      baseline.
+//   5. Next candidate: re-assemble, reboot, re-save, measure.
+//
+// Every patched word below was decoded back to the intended instruction before
+// being written here; the "was:" note is the shipped word.
+//
+// THE STEERING, for reference (disassembled 0x001B61A0):
+//   0x001B61A4/AC  lui a2,0x002a / ori a2,0xaaaa   cone half-angle = 60 deg
+//   0x001B61E8     lui at,0x4060 -> f20            search + commit distance 3.5
+//   0x001B6234     lui at,0x3fe0 -> f20            tighter commit 1.75 (opp arm)
+//   0x001B6284     add.s f1,f1,f0                  apply 2x velocity lead, X
+//   0x001B6294     add.s f2,f2,f0                  apply 2x velocity lead, Y
+//   0x001B623C     c.lt.s f0,f20                   commit when nearer than f20
+// ===========================================================================
+
+
+// --- Candidate 1 -- NARROW the target cone, 60 deg -> 25 deg ----------------
+// Hypothesis: the near down-lineman sits off to the side; the second-level
+// defender is straighter ahead in the pull lane. A tighter cone should skip
+// the side man and select the one downfield.  (was: 3c06002a / 34c6aaaa)
+//patch=1,EE,001B61A4,word,3C060011
+//patch=1,EE,001B61AC,word,34C6C71C
+
+
+// --- Candidate 2 -- WIDEN the target cone, 60 deg -> 100 deg -----------------
+// Hypothesis: the opposite -- a wider cone lets the finder consider a deeper
+// defender it currently cannot see, if selection favours alignment over range.
+// (was: 3c06002a / 34c6aaaa)
+//patch=1,EE,001B61A4,word,3C060047
+//patch=1,EE,001B61AC,word,34C61C71
+
+
+// --- Candidate 3 -- LARGER search/commit distance, 3.5 -> 6.0 ----------------
+// Hypothesis: the finder reaches a defender further away, letting the guard
+// lock onto a second-level man before the near one is in range. f20 feeds both
+// the cone-finder range and the same-arm commit test.  (was: 3c014060)
+//patch=1,EE,001B61E8,word,3C0140C0
+
+
+// --- Candidate 4 -- SMALLER commit distance, 3.5 -> 2.0 ----------------------
+// Hypothesis: he keeps steering his route until much closer, so he drifts
+// past the line before the commit test passes and he engages deeper.
+// (was: 3c014060)
+//patch=1,EE,001B61E8,word,3C014000
+
+
+// --- Candidate 5 -- widen the tighter opponent-commit gate, 1.75 -> 3.0 ------
+// The second commit test (0x001B6234) governs an un-engaged opponent target.
+// Raising it lets him accept that target from further out -- pairs naturally
+// with a cone change.  (was: 3c013fe0)
+//patch=1,EE,001B6234,word,3C014040
+
+
+// --- Candidate 6 -- REMOVE the 2x velocity lead (aim at current position) ----
+// Control / diagnostic. He currently aims at target + 2x velocity; nop-ing
+// both lead adds makes him aim at the defender's present spot. If block depth
+// moves, the lead is what is pulling his engagement forward.  (was:
+// 46000840 at 6284, 46001080 at 6294)
+//patch=1,EE,001B6284,word,00000000
+//patch=1,EE,001B6294,word,00000000
+
+
+// --- Candidate 7 -- AMPLIFY the downfield lead only (Y: posY + 2vY -> 4vY) ---
+// Doubles the Y (downfield) lead by feeding the already-doubled 2*velY back
+// through the position add twice is not a one-word change; instead this routes
+// the X-lead slot's doubled value is not reusable -- so this candidate is left
+// as a NOTE, not a patch: amplifying the lead cleanly needs a cave routine,
+// which is deferred until an in-place candidate is shown to move the metric.
