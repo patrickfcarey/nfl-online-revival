@@ -20,30 +20,68 @@ develops, so the back has nowhere to go. See `fb-wr-blocking.md` for why the
 lead blocker steers himself (state 47, excluded from the assignment system);
 the levers are in `lead-blocker-targeting.md` and disassembled at `0x001B61A0`.
 
+## Situations this must not break
+
+The fix touches state 47, the single lead-block state, so it touches **every**
+lead blocker, not just the misdirection puller. The requirements are written
+to be route-relative precisely so these all keep working:
+
+| situation | who | where he blocks | trap for a naive depth gate |
+|---|---|---|---|
+| misdirection iso *(measured)* | pulling guard | 2nd level, through the hole | none — this is the target case |
+| fullback iso / lead dive | FB | 2nd level, through the hole | none — same pattern, needs its own savestate |
+| power / counter | pulling guard/tackle | **kick-out at the line** | a "must be 4 yd deep" gate forbids the kick-out |
+| toss / sweep | G/TE/H-back | **force defender on the edge, near LOS** | forced past his man |
+| **screen pass** | releasing O-line | **rushers at/behind the LOS** | forced downfield; screen collapses |
+| draw | line + back | mixed | depends on assignment |
+
+**A blanket depth rule breaks the bottom four. A route-relative rule does
+not.** This table is the acceptance surface: the definitive patch is validated
+against a savestate of *each* row, not just the misdirection play, and none
+may regress.
+
 ## Requirements
 
 Each is: the rule, why, the **acceptance test** (harness metric + threshold),
 the code mechanism, and any decision or risk taken.
 
-### R1 — Clear the line before engaging
+### R1 — Engage at his landmark, not before  (REVISED 2026-08-11)
 
-**Rule.** The lead blocker may not commit a block until he is past the down
-linemen, at second-level depth (~4–5 yards past the LOS).
+**Rule.** The lead blocker may not commit a block until he has reached his
+**authored landmark** — the route point state 47's enter already reads
+(`record+2` bearing, or `record+1/+3` x/y). Not a fixed depth.
 
-**Why.** A puller's job is to get to the hole and lead through it; engaging at
-the line seals nothing and kills the play — the measured defect.
+**Why the revision.** The first draft said "clear the line to ~4–5 yards," and
+that is wrong for every lead-block meant to happen *at* the line — kick-out
+blocks on power, the force block on a toss/sweep, and screen-pass release (see
+"Situations this must not break", below). Those share state 47, so a blanket
+depth gate breaks them. The real defect is not shallowness; it is that he
+**abandons his route to hit the first man he sees.** "Run your route, engage
+at its end" lands him deep on an iso, at the edge on a kick-out, and near the
+line on a screen — automatically, because the route encodes the intent.
 
-**Acceptance test.** `lead_blocker_block_depth >= 4.0` yards (median over the
-run). Baseline is 0.53, so this is the headline number to move.
+**Acceptance test — per play type.** `lead_blocker_block_depth` must land near
+the play's authored landmark depth, not a constant:
 
-**Mechanism.** A gate on the commit test (`c.lt.s f0, f20` at `0x001B623C`):
-suppress the commit while his own Y is less than LOS + ~4. Needs his position
-and the LOS reference, so a small cave hook, not a one-word change.
+| play | landmark | expected block depth |
+|---|---|---|
+| misdirection iso (baseline) | through the hole, 2nd level | ~4–5 yd (from 0.53) |
+| kick-out / power | edge defender at the line | ~0–1 yd (must stay shallow) |
+| toss / sweep | force defender on the edge | near the LOS |
+| screen | flat / near the line | at or behind the LOS |
 
-**Decision / risk (accepted).** A down lineman who *beats* the guard-or-tackle
-and is loose at the line will go unblocked, because the guard is now forbidden
-to engage there. Accepted: the O-line owns the down linemen; the puller owns
-the second level. R3's fallback softens it (below).
+So the metric compares his commit point to his **landmark**, read from the
+state-chain record — a new metric `lead_blocker_commit_vs_landmark`, which
+should be small (he engages at the end of his route) on *every* play type.
+
+**Mechanism.** Gate the commit (`c.lt.s f0, f20` at `0x001B623C`) on
+"have I reached my landmark yet", using the landmark he already carries.
+Small cave hook. No fixed constant — the play supplies the depth.
+
+**Decision / risk (accepted).** On the iso, a down lineman who beats the block
+and is loose at the line goes unblocked (the puller is past him). Accepted for
+the iso; and route-relative means kick-out/screen blockers are *not* forced
+past their men, which is what makes this safe.
 
 ### R2 — Only target what is in front of his vision
 
@@ -147,6 +185,14 @@ revisit, rather than tuning until the number moves.
   position, the defender list, the LOS). Likely one hooked routine rather than
   three patches; decide before cutting the cave, and re-check the cave is dead
   with the repaired wide-window scan (`code-caves.md`).
+* **O4 — does screen-pass (and edge) blocking use state 47?** The decider for
+  the whole blast radius. If releasing screen linemen and edge/kick-out
+  blockers run state 47, the route-relative R1 is mandatory and each must be
+  in the validation set. If screens use a different mechanism (state 31 pass
+  pro → a screen release), they are untouched and the concern narrows. Resolve
+  by finding which state a screen lineman and a kick-out puller are in at
+  contact — a harness snapshot on a screen savestate and a power savestate,
+  which needs those saves from the operator. **This gates the cave design.**
 
 ## Harness work this implies
 
