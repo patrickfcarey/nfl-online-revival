@@ -200,13 +200,25 @@ So the honest conclusions are:
 
 * **Discrete behaviour is reproducible to ~99.8%.** Experiments whose metrics
   are engagement kinds, block modes or AI states need a handful of iterations,
-  not hundreds.
+  not hundreds. Given the operator's observation below, the residual 0.2% is
+  measurement error too, so even that is a floor rather than a limit.
 * **Positions carry ~0.27 units of measurement noise** that is ours, not the
   game's. Use them in aggregate — distances, medians, whether a gap opened —
   never as a frame-by-frame equality.
-* **Determinism itself remains unproven either way**, and cannot be settled
-  with this instrument: proving it needs an atomic snapshot, which needs a
-  pause, which PINE does not have.
+* **Determinism is confirmed — by the operator, not by the instrument.**
+  Watching the same three loads, the operator reported: *"it played out mostly
+  the same for me, the running back takes a few steps then does the same spin
+  move and is tackled the same spot."* That is far stronger evidence than the
+  field comparison above. A spin move is a discrete AI decision drawn from a
+  probability roll, and the tackle spot is hundreds of frames of accumulated
+  physics and decisions; neither repeats by chance. The savestate restores the
+  RNG state, and the play replays.
+
+  So the engine is reproducible and **every difference the harness measured is
+  its own**. The instrument still cannot prove this on its own — that needs an
+  atomic snapshot, which needs a pause PINE does not have — which is precisely
+  why the operator channel exists. This is the first finding it has produced,
+  and it corrected the tool.
 
 Two harness defects follow, both worth fixing before the numbers are trusted:
 
