@@ -52,17 +52,55 @@ is to the concept:
    team at the point of attack while the backside guard pulls. This is also the
    family the operator's SME described for slot 6 — LT and LG on the right DT,
    the other DT left for the guard's kick-out.
-3. **Goal-line or short-yardage dive**, heaviest personnel available. Most
-   linemen, fewest receivers, the highest density of combo blocks per play.
-4. **Counter.** Playside double team plus two pullers.
+3. **Counter.** Playside double team plus two pullers.
+
+~~Goal-line or short-yardage dive~~ — **withdrawn, see the defence rule below.**
+It was listed on the reasoning that heavy personnel means more linemen and so
+more combos. That is backwards: a goal-line *defence* fields five or six down
+linemen against five blockers, which leaves **no uncovered lineman** and
+therefore no one free to combo. Heavy personnel is the worst case, not the best.
 
 **Do not spend attempts on:** any pass play (DT-1 excludes it), screens, or
 tosses/sweeps — on the last two the linemen are moving laterally in space and
 are least likely to be paired on one man.
 
-**Formation note.** Slots 6 and 7 are single-back 3-WR. Candidates 1–3 want a
-**fullback on the field**, so this will need a different personnel grouping
-than either existing savestate, and probably a different formation entirely.
+**Formation note.** Slots 6 and 7 are single-back 3-WR. The candidates above
+want a **fullback on the field**, so this will need a different personnel
+grouping than either existing savestate, and probably a different formation
+entirely.
+
+## Which defence — this decides it as much as the play does
+
+A combo block exists only where an **uncovered** lineman stands next to a
+**covered** one: the uncovered man helps on his neighbour's defender, then
+climbs to a linebacker. So the arithmetic is simply
+
+> **spare blockers = 5 offensive linemen − down defensive linemen**
+
+and the defence controls that number entirely. Zero spare blockers means zero
+double teams no matter how the play is drawn.
+
+| defence | down linemen | spare blockers | verdict |
+|---|---|---|---|
+| **3-4 base, nose head-up on the centre** | 3 | **2** | **best.** A nose tackle in the centre's face is the most-doubled man in football, and either guard can help |
+| **4-3 base** (over or under), no blitz | 4 | 1 | good. Exactly one combo available — usually centre + guard on the 1-technique, or guard + tackle on the 3-technique |
+| Nickel / dime | usually 4 | 1 | same front as 4-3; only the coverage changes. Fine, but no advantage |
+| **Goal line / 5-6 man front** | 5–6 | **0** | **useless.** Every lineman is covered; nobody is free to help |
+
+**Do not call a blitz.** An extra rusher is an extra man to block, which
+consumes the spare blocker who would otherwise be the helper. The whole point
+is a *surplus* of blockers.
+
+**Run at the doubled man.** The combo happens playside, so the run has to
+attack the gap next to the nose or the 3-technique. A run away from the front's
+strength gives the helper nobody to pair on.
+
+**Recommendation:** *3-4 base, no blitz, run inside zone or a lead/power dive
+straight at the nose tackle.* That is the maximum-probability combination — the
+most spare blockers, the most doubled position in football, and the play family
+built on combo blocks. If that produces nothing, the gate is in the engine
+(DT-3) and not in the play call, which is exactly the conclusion step 4 below
+is designed to reach.
 
 ## The procedure
 
