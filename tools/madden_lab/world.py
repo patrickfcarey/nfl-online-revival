@@ -719,6 +719,27 @@ class World:
         f = self.map.field("play_manager", "frames_since_snap")
         return self.reader.read(obj + f.offset, f.width)
 
+    def carrier_y(self) -> Optional[float]:
+        """The ball carrier's downfield (Y) position, or None.
+
+        A game-level field so a metric can follow the ball across a handoff
+        without knowing who is carrying it: it chases the ball manager to the
+        live carrier (`+0xB4`), falling back to the sticky last carrier
+        (`+0xB8`) while the ball is momentarily loose in an exchange. 1 field
+        unit is 1 yard -- the X-span runs -26.67..+26.67, the real 53.3-yard
+        width -- so a metric's `carrier_y - LOS` is yards directly.
+        """
+        ball = self.ball()
+        if ball is None:
+            return None
+        carrier = ball.carrier or ball.last_carrier
+        if carrier is None:
+            return None
+        try:
+            return float(carrier.xyz[1])
+        except Exception:
+            return None
+
     def phase(self) -> int:
         """Always raises. There is no play-phase value to read.
 

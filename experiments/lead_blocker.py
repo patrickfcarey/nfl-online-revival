@@ -100,25 +100,65 @@ SNAP_COUNTER_PTR = 0x00601280
 SNAP_COUNTER_OFF = 84
 
 
+#: The player-array descriptor and the two formation anchors, all read out of
+#: this savestate's own memory image (`extract/` holds its bytes; the QB and
+#: HB positions below are that file's, to the shown precision). Constants
+#: derived from the state itself cannot drift from it.
+PLAYER_DESC_PTR = 0x00600E48
+PLAYER_POS_X = 0x190
+PLAYER_POS_Y = 0x194
+QB_SPOT = (0.0, 13.4000)
+HB_SPOT = (-0.0403, 7.9718)
+SPOT_TOL = 0.35
+
+
+def _f32(emu, addr: int) -> float:
+    import struct
+    return struct.unpack("<f", emu.read(addr, 4).to_bytes(4, "little"))[0]
+
+
 def loaded_state_is_pre_snap(emu) -> bool:
     """Positive proof that our savestate is the world now in memory.
 
     PINE's `load_state` returns as soon as the load is *queued* and never
     reports failure, so without a check like this the first frames of every
-    iteration describe the previous iteration's world -- and a load that failed
-    outright is invisible. This is the cheapest honest test available here: the
-    savestate is a pre-snap frame, so its snap counter is at zero, while the
-    iteration that just finished left it around three hundred.
+    iteration describe the previous iteration's world -- and a load that
+    failed outright is invisible.
 
-    The null-pointer guard is not defensive padding. Reads of unmapped pages
-    return 0 rather than erroring, so a drifted `SNAP_COUNTER_PTR` would make
-    `emu.read(0 + 84)` return 0 and this function return True forever -- a
-    confirmation that confirms nothing, which is worse than none at all.
+    An earlier version tested only `frames_since_snap == 0`, and that shape
+    of predicate has already convicted an innocent engine once: a counter
+    test that the *outgoing* world can also satisfy (a finished play parks
+    the counter at 0) confirms instantly and the first samples photograph a
+    world that is about to be replaced. So this also checks **formation
+    geometry**: the QB and HB standing on this savestate's own pre-snap
+    spots. A play that has run leaves both of them yards away, and a
+    post-whistle world is mid-celebration or mid-reset -- in every world
+    except the freshly loaded one, at least one anchor is off its mark.
+
+    The null-pointer guards are not defensive padding. Reads of unmapped
+    pages return 0 rather than erroring, so a drifted pointer would make
+    every read return 0 and a check without the guards would confirm
+    forever on garbage.
     """
     pointer = emu.read(SNAP_COUNTER_PTR, 4)
-    if not pointer:
+    if not 0x00100000 <= pointer < 0x02000000:
         return False
-    return emu.read(pointer + SNAP_COUNTER_OFF, 4) == 0
+    if emu.read(pointer + SNAP_COUNTER_OFF, 4) != 0:
+        return False
+    desc = emu.read(PLAYER_DESC_PTR, 4)
+    if not 0x00100000 <= desc < 0x02000000:
+        return False
+    base = emu.read(desc, 4)
+    if not 0x00100000 <= base < 0x02000000:
+        return False
+    stride = 5312                       # verified live; addresses.yaml player.stride
+    for slot, (x0, y0) in ((0, QB_SPOT), (1, HB_SPOT)):
+        b = base + slot * stride
+        if abs(_f32(emu, b + PLAYER_POS_X) - x0) > SPOT_TOL:
+            return False
+        if abs(_f32(emu, b + PLAYER_POS_Y) - y0) > SPOT_TOL:
+            return False
+    return True
 
 
 # --------------------------------------------------------------------------
@@ -375,6 +415,94 @@ def m_coverage_defenders_typical(samples: Samples) -> Optional[float]:
     return (counts[middle - 1] + counts[middle]) / 2.0
 
 
+#: An engagement kind (`+0x3E0`) of 4 or above is a live block -- contact (4),
+#: the two-man animation (5/6), the second man (7) or a double team (8). The
+#: pulling guard never shows a clean 4: he drops straight into the 5/6/7
+#: animation, which is why measuring "he blocked" on kind 4 alone finds
+#: nothing. block-cycle.md.
+ENGAGED_KINDS = (4, 5, 6, 7, 8)
+
+
+def _los(samples: Samples) -> Optional[float]:
+    """Line of scrimmage = the offensive centre's downfield Y at the snap.
+
+    Read from the offence samples rather than a separate game field: the
+    centre is the offensive player at position 7, and his Y on the first
+    sampled frame -- sampling begins at the snap -- is the line. 1 unit = 1 yd.
+    """
+    for entity in _offense(samples):
+        positions = samples.values(entity, "position")
+        if positions and positions[0] == 7:
+            ys = [xyz[1] for _i, xyz in samples.series(entity, "xyz")
+                  if xyz is not None]
+            if ys:
+                return float(ys[0])
+    return None
+
+
+def _forward_sign(samples: Samples, los: Optional[float]) -> float:
+    """+1 if the offence attacks toward increasing Y, else -1.
+
+    Read from the carrier's own backfield start: a back lines up behind the
+    line, so the sign of (LOS - his first Y) is the direction of the play. A
+    savestate whose offence drives the other way flips this without any edit
+    to the metrics.
+    """
+    if los is None:
+        return 1.0
+    ys = [y for y in samples.values("game", "carrier_y") if y is not None]
+    if not ys:
+        return 1.0
+    return 1.0 if los >= ys[0] else -1.0
+
+
+def m_carrier_yards(samples: Samples) -> Optional[float]:
+    """Yards the ball carrier gains past the LOS -- the outcome that matters.
+
+    The deepest point reached in the attack direction, which is football's
+    forward-progress rule and is also robust to the two ways the tail of a
+    play lies: a carrier who drifts backward after being wrapped up, and a
+    single reset frame that snaps the world back to the formation. Both move
+    the *last* sample; neither moves the deepest.
+    """
+    los = _los(samples)
+    ys = [y for y in samples.values("game", "carrier_y") if y is not None]
+    if los is None or len(ys) < 2:
+        return None
+    forward = _forward_sign(samples, los)
+    deepest = max(ys) if forward > 0 else min(ys)
+    return float((deepest - los) * forward)
+
+
+def m_lead_blocker_block_depth(samples: Samples) -> Optional[float]:
+    """Yards past the LOS where the lead blocker makes his first block.
+
+    This is the "blocks too early" complaint as a number. A pulling blocker
+    should clear the line and climb to the second level -- several yards
+    downfield -- before he engages; a value near zero or negative means he
+    committed at or behind the line, on the first man he met. Measured on the
+    lead blocker's own position at his first engaged frame (kind 4-8), so it
+    needs the offence `xyz` sample.
+    """
+    entity = _the_lead_blocker(samples)
+    los = _los(samples)
+    if entity is None or los is None:
+        return None
+    # Kind >= 2 is "committed to a man" -- approach (2/3) or an actual block
+    # (4-8). On these baseline plays the pulling guard often reaches only
+    # approach and never lands the block, so measuring contact alone reads
+    # None and hides where he went. Where he *commits* is the lever we tune.
+    frame = samples.first_frame_where(
+        entity, "engagement", lambda v: v >= 2, run=2)
+    if frame is None:
+        return None
+    forward = _forward_sign(samples, los)
+    for index, xyz in samples.series(entity, "xyz"):
+        if index == frame and xyz is not None:
+            return float((xyz[1] - los) * forward)
+    return None
+
+
 def m_play_length(samples: Samples) -> Optional[float]:
     """Sampled frames. Included so a short iteration is visible as short.
 
@@ -436,6 +564,7 @@ OFFENSE_FIELDS = (
     "block_mode",   # +0x3F0, fb-wr-blocking.md -- the Gate A field
     "engagement",   # +0x3E0, block-cycle.md
     "engagement_link",  # +0x3E4, a handle: who he is engaged with
+    "xyz",          # +0x190/4/8 -- position, for LOS and lead-blocker depth
 )
 
 DEFENSE_FIELDS = (
@@ -465,6 +594,11 @@ METRICS = (
            higher_is="worse"),
     Metric("coverage_defenders_typical", m_coverage_defenders_typical, "players",
            "Gate B's premise: coverage defenders are on the field"),
+    Metric("carrier_yards", m_carrier_yards, "yards",
+           "yards the ball carrier gains past the LOS", higher_is="better"),
+    Metric("lead_blocker_block_depth", m_lead_blocker_block_depth, "yards",
+           "yards past the LOS where the lead blocker first engages; "
+           "near zero = blocks too early", higher_is="better"),
     Metric("play_length", m_play_length, "frames",
            "duration control; count metrics scale with it"),
 )
@@ -474,19 +608,28 @@ def build() -> Trial:
     """Fresh `Trial` per call -- the stop condition carries per-play state."""
     return Trial(
         name="lead_blocker_gate_a",
-        # Must be a snap-ready pre-snap frame of a run play with a lead blocker.
-        # The savestate is the experiment: change it and nothing below transfers.
-        # The filename is the provenance; the slot is what layer 1 can actually
-        # load (SEAM REQUEST 1). Both, or the result is either unreproducible
-        # or unrunnable. The operator must have this file in slot 3 -- `doctor`
-        # cannot check that, which is why load_confirm below exists.
+        # A snap-ready pre-snap frame. The savestate is the experiment: change
+        # it and nothing below transfers -- the geometry anchors in the load
+        # confirm are read from this file's own bytes. The filename is the
+        # provenance; the slot is what layer 1 can actually load (SEAM
+        # REQUEST 1). Note: this state is a SINGLE-BACK formation (no FB among
+        # the 22), so Gate A may legitimately observe zero mode-3 players --
+        # that is a finding about what this play authors, not a failure.
         state="SLUS-20752 (14F8B841).06.p2s  [pre-snap, scratch]",
         state_slot=6,
         question=("Does the lead-blocking fullback ever enter the block-assignment "
                   "system, and are coverage defenders ever targeted?"),
         load_confirm=LoadConfirm(
             check=loaded_state_is_pre_snap,
-            description="*(0x00601280)+84 == 0 and the pointer is non-null",
+            description="snap counter parked at 0 AND the QB and HB standing "
+                        "on this savestate's own formation spots",
+            # A pre-snap state loaded over a pre-snap world (practice mode
+            # resets to the same formation after every play) moves the clock
+            # 0 -> 0: no discontinuity for the edge check to catch. The
+            # geometry predicate is specific enough to stand alone -- a world
+            # that has run, or is mid-reset, does not have the QB and HB on
+            # these exact spots -- so opt out of the edge requirement.
+            require_reset=False,
             timeout_s=15.0),
         sample=SampleSpec(
             entities=(
@@ -497,7 +640,7 @@ def build() -> Trial:
                 # play, not of where the play has got to. The clock is
                 # frames_since_snap and the "what is he doing" signal is
                 # ai_state, both of which this spec already samples.
-                EntitySelector("game", ("frames_since_snap",)),
+                EntitySelector("game", ("frames_since_snap", "carrier_y")),
             ),
             # Every frame. Block mode transitions are single-frame events and
             # the whole experiment is about catching one.
@@ -516,6 +659,10 @@ def build() -> Trial:
         # -- which is why `setup` is a spec field and not a command-line flag.
         setup=(),
         cannot_conclude=(
+            "Gate A on this savestate, if no player ever holds mode 3: the loaded "
+            "formation is single-back, so the play may simply author no lead "
+            "blocker. A zero here says which question needs an I-formation state, "
+            "not whether Gate A holds.",
             "Which blocking class the play authors for any player. That is play-file "
             "data (play-data.md, unread). 'Never told to block' and 'told to block, "
             "but no legal target' are indistinguishable here.",

@@ -1282,7 +1282,20 @@ class Cli(unittest.TestCase):
         world = FakeWorld(players=players, script={
             2: [(0, "block_mode", 3), (1, "block_mode", 1), (2, "ai_state", 22)],
         })
-        runner = Runner(FakeEmu(world), world, pad=FakePad(),
+        emu = FakeEmu(world)
+        # The spec's load confirm checks formation geometry against its own
+        # savestate's bytes; the fake must stand the QB and HB on those spots
+        # or the confirm (correctly) refuses to believe the load.
+        import struct as _s
+        as_word = lambda v: int.from_bytes(_s.pack("<f", v), "little")  # noqa: E731
+        desc, base = 0x00700100, 0x00710000
+        emu.memory.update({
+            0x00600E48: desc, desc: base,
+            base + 0x190: as_word(0.0), base + 0x194: as_word(13.4),
+            base + 5312 + 0x190: as_word(-0.0403),
+            base + 5312 + 0x194: as_word(7.9718),
+        })
+        runner = Runner(emu, world, pad=FakePad(),
                         clock=DrivenClock(world), printer=silent)
         result = runner.run_iteration(trial, 0)
         self.assertEqual("ok", result.status)

@@ -332,6 +332,24 @@ class ScriptPlayer:
             self._pad.release(button)
         self._release_at.clear()
 
+    def force_earliest(self) -> List[str]:
+        """Fire the next pending event now, ignoring its scheduled frame.
+
+        SEAM REQUEST 4, resolved by admitting what the clock cannot do. The
+        only frame counter this harness has resets at play init and is parked
+        at zero for the whole pre-snap window -- which is exactly when the
+        snap must be pressed. A script that waits for frame 4 of a clock that
+        starts at the snap is waiting for an event only the script itself can
+        cause. So when the clock stalls with input still pending, the runner
+        fires the earliest event by fiat: the press is what starts the clock.
+        Its scheduled frame is honoured for the *release* arithmetic, so a
+        3-frame press still releases at frame `event.frame + 3` once the
+        counter is moving.
+        """
+        if not self._pending:
+            return []
+        return self.apply(self._pending[0].frame)
+
     @property
     def unfired(self) -> int:
         """Events the play ended before reaching. Non-zero is a spec problem."""
@@ -966,7 +984,25 @@ class Runner:
                 if time.time() > deadline:
                     status, reason = "timeout", "wall clock %.0fs" % trial.stop.timeout_s
                     break
-                if self.clock.tick() < 0:
+                try:
+                    moved = self.clock.tick()
+                except StallError:
+                    # A parked clock plus pending input is not a stall: it is
+                    # the pre-snap window, and the pending press is the thing
+                    # that will start the clock (SEAM REQUEST 4). Fire it and
+                    # go back to waiting. A parked clock with nothing left to
+                    # send is a real stall -- paused, crashed, or a dialog --
+                    # and propagates as before.
+                    if player is not None and player.unfired:
+                        for entry in player.force_earliest():
+                            if sink is not None:
+                                sink.write(KIND_EVENT, iteration=index,
+                                           frame=frame,
+                                           event=entry + " (forced: clock "
+                                           "parked pre-snap)")
+                        continue
+                    raise
+                if moved < 0:
                     # The counter rewound mid-run: the play ended (re-armed at
                     # 0) or a state landed over us. Either way the world this
                     # iteration was measuring no longer exists; continuing
