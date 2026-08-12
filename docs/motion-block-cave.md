@@ -651,3 +651,30 @@ record already proves the pairing) or to kinds {7,8}. Predicted canary jump
 from 5 to ~35-40 frames per play, which at the measured step is 1.3-1.7 yd --
 straight into R3's >= 1.0 target. One word in the cave's gate; everything else
 stays. Bisect is trivial: revert the gate word alone.
+
+## P8b (2026-08-12): widening the defender gate changed NOTHING — canary still 15
+
+Gate widened from defender kind {5,6} to {4,5,6} (0x00443278 -> 2461FFFC,
+0x0044327C -> 2C210003), applied live and verified, canary reset to 0.
+Three iterations: **canary 15 again**, identical. Operator confirms visually:
+"he still isnt being driven back."
+
+**So the defender's kind was never the limiter, and my diagnosis of P8 was
+wrong.** The ~5-frames-per-play starvation is upstream of that gate. Ruled in
+as the remaining candidates, none tested:
+
+* Site B (0x001F20F8) may not run per-frame per helper the way the design
+  assumed -- 5 hits/play looks much more like ONCE PER LOCK-IN than like
+  "every attached frame". The design's central premise ("proven to run every
+  attached frame") is now in doubt and should be re-derived, not re-argued.
+* One of the surviving gates rejects most frames: defender dt_role == 2,
+  helper dt_role == 1, sides differ, handle kind 1, or D > 0.
+
+**The cheapest way to find out is instrumentation, not reasoning:** give the
+cave a second canary incremented at ENTRY (before any gate) and a third after
+the dt_role pair. Comparing the three counts names the rejecting gate in one
+run. Two spare words exist at 0x00514978/7C (cave #11's remainder, ELF-zero).
+
+That is the next step, and it is a measurement rather than a patch -- which is
+the discipline that has worked all session and which I skipped here by
+inferring the limiter from A2's series instead of measuring it.
