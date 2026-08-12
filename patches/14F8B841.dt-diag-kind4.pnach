@@ -1,0 +1,27 @@
+gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
+comment=DIAGNOSTIC ONLY -- kind-4 contact hold 30->90. NOT a shipping patch.
+
+// ---------------------------------------------------------------------------
+// Hypothesis under test: the run-play double team's touch-abort (operator:
+// "once he touches it he inherently thinks he should not be there anymore",
+// pass-over to the LG) is the KIND-4 contact timer underflowing -- expiry
+// converts self to kind 2 and reverses the partner to kind 9 (0x001f5c84-b4).
+// Supporting data: the RG's +0x432 read 6 at his window's end, consistent
+// with init 30-rating/16 (~19) minus his 13 observed frames; DT-HOLD-90
+// (kind-8) was proven inert on run doubles by T4.
+//
+//   001ef8e8  2403001e -> 2403005a   the kind-2/4 band copy of Site A
+//
+// THIS WORD GOVERNS EVERY ORDINARY CONTACT BLOCK IN THE GAME. Extending it is
+// a deliberate, single-run R5 violation to answer one question. Prediction if
+// the hypothesis is right: the RG's dt window (baseline 27..43) extends far
+// past 43 and the operator sees the guard STAY on the man after touch.
+// Prediction if wrong: windows identical again, and the teardown lives in the
+// registry manage fn 0x001f6640 -- trace that next.
+//
+// The shipping fix, if confirmed, is NOT this word: it is a small cave at the
+// kind-4 stamp that writes the larger value only when dt_role != 5, leaving
+// single blocks at baseline. word-type = proven 32-bit in this fork.
+// ---------------------------------------------------------------------------
+
+patch=1,EE,001ef8e8,word,2403005a
