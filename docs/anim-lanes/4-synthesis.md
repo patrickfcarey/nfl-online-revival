@@ -96,3 +96,22 @@ both lanes are right about different words and the picture resolves cleanly.
 Lesson banked: the probe was worth running BEFORE any patch. A one-word change
 to 0x001f7d08 would have been made on the belief that +0x3DE would show 158,
 and the observation would have been unreadable.
+
+### The pointer-chased word WORKS (live, 2026-08-11)
+
+`u16[[player+0x304] + 0x64k + 4]` with status at `+6`, read live on slot 9
+pre-snap. Slot 0 carries status 3 (playing) for every player and the ids are
+sensible and position-correlated:
+
+    QB 91 | HB 85 | FB 86 | WR 85/85 | TE 86 | OL 86,86,86,86,86
+    NT 21 | DE 86
+
+So this IS the current-animation id, and its vocabulary (85/86/91/21) is
+DIFFERENT from +0x3DE's (15/17/18/19) -- supporting the reading that +0x3DE
+holds a class/group-local index while this word holds the global clip id.
+
+**Blocker: this is a pointer chase, not a flat offset**, so `Player.snapshot`
+cannot sample it from `addresses.yaml` as it stands. Sampling it DURING a
+block -- the observation that finally names the clips -- needs a harness
+accessor. That is now the top tooling task, because every animation patch
+depends on being able to read what changed.
