@@ -771,3 +771,45 @@ frame count is the binding constraint.** The mechanism question stays OPEN
 until a run with ~56 driven frames either shows visible drive or does not --
 which is the same next step, now correctly framed as the TEST of the lever
 rather than a victory lap.
+
+## P10 + lane 3 (2026-08-12): position-writing is a DEAD END; the native path is the answer
+
+P10 (hook in state-32's ai_think): canary 25 across 3 runs against P9's 14 --
+the host does tick more, but nowhere near the derived ~110, and the defender
+still is not driven (dy -0.42 vs -0.51 baseline, dist 0.77, carrier -0.70).
+
+**Lane 3 (docs/drive-lanes/3-native-drive.md) explains why this whole approach
+could never work:** during a pair clip NOTHING in the engine moves the loser's
+logical position. Closed three independent ways this session -- group 17 ships
+only class records with no type-9 displacement spec; all 29 stream-event
+handlers are argument-skipping stubs (0x0012bdf0, table 0x0057A020); and the
+image-wide +0x190 store census leaves no live writer during kinds 5/6. **The
+pancake is skeletal** -- visual only. Big-hit knockback comes from the tackle
+module's own writers (0x001869ec), a different subsystem entirely.
+
+So the cave was never fighting an override -- it was the SOLE writer, pushing
+alone at 0.045 yd/frame on a starved host. Scaling frames or magnitude here
+buys a slide, not a football block.
+
+**And the contrast the operator saw is now mechanical:** C/NT (shed 121) and
+LG (shed 129) reach native outcomes on this very play. The double team cannot,
+because its own kind-8 helper RE-ARMS the doubled defender's shed-lock
++0x42C := 16 at every lapse (0x001f21e4/e8). The helper prevents the outcome
+the pair is trying to produce.
+
+### The next patch: N-1 at 0x001F153C -- make the ENGINE drive him
+
+Retarget the sole lock-in call (`jal 0x001f0c40`) into a cave that folds the
+attached role-1 helper's weight+STR into the PRIMARY's contest comps
+(+0x414/+0x418/+0x41C). One site flips every native consumer at once:
+
+* comp2 winner flips, so the staged drive axis finally points into the defence
+  (today the DE wins that comparison -- measured)
+* comp1 margin approx +0.44 clears the 0.175 run threshold, opening grid
+  column 1's drive clips {50,53,54}
+* the 149/168 pancake-pool rolls go blocker-favoured
+
+That is the operator's weight+STR law applied where the engine already reads
+it, instead of a position write bolted alongside. Companions ranked in lane
+3's doc: N-2 keep-kind-4 vetoes, N-3 the native pancake finish, N-4 the
+one-data-word per-frame host at 0x00527540.
