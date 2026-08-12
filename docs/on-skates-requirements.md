@@ -232,3 +232,41 @@ Two clean conclusions survive, both negative and both worth the cycles:
 * speed_cmd DOES govern free locomotion strongly enough that scaling it wrecks
   pursuit -- which is why any future drive law must be gated to ENGAGED pairs,
   never applied to the field at large.
+
+## How to actually drive them back — the three routes, ranked (2026-08-11)
+
+speed_cmd is eliminated (P6). The block code writes no positions
+(pass-vs-run-blocking.md, re-confirmed). So a defender's body is moved by
+something else, and there are exactly three candidate routes. Ranked by
+expected cost and by how well each matches the football requirement.
+
+**Route A — velocity, not speed (CHEAPEST, TRY FIRST).** speed_cmd (+0x1E8)
+is a *gait command* the engaged defender ignores; vel_x/vel_y/vel_z
+(+0x1B8..) are the integrated body velocity the harness already samples.
+Nothing has ever tested whether writing an engaged man's VELOCITY moves him.
+Test with the proven P5/P6 template: find the per-frame writer of +0x1B8 for
+an engaged player, hook it, add a term along the pair's shared axis scaled
+absurdly, look. If he slides, on-skates is solved and the mass law attaches
+here. One session.
+
+**Route B — the collision layer (0x00213038, sole caller 0x00164710).** The
+only inverse-mass motion in the image, `1/(weight*335.4)` -- exactly the
+physics the operator's law describes. Two unknowns first: does it run for
+players who are ENGAGED (engagement may be exempt from collision
+resolution), and does it write position or velocity? Both answerable
+statically before any patch.
+
+**Route C — animation root motion.** If the two-man animation owns the pair's
+displacement, then no force model can move them and the fix is to select
+different animations (the yes-set/158 work already touches this machinery).
+Evidence for: blocks are "a 14-30-frame rigid two-body translation", the
+capture converts pairs into paired animation 158, and the double dies when
+that animation ends. Evidence against: pairs visibly translate along a
+computed bearing, which is force-shaped, not clip-shaped.
+
+**The census that decides between them** is already runnable and cheap: 16+
+direct writers of pos_x (+0x190) exist image-wide (find_field_refs). Identify
+which one runs for a player in engagement kinds 4/8 on slot 9, and that names
+the route -- locomotion integrator (A), collision (B), or animation (C). Do
+this BEFORE writing any more patches; it is the same "reachability before
+deploy" discipline that has caught three bad patches today.
