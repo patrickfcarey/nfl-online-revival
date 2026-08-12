@@ -881,3 +881,45 @@ NEXT PATCH (was staged phase 2, now the confirmed active killer): add 158 to
 the yes-set at 0x00583360 -- one data edit serving both the helper's
 attach-through-capture and the record's survival-through-capture. Then the
 drive war (S1-S3).
+
+## R11 — a double team must be LOSABLE, to the right move at the right angle (operator, 2026-08-12)
+
+> "handoff, skates, pancakes ... we need to make sure we can lose them too
+> mostly to the appropriate swim move to the correct angle"
+
+Corrects the taxonomy: the outcomes are a **spectrum on the contest margin**,
+not three boxes. Ordered by how the DEFENDER does — beats both (sheds free =
+double LOST) / beats one (handoff) / stalemate / blockers drive (skates) /
+blockers dominate (pancake). "Handoff" was largely an ARTIFACT of the pre-N-1
+1-on-1 scoring; with N-1 folding both blockers in, the defender-win tail nearly
+vanished. R11 restores a proper tail AND makes the shed correct when it fires.
+
+Two parts, DIFFERENT code paths (rule 1 — scope-tested):
+
+**R11a — the outcome tail exists (SAME path as N-1/T3, the contest margin).**
+A doubled defender must still win occasionally, at a rate proportional to his
+advantage (elite rating, or a leverage/angle edge), landing in the shed
+lose-chains (0x00526668 run / 0x00526710 pass, ids 120-131). This is the low
+end of the same margin distribution T3 tunes: N-1's fold made the margin so
+large the tail is gone. The knob is the same fold scale (T3's k) plus the
+contest's own rating/jitter spread — do NOT add a separate "defender wins"
+branch; widen the distribution so the tail re-emerges naturally.
+*Acceptance:* across a seed sweep on a matched-or-favorable defender, a
+non-zero fraction of reps land in ids 120-131; a dominant double (slot 9
+TE+RT, D=2.42) still almost never loses.
+
+**R11b — the shed MOVE and ANGLE are appropriate (DIFFERENT path — the
+move-selection code, T2's territory).** When any defender sheds (single or
+double), the move must fit the leverage: not always swim. T2 measured the
+selection collapsing to swim on every rep. The move roll and its angle input
+live in the shed/finesse-vs-power selection (cpu-dt-animations.md,
+pass-rush.md), NOT in the outcome grid — so R11b is a separate patch with its
+own acceptance, and must not be folded into the contest-margin work.
+The sector->class table (0x00583300: {90:7,135:10,180:17/18,225:16,270:14})
+already proves ANGLE selects the outcome class; whether it also selects the
+MOVE, or the move is a separate roll, is an OPEN QUESTION that gates R11b.
+
+Sequence: R11a rides the T3 sweep (same knob) — verify the tail while centering
+the skate band. R11b is its own investigation (why always-swim; is move a
+function of angle/leverage) and its own patch, after the drive outcomes are
+tuned.
