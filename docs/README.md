@@ -79,6 +79,12 @@ New to the repo? Read in this order:
 | `defender-catch-requirements.md` | corners drop balls that hit their hands — operator-observed, near-100% failure rate; Q1 answered (shared catch path, but two defender-only branches) |
 | `double-team-requirements.md` | make double teams real: 1.5x the primary, a helper that is not a statue, and a defender actually driven back |
 | `double-team-plan.md` | the order of work for double teams, and the play candidates to try — we have never observed one |
+| `double-team-solution.md` | the adjudicated diagnosis (the assignment market) and the P1 market-guard design that fixed the touch-abort |
+| `double-team-iteration-plan.md` | the rung ladder A1..F2 from "holds" to "drives", each rung with its oracle |
+| `double-team-mission-brief.md` | the standing escalation charter: ground truth, the timer graveyard, constraints, tooling traps |
+| `motion-block-cave.md` | the position-writing arc P8/P9/P10 — designed, starved, refuted; kept as the record of WHY that branch is closed |
+| `dt3-review/`, `dt-hold-90-review/` | per-patch hostile-review lanes (3 and 5 files): the verdicts that killed DT-3 and reshaped DT-HOLD-90 |
+| `dt-lanes/`, `anim-lanes/`, `drive-lanes/` | investigation lanes: block-market economics and teardown (dt-), the animation registry and clip semantics (anim-), and the per-frame-host / position-authority / native-drive trio (drive-) that produced P11 and N-1 |
 | `on-skates-requirements.md` | driven blocks: losers give ground continuously, feet moving — the drive/translation scoping (S1-S5) |
 | `seed-testing-plan.md` | RNG seed sweeps for bounded regression testing, range cards, and staged S0-S4 release gates (hours-to-days runs, planned not discovered) |
 | `state-reachability.md` | **protocol** — evaluate a patch's gate conditions against the savestate's own memory before any deploy; born from the DT-3 unreachable-branch cycle |
