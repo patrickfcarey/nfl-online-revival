@@ -83,24 +83,29 @@ class BatchCountingReader:
         self.single_reads = 0
 
 
-class PointerSwappingReader(BatchCountingReader):
-    """Moves the anim object between the two phases of a chase.
+class ArmedHookReader(BatchCountingReader):
+    """Runs `hook(memory)` once, after serving the first batch post-arm().
 
-    After serving the first batch (phase A, where the pointer is resolved)
-    it rewrites the pointer word, so phase B's verify read sees a different
-    value than the addresses were built from -- the exact hazard the in-batch
-    re-read exists to catch.
+    Building the player list costs a batch of its own (the array-descriptor
+    read), so a hook keyed on absolute batch ordinals fires in the wrong
+    place. Arming after the parts are built makes the next served batch
+    certified_batch's phase A, which is exactly the between-the-phases moment
+    the stale-chase tests need to poke.
     """
 
-    def __init__(self, inner: FakeMemory, ptr_addr: int, new_value: int) -> None:
+    def __init__(self, inner: FakeMemory) -> None:
         super().__init__(inner)
-        self._ptr_addr = ptr_addr
-        self._new_value = new_value
+        self.hook = None
+        self._armed = False
+
+    def arm(self, hook) -> None:
+        self._armed, self.hook = True, hook
 
     def read_many(self, specs):
         out = super().read_many(specs)
-        if self.batches == 1:
-            self.inner.put_u32(self._ptr_addr, self._new_value)
+        if self._armed and self.hook is not None:
+            hook, self.hook = self.hook, None
+            hook(self.inner)
         return out
 
 
@@ -309,18 +314,12 @@ class TestBatchingCost(unittest.TestCase):
     def test_certified_batch_brackets_span_both_phases(self):
         """tick_before is read in phase A and tick_after in phase B, so a
         clock that moves between the phases de-certifies the sample."""
-
-        class TickingReader(BatchCountingReader):
-            def read_many(self, specs):
-                out = super().read_many(specs)
-                # advance the counter after every served batch
-                self.inner.put_u32(PLAY_MGR + 0x54,
-                                   self.inner.read(PLAY_MGR + 0x54, 4) + 1)
-                return out
-
         w, _mem, r = build_world(self.ROSTER, per_side=2, frames_since_snap=7,
-                                 reader_cls=TickingReader)
+                                 reader_cls=ArmedHookReader)
         parts = [(p, ("anim_id",)) for p in w.players()]
+        # After phase A is served, advance the game clock by one tick.
+        r.arm(lambda mem: mem.put_u32(PLAY_MGR + 0x54,
+                                      mem.read(PLAY_MGR + 0x54, 4) + 1))
         tick, after, _decoded = w.certified_batch(parts)
         self.assertEqual(tick, 7)
         self.assertEqual(after, 8)   # moved mid-sample: visibly torn
@@ -337,19 +336,18 @@ class TestStaleChase(unittest.TestCase):
         ptr_addr = PLAYERS_BASE + 0 * stride + ANIM_PTR_OFF
         new_arr = 0x00750000
 
-        def make(reader_inner):
-            return PointerSwappingReader(reader_inner, ptr_addr, new_arr)
-
-        w, mem, _r = build_world(
+        w, mem, r = build_world(
             [{"position": 0, "anim": [(91, PLAYING)]},
              {"position": 1, "anim": [(85, PLAYING)]}],
-            per_side=2, frames_since_snap=3, reader_cls=make)
+            per_side=2, frames_since_snap=3, reader_cls=ArmedHookReader)
         # The replacement object is fully valid and playing clip 99, so only
         # the verify -- not the plausibility check -- can catch the swap.
         mem.put_u16(new_arr + 4, 99)
         mem.put_u16(new_arr + 6, PLAYING)
 
         parts = [(p, ("position", "anim_id")) for p in w.players()]
+        # Phase A resolves player 0's pointer; then the object "moves".
+        r.arm(lambda m: m.put_u32(ptr_addr, new_arr))
         _tick, _after, decoded = w.certified_batch(parts)
         self.assertIsNone(decoded[0]["anim_id"])      # stale chase: refused
         self.assertEqual(decoded[0]["position"], 0)   # flat fields unharmed
@@ -416,6 +414,10 @@ class TestInPlayDump(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.world = W.open_dump(INPLAY_DUMP)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.world.reader.close()
 
     def test_every_player_is_playing_a_clip(self):
         got = {(p.side, p.index): p.anim_id() for p in self.world.players()}
