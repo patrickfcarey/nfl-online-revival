@@ -807,3 +807,18 @@ meaningful), then the on-skates drive (S1-S3) to make the held pair GO.
 Deploy-cycle lessons banked: patch=0 cave bodies are wiped by load_state
 (all-place-1 is the rule); the solution doc's cave failed reachability (live
 memcpy selector at 0x00139DB0) and was relocated to cave #11.
+
+## R7 — multiple simultaneous doubles (operator, post-P1)
+
+> "also, the left guard needs to double team someone too"
+
+On the slot 9 front the LG is uncovered; his textbook job is the C+LG double
+on the NOSE -- a second record alongside TE+RT-on-DE. The registry has FOUR
+record slots (T+4+20i), so capacity exists. Unknown: why the LG is never
+elected -- market scoring (scorer fully mapped in dt-lanes/help-score.md:
+88-dist base, 3.0-yd radius, x1.2/1.1/1.03/0.85 modifiers), play authoring,
+or a limiter in the seek (0x001f64e0). Diagnose from the LG's series in the
+P1 run data (/tmp/p1.jsonl on the rig) before touching the scorer. Levers if
+it is scoring: the radius/threshold constants; if authoring: play-data.md
+territory. Acceptance: two concurrent records on slot 9, LG+C on the NT,
+neither stealing from the other (P1's theft guard already protects this).
