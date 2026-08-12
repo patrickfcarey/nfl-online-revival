@@ -1,0 +1,61 @@
+gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
+comment=P6 ASYMMETRIC diagnostic -- 256x drive on the OFFENSIVE member only, over P1+P4.
+// The operator caught P5 as a symmetric test: the sweep writes one shared
+// magnitude to BOTH members of an engagement, so 256x cancelled and only a
+// lopsided size mismatch leaked through (the #72 pancake). P6 gates the
+// eight doublings on the player's side byte (+0x01, 0 = offense) so only
+// the blocker scales. THE question: does the defender now go backwards?
+// Still a global R5 violation and still on unproven cave #7 -- throwaway.
+
+patch=1,EE,001F4A30,word,08145248
+patch=1,EE,00514920,word,8E82005C
+patch=1,EE,00514924,word,90410437
+patch=1,EE,00514928,word,2C210002
+patch=1,EE,0051492C,word,10200006
+patch=1,EE,00514930,word,00000000
+patch=1,EE,00514934,word,8C4303E0
+patch=1,EE,00514938,word,2463FFFE
+patch=1,EE,0051493C,word,2C630007
+patch=1,EE,00514940,word,14600009
+patch=1,EE,00514944,word,00000000
+patch=1,EE,00514948,word,12000005
+patch=1,EE,0051494C,word,00000000
+patch=1,EE,00514950,word,92010437
+patch=1,EE,00514954,word,2C210002
+patch=1,EE,00514958,word,14200003
+patch=1,EE,0051495C,word,00000000
+patch=1,EE,00514960,word,0807D28D
+patch=1,EE,00514964,word,00000000
+patch=1,EE,00514968,word,8E820000
+patch=1,EE,0051496C,word,0807D2AC
+patch=1,EE,00514970,word,00000000
+patch=1,EE,001F6A74,word,2C420169
+
+patch=1,EE,001F2068,word,08110C9C
+patch=1,EE,001F2084,word,08110CAC
+patch=1,EE,00443270,word,92210001
+patch=1,EE,00443274,word,14200009
+patch=1,EE,00443278,word,00000000
+patch=1,EE,0044327C,word,46000000
+patch=1,EE,00443280,word,46000000
+patch=1,EE,00443284,word,46000000
+patch=1,EE,00443288,word,46000000
+patch=1,EE,0044328C,word,46000000
+patch=1,EE,00443290,word,46000000
+patch=1,EE,00443294,word,46000000
+patch=1,EE,00443298,word,46000000
+patch=1,EE,0044329C,word,0807C81C
+patch=1,EE,004432A0,word,E62001E8
+patch=1,EE,004432B0,word,92410001
+patch=1,EE,004432B4,word,14200009
+patch=1,EE,004432B8,word,00000000
+patch=1,EE,004432BC,word,46000000
+patch=1,EE,004432C0,word,46000000
+patch=1,EE,004432C4,word,46000000
+patch=1,EE,004432C8,word,46000000
+patch=1,EE,004432CC,word,46000000
+patch=1,EE,004432D0,word,46000000
+patch=1,EE,004432D4,word,46000000
+patch=1,EE,004432D8,word,46000000
+patch=1,EE,004432DC,word,0807C823
+patch=1,EE,004432E0,word,E64001E8
