@@ -46,3 +46,35 @@ wide `lui` pairing window — both were silently wrong before
 ## 5. Never attribute commits to Claude
 
 No `Co-Authored-By` trailer, and set both identity fields on every commit.
+
+## 6. Message-type prefixes (the communication protocol)
+
+Untyped messages caused real failures here: operator observations parsed as
+orders, hypotheses shipped as findings, a decision request phrased so badly it
+bounced. The fix costs one word — declare the type before the content.
+
+**Operator → agent** (optional, use when cheap):
+
+| prefix | meaning | agent's obligation |
+|---|---|---|
+| `obs:` | what the eyes saw at the console | log verbatim as evidence, immediately; never reinterpret into an instruction |
+| `do:` | an order | execute |
+| `hyp:` | a theory to test | test it; do not build on it as fact |
+| `q:` | a question | answer before acting |
+
+**Agent → operator** (lead every substantive statement):
+
+| prefix | meaning |
+|---|---|
+| `Finding:` | verified against the binary or live memory; evidence cited |
+| `Hypothesis:` | inference — never silently promoted to Finding |
+| `Verdict:` | a test's result against pre-registered acceptance |
+| `Correction:` | a prior statement was wrong; names which one |
+| `Need-decision:` | a judgment call that belongs to the operator |
+| `Blocked:` | cannot proceed; names the missing thing |
+
+**Term of address: "Operator."** In this repo it is a title, not a label — it
+denotes the evidentiary authority of the human at the console, whose direct
+observations have repeatedly out-diagnosed the instruments (see the memory
+rule: operator observations are evidence). HK-47's register, inverted: the
+honorific goes to the human.
