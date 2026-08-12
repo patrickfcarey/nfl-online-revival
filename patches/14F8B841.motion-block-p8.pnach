@@ -1,0 +1,164 @@
+gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
+comment=P8 MOTION BLOCK -- drive the doubled defender back, weight+STR law. Over P1+P4.
+// Design: docs/motion-block-cave.md. The agent REJECTED both proposed hooks on
+// live evidence -- the defender's motion block holds stale float garbage for
+// pair-family clips and writing it would fling him -- and relocated the
+// applier's addition into the kind-8 helper servicer at 0x001F2164 (Site B,
+// inside 0x001F20F8), which runs every attached frame. That makes 'drive only
+// while the helper is touching' the law itself: TE alone gives R=0.825, D=0.
+//
+// Law: D = clamp(margin + R^2 - 1, 0, 3); slot 9 TE+RT vs DE R=1.8484, D=2.42,
+// step 0.0378-0.0424 yd/frame. Gates: defender kind in {5,6}, defender
+// dt_role==2, helper dt_role==1, sides differ, handle kind 1, and D<=0 writes
+// nothing -- so band-0 pairs and every single block are byte-identical by
+// construction, not by branch. Accumulates +0x190/+0x194 in place; +0x1A8
+// (facing) untouched, so no warps and no spin.
+//
+// Cave #7 re-censused INDEPENDENTLY this pass: 0 data-word pointers, 0
+// branches or jumps from outside, ELF byte-identical to slot 9's memory.
+// Canary at 0x00514974 (ELF-zero, no patch line) increments per driven frame.
+// Companion word admits clip 161 to the yes-set so the record outlives f64.
+
+patch=1,EE,001F4A30,word,08145248
+patch=1,EE,00514920,word,8E82005C
+patch=1,EE,00514924,word,90410437
+patch=1,EE,00514928,word,2C210002
+patch=1,EE,0051492C,word,10200006
+patch=1,EE,00514930,word,00000000
+patch=1,EE,00514934,word,8C4303E0
+patch=1,EE,00514938,word,2463FFFE
+patch=1,EE,0051493C,word,2C630007
+patch=1,EE,00514940,word,14600009
+patch=1,EE,00514944,word,00000000
+patch=1,EE,00514948,word,12000005
+patch=1,EE,0051494C,word,00000000
+patch=1,EE,00514950,word,92010437
+patch=1,EE,00514954,word,2C210002
+patch=1,EE,00514958,word,14200003
+patch=1,EE,0051495C,word,00000000
+patch=1,EE,00514960,word,0807D28D
+patch=1,EE,00514964,word,00000000
+patch=1,EE,00514968,word,8E820000
+patch=1,EE,0051496C,word,0807D2AC
+patch=1,EE,00514970,word,00000000
+patch=1,EE,001F6A74,word,2C420169
+
+patch=1,EE,001F2164,word,0C110C9C
+patch=1,EE,0058339C,word,001F0C20
+
+patch=1,EE,00443270,word,AE200024
+patch=1,EE,00443274,word,8E4303E0
+patch=1,EE,00443278,word,2461FFFB
+patch=1,EE,0044327C,word,2C210002
+patch=1,EE,00443280,word,1020006C
+patch=1,EE,00443284,word,92410437
+patch=1,EE,00443288,word,24030002
+patch=1,EE,0044328C,word,14230069
+patch=1,EE,00443290,word,92010437
+patch=1,EE,00443294,word,24030001
+patch=1,EE,00443298,word,14230066
+patch=1,EE,0044329C,word,92410001
+patch=1,EE,004432A0,word,92030001
+patch=1,EE,004432A4,word,00611826
+patch=1,EE,004432A8,word,10600062
+patch=1,EE,004432AC,word,8E4803E4
+patch=1,EE,004432B0,word,310900FF
+patch=1,EE,004432B4,word,24010001
+patch=1,EE,004432B8,word,1521005E
+patch=1,EE,004432BC,word,00084A02
+patch=1,EE,004432C0,word,312900FF
+patch=1,EE,004432C4,word,00084402
+patch=1,EE,004432C8,word,310800FF
+patch=1,EE,004432CC,word,8F8AB758
+patch=1,EE,004432D0,word,11400058
+patch=1,EE,004432D4,word,95410008
+patch=1,EE,004432D8,word,8D4B0000
+patch=1,EE,004432DC,word,01214818
+patch=1,EE,004432E0,word,01284821
+patch=1,EE,004432E4,word,240114C0
+patch=1,EE,004432E8,word,01214818
+patch=1,EE,004432EC,word,01695821
+patch=1,EE,004432F0,word,C56C0AEC
+patch=1,EE,004432F4,word,95610B8E
+patch=1,EE,004432F8,word,44810000
+patch=1,EE,004432FC,word,46800020
+patch=1,EE,00443300,word,46006300
+patch=1,EE,00443304,word,C60D0AEC
+patch=1,EE,00443308,word,96010B8E
+patch=1,EE,0044330C,word,44810000
+patch=1,EE,00443310,word,46800020
+patch=1,EE,00443314,word,46006B40
+patch=1,EE,00443318,word,C64E0AEC
+patch=1,EE,0044331C,word,96410B8E
+patch=1,EE,00443320,word,44810000
+patch=1,EE,00443324,word,46800020
+patch=1,EE,00443328,word,46007380
+patch=1,EE,0044332C,word,460D6300
+patch=1,EE,00443330,word,460E6283
+patch=1,EE,00443334,word,3C013F80
+patch=1,EE,00443338,word,44810800
+patch=1,EE,0044333C,word,460A5282
+patch=1,EE,00443340,word,46015281
+patch=1,EE,00443344,word,C5620418
+patch=1,EE,00443348,word,C6430418
+patch=1,EE,0044334C,word,C6440404
+patch=1,EE,00443350,word,46021834
+patch=1,EE,00443354,word,44800800
+patch=1,EE,00443358,word,45010004
+patch=1,EE,0044335C,word,00000000
+patch=1,EE,00443360,word,46045281
+patch=1,EE,00443364,word,10000002
+patch=1,EE,00443368,word,00000000
+patch=1,EE,0044336C,word,46045280
+patch=1,EE,00443370,word,460A0834
+patch=1,EE,00443374,word,3C014040
+patch=1,EE,00443378,word,4500002E
+patch=1,EE,0044337C,word,44810800
+patch=1,EE,00443380,word,460152A9
+patch=1,EE,00443384,word,3C013C80
+patch=1,EE,00443388,word,44810800
+patch=1,EE,0044338C,word,46015282
+patch=1,EE,00443390,word,C6400190
+patch=1,EE,00443394,word,C5610190
+patch=1,EE,00443398,word,46010001
+patch=1,EE,0044339C,word,C6420194
+patch=1,EE,004433A0,word,C5630194
+patch=1,EE,004433A4,word,46031081
+patch=1,EE,004433A8,word,46000102
+patch=1,EE,004433AC,word,46021142
+patch=1,EE,004433B0,word,46052100
+patch=1,EE,004433B4,word,3C013D80
+patch=1,EE,004433B8,word,44810800
+patch=1,EE,004433BC,word,46012034
+patch=1,EE,004433C0,word,46040104
+patch=1,EE,004433C4,word,4501001B
+patch=1,EE,004433C8,word,00000000
+patch=1,EE,004433CC,word,46045283
+patch=1,EE,004433D0,word,460A0002
+patch=1,EE,004433D4,word,460A1082
+patch=1,EE,004433D8,word,C6460190
+patch=1,EE,004433DC,word,46003180
+patch=1,EE,004433E0,word,E6460190
+patch=1,EE,004433E4,word,C6460194
+patch=1,EE,004433E8,word,46023180
+patch=1,EE,004433EC,word,E6460194
+patch=1,EE,004433F0,word,C5660190
+patch=1,EE,004433F4,word,46003180
+patch=1,EE,004433F8,word,E5660190
+patch=1,EE,004433FC,word,C5660194
+patch=1,EE,00443400,word,46023180
+patch=1,EE,00443404,word,E5660194
+patch=1,EE,00443408,word,C6060190
+patch=1,EE,0044340C,word,46003180
+patch=1,EE,00443410,word,E6060190
+patch=1,EE,00443414,word,C6060194
+patch=1,EE,00443418,word,46023180
+patch=1,EE,0044341C,word,E6060194
+patch=1,EE,00443420,word,3C010051
+patch=1,EE,00443424,word,34214974
+patch=1,EE,00443428,word,8C230000
+patch=1,EE,0044342C,word,24630001
+patch=1,EE,00443430,word,AC230000
+patch=1,EE,00443434,word,8E0201EC
+patch=1,EE,00443438,word,03E00008
+patch=1,EE,0044343C,word,00000000
