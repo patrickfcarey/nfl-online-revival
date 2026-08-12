@@ -536,3 +536,38 @@ anywhere in the path — which is precisely what N-1/N-2/N-3 add.
 8. **State-30's [s5+0x10]==1 restriction** — whether a run-mode-flagged
    pass rusher (carrier past LOS flips modes) loses his funnel entirely or
    re-enters via state 2; peripheral to the double-team question.
+
+## P11 RESULT (2026-08-12): the shed-lock WAS the suppressor — and the defender wins the contest
+
+One word (0x001F21E8: addiu a1,zero,16 -> 0). 3/3 identical:
+
+    window   2..64 -> 2..78     DE travel  0.60 -> 1.79 yd (3x)
+    DE dy   -0.51 -> -1.41      gap        1.75 -> 1.35
+    carrier -0.70 -> +0.77      clips 5/6: 161x37 -> {147x41, 161x45}
+
+**THESIS CONFIRMED:** the helper's shed-lock re-arm was suppressing the
+contest. One word unlocked it and everything moved -- longer pairing, a new
+clip (147, engage-and-hold), triple the defender travel.
+
+**But the outcome is inverted.** dy -1.41 is DEEPER penetration: given a
+contest, the doubled defender WINS it. No driven-back ids (120-131) appear at
+all, so the lose chains are still not being reached -- he is not losing, he is
+beating two blockers. This is the risk the pnach flagged, and it is the
+cleanest possible evidence for what N-1 exists to fix: **nothing in the
+contest knows a second blocker is there.**
+
+So the picture is now complete and consistent:
+* the native driven-back vocabulary is real and reachable only by losing a
+  shed contest;
+* the double team was never entering that contest (shed-lock);
+* unlocked, it enters and LOSES -- because the contest scores one blocker
+  against one defender and the helper contributes nothing.
+
+**N-1 is now the whole fix and its prediction is sharp:** fold the attached
+role-1 helper's weight+STR into the primary's comps at the lock-in call
+(0x001F153C), and the same contest that just ran should resolve the other way
+-- into ids 120-131. Keep P11 deployed: without it the contest never happens,
+so N-1 alone would have nothing to flip. **P11 + N-1 is the pair that should
+finish this.**
+
+Operator watch item: with P11 alone, #93 should look MORE dominant, not less.

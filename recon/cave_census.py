@@ -189,6 +189,21 @@ class ImageIndex:
         hits.sort(key=lambda r: (r.axis, r.vaddr))
         return hits
 
+    def callers_of(self, addr: int) -> List[Reference]:
+        """Every way *addr* is reached -- the honest version of a caller scan.
+
+        A ``jal``-only search is not a liveness test and it is not a caller
+        list either: two of the four functions this project recorded as having
+        zero callers were reached by tail-call ``j``, one by a mid-function
+        address and one by a function-pointer word in ``.data``. This returns
+        all of those, because it asks the index rather than the opcode.
+
+        Walking this upward from a candidate patch site to the frame tick is
+        how you establish that a host really runs every frame -- the step
+        whose absence starved three hooks in a row.
+        """
+        return self.refs_into(addr, 4)
+
     def entry(self, base: int) -> str:
         """How, if at all, execution can walk into ``base`` from above.
 
@@ -279,10 +294,18 @@ def main(argv: List[str]) -> int:
     if len(argv) < 2:
         print(__doc__)
         return 2
-    elf = Elf32(argv[0])
-    ranges = [_parse_range(s) for s in argv[1:]]
-    index = ImageIndex(elf)
-    verdicts = census(elf, ranges, index)
+    index = ImageIndex(Elf32(argv[0]))
+
+    if argv[1] == "--callers":
+        for spec in argv[2:]:
+            addr = int(spec, 0)
+            refs = index.callers_of(addr)
+            print("0x%08X  %d reference(s)" % (addr, len(refs)))
+            for r in refs:
+                print("    %s" % (r,))
+        return 0
+
+    verdicts = census(None, [_parse_range(s) for s in argv[1:]], index)
     for v in verdicts:
         print(v.report())
         print()

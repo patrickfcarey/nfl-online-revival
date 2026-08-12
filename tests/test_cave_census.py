@@ -207,6 +207,30 @@ class ShippedCaveTest(unittest.TestCase):
         self.assertTrue(v.dead, v.report())
         self.assertEqual(v.entry, "data")
 
+    def test_caller_query_finds_a_jal_host(self):
+        # Site B's only caller, the per-frame engagement driver.
+        refs = self.index.callers_of(0x001F20F8)
+        self.assertEqual([(r.vaddr, r.axis) for r in refs],
+                         [(0x001F733C, "jal")])
+
+    def test_caller_query_finds_a_dispatch_TABLE_entry(self):
+        """State 32's ai_think has no `jal` caller at all.
+
+        It is reached only by a function-pointer word in the 93-state AI
+        dispatch table. A jal-only caller scan reports zero callers here --
+        which is precisely how live functions came to be recorded as dead,
+        and why the per-frame host that P10 eventually used was hard to find.
+        """
+        refs = self.index.callers_of(0x001E8088)
+        self.assertEqual([(r.vaddr, r.axis) for r in refs],
+                         [(0x00527540, "word")])
+
+    def test_caller_query_walks_the_frame_spine(self):
+        # The gameplay tick's single caller, per drive-lanes/1-per-frame-host.
+        refs = self.index.callers_of(0x00164EC0)
+        self.assertEqual([(r.vaddr, r.axis) for r in refs],
+                         [(0x0015418C, "jal")])
+
     def test_canary_word_is_unwritten(self):
         # motion-block-cave.md's execution canary: ELF-zero and referenced by
         # nothing, which is what makes a non-zero read proof of execution.
