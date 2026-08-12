@@ -20,11 +20,15 @@ none of them would have escaped this census:
   (not ``jal``), by a *mid-function* address, and by a function-pointer word
   sitting in ``.data``.
 
-The lesson those three paid for is that **searching for a target address is
-the wrong shape of search**. This module inverts it: propagate register values
-forward across the whole image, record *every* address the code forms, and
-then ask which of them land in the range. Nothing has to be guessed in
-advance, and one pass answers the question for any number of candidate caves.
+``find_address_refs`` was repaired after the first burn (commit 283c708 widened
+the pairing window), and it does now find both pairs -- but it answers for
+**one address at a time**, which is why a 120-word cave was never re-checked
+word by word and why the second burn happened anyway. This module inverts the
+search instead of widening it: propagate register values forward across the
+image once, record *every* address the code forms, and then ask which of them
+land in the range. No target has to be guessed in advance, all five axes are
+answered together, and one pass covers any number of candidate caves -- so
+re-censusing before each use is seconds, not minutes.
 
 The five axes, all required to be empty before a range may be called dead:
 

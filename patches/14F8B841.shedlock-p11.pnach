@@ -1,0 +1,46 @@
+gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
+comment=P11 -- one word: stop the helper re-arming the doubled defender's shed-lock. Over P1+P4.
+// Lane 3's key contrast, made testable in a single word. On slot 9 the C/NT
+// and LG pairs DO reach native driven-back outcomes (shed ids 121 and 129).
+// The double team never can, because its own kind-8 helper re-arms the
+// doubled defender's shed-lock +0x42C := 16 at every lapse (0x001f21e4/e8).
+// TryShedMove (0x001a7130) is gated on that lock being 0, so the doubled man
+// is the ONE defender on the field who never gets to contest -- and the
+// engine's driven-back/pancake vocabulary lives only on the LOSING side of
+// that contest (lose chains 0x00526668 run / 0x00526710 pass -> ids 120-131).
+//
+// 0x001F21E8: addiu a1, zero, 16 -> addiu a1, zero, 0. The lock is set to
+// zero instead of 16, so the shed contest may run for a doubled defender.
+// Against two blockers he should LOSE it, which is the native drive.
+//
+// This is the cheapest possible test of lane 3's whole thesis, and it beats
+// N-1 (a ~55-word cave) as the FIRST move because a null here refutes the
+// thesis before that cave is written. Risk: he may WIN the shed and beat the
+// double team -- which would be a different and informative failure.
+// Position-writing caves are removed; P8/P9/P10 are all superseded.
+
+patch=1,EE,001F4A30,word,08145248
+patch=1,EE,00514920,word,8E82005C
+patch=1,EE,00514924,word,90410437
+patch=1,EE,00514928,word,2C210002
+patch=1,EE,0051492C,word,10200006
+patch=1,EE,00514930,word,00000000
+patch=1,EE,00514934,word,8C4303E0
+patch=1,EE,00514938,word,2463FFFE
+patch=1,EE,0051493C,word,2C630007
+patch=1,EE,00514940,word,14600009
+patch=1,EE,00514944,word,00000000
+patch=1,EE,00514948,word,12000005
+patch=1,EE,0051494C,word,00000000
+patch=1,EE,00514950,word,92010437
+patch=1,EE,00514954,word,2C210002
+patch=1,EE,00514958,word,14200003
+patch=1,EE,0051495C,word,00000000
+patch=1,EE,00514960,word,0807D28D
+patch=1,EE,00514964,word,00000000
+patch=1,EE,00514968,word,8E820000
+patch=1,EE,0051496C,word,0807D2AC
+patch=1,EE,00514970,word,00000000
+patch=1,EE,001F6A74,word,2C420169
+
+patch=1,EE,001F21E8,word,24050000

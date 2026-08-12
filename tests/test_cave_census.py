@@ -94,40 +94,42 @@ class AxisTest(unittest.TestCase):
         # 124 bytes apart: inside a 4 KB window, outside the 64-byte window
         # that originally cleared cave #1.
         words = [NOP] * 64
-        words[8], words[9] = JR_RA, NOP
+        words[self.GUARD], words[self.GUARD + 1] = JR_RA, NOP
         words[0] = (0x0F << 26) | (8 << 16) | 0x0010          # lui t0, 0x0010
         words[31] = (0x09 << 26) | (8 << 21) | (8 << 16) | 0x0040  # addiu
         idx = _index(0x00100000, words)
         refs = idx.refs_into(self.CAVE, 8)
         self.assertEqual([r.axis for r in refs], ["formed"])
 
-    def test_addiu_off_a_reused_base_is_found(self):
-        """The axis that missed caves #1 and #3.
+    def test_one_base_serving_several_addresses(self):
+        """Cave #1's exact shape: one `lui`, four callbacks off it.
 
-        One `lui` establishes a base; a later `addiu rD, rBase, simm` with
-        rD != rBase forms an address *without* the pair ever completing to
-        it, and leaves the base live for the next one. A pair search for the
-        target finds nothing at all.
+        Each `addiu rD, rBase, simm` has rD != rBase, so the base survives
+        and serves the next one. A census must report *every* address formed
+        this way, not just the first -- cave #1 had four and the region start
+        was among them.
         """
         words = [NOP] * 64
-        words[8], words[9] = JR_RA, NOP
-        # lui s0, 0x0011  -> s0 = 0x00110000
-        words[0] = (0x0F << 26) | (16 << 16) | 0x0011
-        # addiu t0, s0, -0xFFC0 -> 0x00100040, and s0 survives
-        words[20] = (0x09 << 26) | (16 << 21) | (8 << 16) | (0x10000 - 0xFFC0)
+        words[self.GUARD], words[self.GUARD + 1] = JR_RA, NOP
+        words[0] = (0x0F << 26) | (16 << 16) | 0x0010     # lui s0, 0x0010
+        # addiu t0, s0, 0x40 / addiu t1, s0, 0x44 -- base reused, never dies
+        words[40] = (0x09 << 26) | (16 << 21) | (8 << 16) | 0x0040
+        words[41] = (0x09 << 26) | (16 << 21) | (9 << 16) | 0x0044
         idx = _index(0x00100000, words)
         refs = idx.refs_into(self.CAVE, 8)
-        self.assertEqual([r.axis for r in refs], ["formed"])
+        self.assertEqual([r.axis for r in refs], ["formed", "formed"])
+        self.assertEqual(sorted(r.target for r in refs),
+                         [self.CAVE, self.CAVE + 4])
         self.assertIn("off r16", refs[0].detail)
 
     def test_clobbering_the_base_drops_it(self):
         # What makes an unbounded pairing window safe: a write to the base
         # register invalidates it, so no stale pairing is reported.
         words = [NOP] * 64
-        words[8], words[9] = JR_RA, NOP
-        words[0] = (0x0F << 26) | (16 << 16) | 0x0011        # lui s0
+        words[self.GUARD], words[self.GUARD + 1] = JR_RA, NOP
+        words[0] = (0x0F << 26) | (16 << 16) | 0x0010        # lui s0, 0x0010
         words[1] = (0x0F << 26) | (16 << 16) | 0x0055        # lui s0 again
-        words[20] = (0x09 << 26) | (16 << 21) | (8 << 16) | (0x10000 - 0xFFC0)
+        words[40] = (0x09 << 26) | (16 << 21) | (8 << 16) | 0x0040
         idx = _index(0x00100000, words)
         self.assertEqual(idx.refs_into(self.CAVE, 8), [])
 
@@ -135,17 +137,16 @@ class AxisTest(unittest.TestCase):
         # A branch from inside the range to inside the range is the cave's
         # own control flow and must not count against it.
         words = [NOP] * 32
-        words[8], words[9] = JR_RA, NOP
-        offset = (self.CAVE + 4 - (self.CAVE + 4)) >> 2
-        words[16] = (0x04 << 26) | (offset & 0xFFFF)   # at 0x00100040
+        words[self.GUARD], words[self.GUARD + 1] = JR_RA, NOP
+        words[16] = (0x04 << 26) | 0x0000            # at 0x00100040 -> +0x44
         idx = _index(0x00100000, words)
         self.assertEqual(idx.refs_into(self.CAVE, 16), [])
 
     def test_entry_classification(self):
         words = [NOP] * 32
-        words[8], words[9] = JR_RA, NOP
+        words[self.GUARD], words[self.GUARD + 1] = JR_RA, NOP
         self.assertEqual(_index(0x00100000, words).entry(self.CAVE), "guarded")
-        words[8] = NOP
+        words[self.GUARD] = NOP
         self.assertEqual(_index(0x00100000, words).entry(self.CAVE),
                          "fallsthru")
 
