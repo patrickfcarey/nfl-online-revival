@@ -181,3 +181,30 @@ doublings on `lbu at, 1(base); bne at, zero, skip` -- ~3 extra words per arm,
 same hooks, same cave. If the DE then goes backwards, the lever is real and
 the mass-drive law attaches HERE; if he still does not, the second-mechanism
 hunt (collision layer 0x00213038 inverse mass) is the live thread.
+
+## P6 RESULT (2026-08-11): DECISIVE — speed_cmd cannot drive an engaged defender
+
+Asymmetric 256x, gate verified working (boosted speed_cmd appears on side-0
+players ONLY; every defender stock). Result across 3 iterations:
+
+    DE_dy  -0.49 / -0.73 / -0.49    (negative = penetrating toward the
+    DE_dist 0.62 / 1.15 / 0.62       offensive backfield, i.e. NOT driven)
+    carrier -0.70 / +2.67 / -0.70
+
+**Under a 256x one-sided push the doubled defender is immovable.** The lever
+governs the blocker's own locomotion; an engaged defender does not consume
+it. This is the clean pre-registered negative and it CLOSES the speed_cmd
+branch of S1-S3: no tuning of the weight+STR law onto this field would ever
+have moved anybody.
+
+**The hunt moves to the second mechanism**, with one strong named candidate:
+the collision layer at 0x00213038 -- `1/(weight * 335.4)`, weight_copy
++0x1E4 -- the ONLY mass-aware motion code in the image, and therefore the
+natural home of a mass-based drive law. Open questions for it: does it run
+while two players are engaged (or is engagement exempt from collision
+resolution?), and does anything else write a player's position during a
+block (animation root motion is the other candidate). Same P5/P6 template
+answers it: hook the write, scale absurdly, look.
+
+Also logged: iteration 1 diverged again (window 2..67, +2.67 yards) -- the
+second determinism wobble on record, both under heavy drive scaling.
