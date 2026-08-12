@@ -716,3 +716,35 @@ values to both men EVERY frame). The sweep is the stronger candidate: it
 already walks engaged pairs per frame and already touches both bodies.
 Re-derive its per-frame guarantee by COUNT, not by argument, before hooking --
 that is the mistake this entry exists to record.
+
+## P9 (2026-08-12): THE LEVER IS PROVEN — position writes drive the body and move the outcome
+
+Hook moved to the per-frame sweep (0x001F2070, s1/s2 = both pair members),
+gate dt_role==2, flat 0.045 yd/frame. 3/3 identical:
+
+    DE travel     0.60 -> 1.22 yd   DOUBLED
+    carrier      -0.70 -> +0.82     first outcome swing from a BLOCKING change
+    DE dy        -0.56              still net penetrating
+    canary          14  (~5/play, NOT the predicted ~56)
+
+**Writing +0x194 during an engagement MOVES the defender and changes the
+play.** That was the last unproven link: speed_cmd is dead (P6), velocity is
+dead (P7), animation owns the transforms -- but a direct position write lands.
+Five frames of it produced a 1.5-yard outcome swing.
+
+**And the host is not the problem.** Site B fired ~5/play; the per-frame sweep
+also fires ~5/play for this pair. Two different hosts, same count -- so these
+sites are LOCK-IN DRIVEN, not per-frame, and picking a third host is not the
+fix. The real question is now precise: **what runs every frame while a pair is
+engaged?** Candidates not yet counted: the state-32 think (0x001E8088, which
+advances the shared animation per frame by block-cycle.md), the locomotion
+integrator that P7 hooked (0x00212974 -- it ran often enough to be worth
+counting), or the root-motion applier 0x0018F980 itself.
+
+**Cheapest next step, and it is a count not a patch:** point the SAME 32-word
+cave at each candidate in turn and read the canary. A host that yields ~56 is
+the answer; the cave body and gate never change. One restart per candidate,
+five minutes each.
+
+Then swap the flat 0.045 for the weight+STR law (D=2.42 for this pairing,
+already derived) and the drive scales itself.
