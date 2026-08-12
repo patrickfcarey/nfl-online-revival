@@ -771,3 +771,22 @@ conditions -- what, at the moment of contact, tells the second man to
 release/pass off. The +0x432 initialisers are the wrong tree for run doubles.
 The kind-8 patch (still deployed, harmless per lanes 1/3) may yet matter for
 PASS doubles, but that is a different requirement.
+
+## DIAGNOSTIC RESULT (kind-4 init 30->90, 2026-08-11): timer family ELIMINATED, first positive yards
+
+Pad path repaired (keepalive-then-restart enumeration procedure). 2/2 clean.
+
+* T4 PROOF: RT held +0x432 = 77 during his dt window -- the patched formula's
+  signature, impossible at baseline. The word executed through the recompiler.
+* Windows STILL 2..36 / 2..43 / 27..43. A blocker carrying 77 ticks was torn
+  down at the same frame as one carrying 17. **The registry teardown reads no
+  timer this project has patched: kind-8, the +0x42C clock, and kind-4 are all
+  eliminated.** The touch-abort is a non-timer decision in the manage fn
+  0x001f6640. That trace is now the only live thread for R6.
+* TE/RG read 15/6 in-window: stamped by writers never audited -- the mechanism
+  doc lists 8 direct sh sites to +0x432 and only 2 have been examined.
+* **carrier_yards -0.70 -> +0.49** -- first positive movement, causal (one
+  word, deterministic engine). Longer ordinary contact holds alone turn the
+  stuffed dive into a gain. The diagnostic stays a diagnostic (global R5
+  violation), but it establishes that line-play hold time is a real lever on
+  outcomes even without fixing the double team itself.
