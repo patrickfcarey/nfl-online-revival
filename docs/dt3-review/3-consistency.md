@@ -99,7 +99,7 @@ to their possible values.
 | site | writes | precondition |
 |---|---|---|
 | **`0x001f4be4`** | **7** | **none — inside the gated block** |
-| `0x001f6424` | 7 | seeker already kind 7 (`0x001f63fc lw v1, 0(s7)`; `0x001f6400 bnel v1, 7`) — inside register |
+| `0x001f6424` | 7 | seeker already kind 7 (`0x001f63f8 lw v1, 0(s7)`, `s7 = s1+992`; `0x001f63fc addiu v0, zero, 7`; `0x001f6400 bnel v1, v0`) — inside register |
 | `0x001f68b4` | 7 | an in-use record already exists (`0x001f6684 lbu v1, 16(s0)`) — inside manage |
 | `0x001f5368` + partner | 7 | one of the pair already kind 7 (`0x001f5264 beq s1, 7`, `0x001f5288 beq s2, 7`) — a role *swap*, `0x001f5158` |
 | `0x001efa38` via `0x001ef9b4` | 7 | jump table `0x00583340` arm for **current kind 8** only |
