@@ -150,3 +150,34 @@ to baseline at 256x force.** Conclusion, and it reshapes S1-S3:
 The mass-drive law (weight+STR ratio) stands as the FORCE model; it must be
 applied to that second mechanism, not to speed_cmd. P5 stays available as the
 "is my lever wired to anything" template -- one hook, eight doublings, done.
+
+### CORRECTION (operator, same session): P5 buffed BOTH SIDES — the test was symmetric
+
+> "is it possible we also buffed it for the defense? ... otherwise it seems
+> theres nothing that changed ... maybe that 72 just pancakes someone because
+> theyre so much smaller and easier to win the battle with the huge buffs to
+> both sides"
+
+Confirmed in the data. Max speed_cmd per engaged pair, iteration 0:
+
+    TE 83.72 <-> DE 83.72     LT 78.77 <-> #4 78.77
+    C  37.55 <-> NT 37.55     LG 16.96 <-> #1 16.96     WR 12.55 <-> CB 12.55
+
+**Identical values, both sides.** The sweep's two stores (0x001f2068,
+0x001f2084) write the SAME shared magnitude to both members of the
+engagement, so the 256x cancelled out and the relative contest was never
+touched. The +7.07 carrier yards came from everyone moving faster, not from
+anyone winning.
+
+**Therefore the previous entry's conclusion is WITHDRAWN.** "speed_cmd drives
+the blocker and an engaged defender does not consume it" was never tested --
+there was no asymmetry to observe it with. Whether a defender can be driven
+by this lever is OPEN again.
+
+**The correct next diagnostic is asymmetric**: scale only the offensive
+member. The cave already has the player pointer in the store's base register;
+the side byte is +0x01 (0 = offense, per the handle layout). Gate the eight
+doublings on `lbu at, 1(base); bne at, zero, skip` -- ~3 extra words per arm,
+same hooks, same cave. If the DE then goes backwards, the lever is real and
+the mass-drive law attaches HERE; if he still does not, the second-mechanism
+hunt (collision layer 0x00213038 inverse mass) is the live thread.
