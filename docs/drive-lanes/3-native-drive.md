@@ -651,3 +651,24 @@ pass pro was arguably broken-good (a QB standing 8 seconds untouched behind 7
 men). More shedding may be a fix. Options if he rules it a regression: gate
 P11's zero to run plays (a small cave on the servicer testing the play class),
 or accept and re-baseline slot 7's range card.
+
+### OPERATOR RULING on the slot-7 change (2026-08-12): ACCEPTED, with two tunes logged
+
+> "they are shedding a bit too quickly but overall it does seem fun to see
+> them actually try to shed blocks aggressively, they all seem to hit swim
+> moves"
+
+P11's pass-side effect is ruled an improvement in direction, magnitude to
+tune. Slot 7's range card re-baselines to the dynamic-pocket values. Two
+follow-ups logged, neither actioned now (one variable at a time; N-1 is the
+queued change):
+
+* **T1 -- shed cadence.** P11 sets the lock to 0 = instant re-contest. The
+  word takes any immediate (addiu a1, zero, N), so a small N (4-8 frames)
+  slows the shed rhythm without restoring the statue. One-word tune, own
+  test, after N-1.
+* **T2 -- move variety.** "They all seem to hit swim moves": the shed-move
+  selection appears to collapse to one move. The win/lose chains
+  (0x00526668/0x00526710) and the move pools are mapped; why the roll always
+  lands on swim is an open thread (cpu-dt-animations.md territory -- possibly
+  the same finesse-vs-power selection the docs cover).
