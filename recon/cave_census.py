@@ -224,13 +224,56 @@ class ImageIndex:
         # accidentally look like `jr`.
         if any(disassemble(w, base).startswith(".word") for w in above):
             return "data"
-        prev = above[1]                              # the word two back
-        op = prev >> 26
-        if op in (0x02, 0x03):                       # j / jal
-            return "guarded"
-        if op == 0x00 and (prev & 0x3F) in (0x08, 0x09):   # jr / jalr
-            return "guarded"
+
+        # Walk back over the linker's alignment padding. Functions are packed
+        # to a 64-byte boundary here, so a `nop` or two commonly sits between
+        # the previous function's delay slot and the next prologue -- and a
+        # two-word lookback lands on the padding and wrongly reports a live
+        # fall-through. Cave #2's base is exactly this shape.
+        addr = base - 4
+        while addr > base - 64 and self.word(addr) == 0:
+            addr -= 4
+        last = self.word(addr)
+        if last is None:
+            return "unknown"
+        # Guarded either because the last real word IS the transfer (its delay
+        # slot was one of the skipped nops), or because it is the delay slot
+        # of the transfer immediately above it.
+        for candidate in (last, self.word(addr - 4)):
+            if candidate is None:
+                continue
+            op = candidate >> 26
+            if op in (0x02, 0x03):                            # j / jal
+                return "guarded"
+            if op == 0x00 and (candidate & 0x3F) in (0x08, 0x09):  # jr / jalr
+                return "guarded"
         return "fallsthru"
+
+    def internal_crossings(self, base: int, write_words: int,
+                           size: int) -> List[Reference]:
+        """Branches from the region's tail into the words you are about to
+        overwrite.
+
+        A cave is almost never overwritten in full: you write N words at the
+        base and leave the rest. If the region is one dead *function* rather
+        than a bag of independent leaves, its own branches cross your write
+        window -- and then your deadness evidence has to be perfect, because
+        a partial overwrite corrupts a function instead of replacing it.
+
+        This is the signal that rejected cave #2 (`0x0044C1C0`, a 160-word
+        function prologue whose tail at `0x0044C404` branches back to
+        `0x0044C228`). The external census called that region dead and was
+        right; the crossing is what said "this is a function, not padding" --
+        the fourth region documented safe and found unusable this session.
+        """
+        write_end = base + 4 * write_words
+        hits: List[Reference] = []
+        for target in range(base, min(write_end, base + size), 4):
+            for vaddr, axis, detail in self.reached.get(target, ()):
+                if write_end <= vaddr < base + size:
+                    hits.append(Reference(vaddr, target, axis, detail))
+        hits.sort(key=lambda r: r.vaddr)
+        return hits
 
 
 class CaveVerdict(NamedTuple):
@@ -305,11 +348,29 @@ def main(argv: List[str]) -> int:
                 print("    %s" % (r,))
         return 0
 
-    verdicts = census(None, [_parse_range(s) for s in argv[1:]], index)
+    write_words = 0
+    specs = list(argv[1:])
+    if specs and specs[0].startswith("--write="):
+        write_words = int(specs.pop(0).split("=", 1)[1], 0)
+
+    verdicts = census(None, [_parse_range(s) for s in specs], index)
+    clean = True
     for v in verdicts:
         print(v.report())
+        if write_words:
+            cross = index.internal_crossings(v.base, write_words, v.size)
+            print("  %-7s %s" % ("cross", "clean -- no branch from the tail "
+                                 "reaches your %d-word window" % write_words
+                                 if not cross else
+                                 "%d BRANCH(ES) into your write window -- this "
+                                 "region is one function, not padding"
+                                 % len(cross)))
+            for r in cross[:8]:
+                print("            %s" % (r,))
+            clean = clean and not cross
         print()
-    return 0 if all(v.dead for v in verdicts) else 1
+        clean = clean and v.dead
+    return 0 if clean else 1
 
 
 if __name__ == "__main__":

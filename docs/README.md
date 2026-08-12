@@ -24,6 +24,10 @@ New to the repo? Read in this order:
 4. `lessons-learned.md` — the gameplay-RE companion to `method.md`: tool
    gaps, MIPS traps, and what this engine's architecture actually looks
    like. **Read before starting any new gameplay investigation.**
+5. `tracing-method.md` — the *order* to run checks in when tracing a defect
+   to a patchable site, the catalogue of sixteen dead ends from the
+   double-team campaign, and the invariants each one earned. **Read before
+   designing any patch.**
 
 ## Track 1 — Online revival
 
@@ -48,6 +52,7 @@ New to the repo? Read in this order:
 | `slider-behavior.md` | the options/slider system end to end: storage, the universal transform, penalty ramps, the UI binding layer |
 | `play-tendency-ai.md` | the `ptrk` anti-repetition tracker (the real "CPU cheat"), and Madden Cards |
 | `lessons-learned.md` | tooling gaps, MIPS traps, method, and engine architecture lessons |
+| `tracing-method.md` | **method** — the ordered procedure from defect to patch site, sixteen dead ends with the cheapest check that would have caught each, and the tooling (`tools/gatecensus.py`, `recon/cave_census.py`) that makes the cheap checks cheap |
 | `state-dispatch-table.md` | **generated** — all 115 AI states x 6 handler pointers, and the 26 shared handlers a patch must not surprise |
 
 **Answered questions** (community reports, diagnosed):

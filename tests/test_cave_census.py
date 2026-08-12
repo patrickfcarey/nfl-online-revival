@@ -195,6 +195,39 @@ class ShippedCaveTest(unittest.TestCase):
         self.assertEqual(sorted(r.vaddr for r in v.by_axis()["formed"]),
                          [0x00460178, 0x00460180])
 
+    def test_cave_2_is_dead_as_a_unit_but_is_one_function(self):
+        """The fourth false-safe region, and the subtlest.
+
+        Nothing outside reaches cave #2 on any axis -- the external census is
+        right that it is dead. But its base is a *function prologue*
+        (`addiu sp, sp, -224`) and its tail at 0x0044C404 branches back to
+        0x0044C228, inside the first 55 words anyone would write there. A
+        partial overwrite corrupts a function rather than replacing it, so
+        the region is unusable even though it is unreferenced.
+        """
+        v = self._verdict(0x0044C1C0, 640)
+        self.assertTrue(v.dead)                      # no external reference
+        self.assertEqual(v.entry, "guarded")
+        cross = self.index.internal_crossings(0x0044C1C0, 55, 640)
+        self.assertEqual([(r.vaddr, r.target) for r in cross],
+                         [(0x0044C404, 0x0044C228)])
+
+    def test_alignment_padding_does_not_fake_a_fall_through(self):
+        # A `nop` pad sits between the previous function's delay slot and
+        # cave #2's prologue. A two-word lookback lands on the pad and
+        # wrongly reports live code running in.
+        self.assertEqual(self.index.entry(0x0044C1C0), "guarded")
+        self.assertEqual(self.index.word(0x0044C1BC), 0)          # the pad
+        self.assertEqual(self.index.word(0x0044C1B4), 0x03E00008)  # jr ra
+
+    def test_the_verified_alternative_caves_are_clean(self):
+        # Caves #4/#5/#6, re-verified on every axis after #2 was rejected.
+        for base, size in ((0x004F4AA0, 608), (0x00447888, 600),
+                           (0x0044BEB0, 584)):
+            v = self._verdict(base, size)
+            self.assertTrue(v.dead, v.report())
+            self.assertEqual(self.index.internal_crossings(base, 55, size), [])
+
     def test_cave_7_is_dead(self):
         # The motion cave's workhorse, re-censused clean in its own doc.
         v = self._verdict(0x00443270, 480)
