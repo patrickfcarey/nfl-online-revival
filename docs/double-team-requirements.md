@@ -852,3 +852,20 @@ P4 note: cap 61->361 bought only 60->64 -- the ender at ~64 is separation
 geometry, not the clock. THE REMAINING WORK IS THE PHYSICAL CONTEST:
 sustained drive (S1), backward bearing (S2, the two heading stores), contact
 retention, mass (S3). The hold is solved; the push is next.
+
+### The frame-64 ender IDENTIFIED (2026-08-11): the capture poisons the record
+
+At death: TE kind 5, DE kind 6 -- the primary captured into the 1-on-1
+animation pair -- while the RT held kind 7 throughout (re-anchored to 2 at
+f66). The manage rule "primary kind 5/6 unless mutual anim in the yes-set
+{146-151,168-170,173}" fires: the capture anim (158, NO-set) kills the
+record from the inside. The operator's split-angle theory refuted in
+positional form (flat 35-44 deg all record -- B3/B4 must read FACINGS,
++0x1A8, unsampled: add to FIELDS); his conclusion stands via the capture.
+TE real contact was only 20/62 frames (23..42) -- the record's last 22
+frames are contactless shadowing.
+
+NEXT PATCH (was staged phase 2, now the confirmed active killer): add 158 to
+the yes-set at 0x00583360 -- one data edit serving both the helper's
+attach-through-capture and the record's survival-through-capture. Then the
+drive war (S1-S3).
