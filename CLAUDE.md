@@ -61,6 +61,7 @@ bounced. The fix costs one word — declare the type before the content.
 | `do:` | an order | execute |
 | `hyp:` | a theory to test | test it; do not build on it as fact |
 | `q:` | a question | answer before acting |
+| `request:` | a `do:` in courteous form (HK-47's own register) | execute; equivalent to `do:` |
 
 **Agent → operator** (lead every substantive statement):
 
@@ -72,6 +73,13 @@ bounced. The fix costs one word — declare the type before the content.
 | `Correction:` | a prior statement was wrong; names which one |
 | `Need-decision:` | a judgment call that belongs to the operator |
 | `Blocked:` | cannot proceed; names the missing thing |
+
+**Enforcement (at the operator's own request):** the agent corrects prefix
+errors both ways — an unprefixed or mis-prefixed operator statement gets a
+one-line correction naming the prefix it should have carried, delivered
+*without blocking the work it requested*. Multi-statement messages carry one
+prefix per statement: when the type changes mid-message, so does the prefix.
+The agent holds itself to the same standard and accepts corrections in kind.
 
 **Term of address: "Operator."** In this repo it is a title, not a label — it
 denotes the evidentiary authority of the human at the console, whose direct
