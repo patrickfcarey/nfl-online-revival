@@ -412,3 +412,31 @@ coordinator wants a positive control before sweeping.
    pancakes, the next lever is three constants (three more data words
    and three lwc1s in the same tail) — designed but deliberately not
    shipped: one variable at a time.
+
+## SWEEP RESULT k=0.5 (2026-08-12): the knob is the whole spectrum
+
+Deployed and run on slot 9 (3/3 identical). Against N-1's k=1.0:
+
+    k=1.0  DE_dy +2.09  clips {56}       PANCAKE (blocker dominates)
+    k=0.5  DE_dy -1.15  clips {147,61}   DEFENDER WINS (double team LOST)
+
+The response is a STEP, not a ramp: half the fold drops the margin below the
+blocker-win grid-cell boundary and the defender wins outright (near the P11-only
+-1.41). So on the frozen savestate, k selects a point on lose<->pancake with a
+narrow walk-back band at the boundary; the walk-back center sits between 0.5
+and 1.0.
+
+**This makes k the single knob for BOTH T3 (outcome variety) and R11a
+(losable).** In LIVE play the contest jitter spreads outcomes around the
+k-centered margin (which is why the operator saw variety on repeated snaps even
+though the harness replay is deterministic). So k sets the CENTER of the live
+mix, not one outcome. Pre-flight lesson also banked: after an emulator restart
+the runner-class pad must be hotplug-bound -- fire ONE snap and check
+frames_since_snap before a real run (a full trial recorded 3 empty iterations
+when input never reached the game; the operator caught it: "no play was ever
+run").
+
+Recommended next: k around 0.80-0.85 (biases live play to mostly-wins, pancakes
+on mismatches, occasional losses to elite defenders), FELT in live play rather
+than harness replay -- the replay only shows the center clip, the operator's
+hands show the spread. k=0.8 = 0x3F4CCCCD, k=0.85 = 0x3F59999A.
