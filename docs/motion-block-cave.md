@@ -615,3 +615,39 @@ confirm both stock values.
    recompiler re-dirties the cave page every vsync. The standing rule
    (patch=1 everywhere) is followed; if pacing suffers on the rig, that
    rule — not this design — is the thing to revisit.
+
+## P8 RESULT (2026-08-12): cave executes, gate starves it — 5 driven frames per play
+
+S0 all words verified, canary zero pre-run. After 3 iterations:
+
+    canary        15   (= 5 driven frames per play; cave DID execute)
+    DE dy       -0.57   (baseline -0.51 -- still penetrating)
+    DE dist      0.61   (baseline 0.60)
+    TE-DE gap    1.01   (baseline 1.75 -- REAL IMPROVEMENT, pair stays with him)
+    carrier     -0.70   (unchanged)
+    window     2..57    (baseline 2..64 -- SHORTER despite the companion word)
+
+**Diagnosis, and A2's series already contains it:** the gate requires the
+helper in kind 8 AND the defender in kinds 5/6 simultaneously. The RT holds
+kind 8 from f23 to f43; the DE does not enter 5/6 until f43. The overlap is
+~5 frames -- by the time the defender is captured, the helper has dropped to
+kind 7. At 0.038-0.042 yd/frame that is ~0.2 yd of drive: below the noise.
+
+The law, the arithmetic and the cave are all sound. The SIMULTANEITY
+REQUIREMENT is what starves them.
+
+Two secondary findings:
+* The gap closing 1.75 -> 1.01 yd is the drive working in miniature -- five
+  frames of it measurably pulled the pair back onto him. That is the first
+  positive displacement signal of the project.
+* The window SHORTENED (64 -> 57) even with 161 admitted to the yes-set, so
+  the companion word did not extend the record and something else ends it at
+  ~57-64. The frame-64 ender is still unidentified (facings remain unsampled).
+
+### Next change, single and precise
+
+Widen the drive gate from "helper kind == 8" to "helper dt_role == 1" (the
+record already proves the pairing) or to kinds {7,8}. Predicted canary jump
+from 5 to ~35-40 frames per play, which at the measured step is 1.3-1.7 yd --
+straight into R3's >= 1.0 target. One word in the cave's gate; everything else
+stays. Bisect is trivial: revert the gate word alone.
