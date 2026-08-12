@@ -93,3 +93,33 @@ census first (the #1 lesson: reachability before trust).
 **Sequencing:** AFTER yes-set+158. Until the record survives the capture,
 2x force would apply to ~20 contact frames and then die at 64 regardless.
 Order: survive contact -> then double the push through it.
+
+### S4-D REFINED into the unified mass-drive law (operator, same session)
+
+> "proportional to their weight + str combined against the defenders ...
+> basically overpowering ... that model could also be applied to when big
+> guys block smaller"
+
+**The law (replaces the flat 2x):**
+
+    drive_multiplier = f( SUM_attackers(weight + k*STR) / defender(weight + k*STR) )
+
+* One formula for singles AND doubles -- a double is just the sum having two
+  contributors (helper counted only while touching, per S4-D). No special
+  cases, no switch.
+* "Basically overpowering": a real double (~600 combined lbs vs ~290) lands
+  deep in the winning band and stays there -- sustained skates.
+* Automatically correct at the edges: big-on-small singles drive (guard
+  pancaking a nickel), small-on-big moves nobody (WR on a DE), near-equal =
+  stalemate, planted. R5 protection is the shape of the curve itself.
+
+**Inputs, all mapped and verified:** weight +0xAEC (real pounds, verified),
+STR from the effective-ratings block +0xB70 (PSTR index 15 in the attribute
+table); weight currently has ZERO motion uses (drive lane census), and the
+collision layer's 1/(weight*335.4) is the in-engine inverse-mass pattern to
+imitate. Implementation stays at the margin confluence 0x001f16dc-e8: the
+cave computes the ratio for the locked pair (+ touching helper) and scales
+f20. Direction unchanged: the primary's earned bearing.
+
+k (STR's weight vs pounds) and f's clamp band are TUNING -- range cards per
+the seed-testing plan once the first sweep exists.
