@@ -625,3 +625,29 @@ N-1"), including whether a cheaper route exists -- a cached helper base or an
 engine function returning "the other blocker on this man" would beat twenty
 words of pointer arithmetic. Building on the unverified path would have been
 the same mistake as writing into cave #2.
+
+## REGRESSION ARMS under P1+P4+P11 (boot 1, 2026-08-12)
+
+**Slot 6 (lead-blocker run, R5 control): CLEAN.** lead_blockers_seen 1,
+first_mode3 21, engaged_frames 92, carrier -0.724 -- all at or within rounding
+of the pre-patch-era baselines. 3/3 deterministic.
+
+**Slot 7 (pass): STRUCTURALLY MOVED -- pre-registered flag tripped.**
+
+    qb_dropback       7.167 -> 8.753     block_episodes  12 -> 25
+    longest_episode   329  -> 218        worst_drop_late 0.678 -> 0.559  <- the flag
+    carrier_yards     -0.725 UNCHANGED   blockers_engaged 7 UNCHANGED
+    max_snap_frame    467 (play still never ends; QB still never sacked)
+
+Reading: P11's shed-lock unlock reaches pass pro through the measured kind-8
+flap exactly as predicted. Defenders on pass blocks can now shed, so reps end
+and re-form (25 episodes vs 12, longest 218 vs 329) and the QB drops deeper --
+but no blocker is lost, the QB is still never sacked, and the play outcome is
+unchanged. The pocket became DYNAMIC rather than static.
+
+The pre-registered letter says worst_drop_late moving = fail flag, so it is
+raised, not rationalised. The football question is the operator's: baseline
+pass pro was arguably broken-good (a QB standing 8 seconds untouched behind 7
+men). More shedding may be a fix. Options if he rules it a regression: gate
+P11's zero to run plays (a small cave on the servicer testing the play class),
+or accept and re-baseline slot 7's range card.
