@@ -3,6 +3,22 @@
 Investigated 2026-08-10 against `SLUS_207.52` (Madden NFL 2004), in
 answer to open questions #14a and #14b.
 
+> **CORRECTIONS from the 2026-08-12 double-team campaign** (details in
+> `double-team-requirements.md`, `lessons-learned.md` Part 9, and the
+> `dt-lanes/`, `anim-lanes/`, `drive-lanes/` directories). Three claims below
+> are superseded: (1) **"the helper is a statue (speed zeroed)"** — the zeroing
+> tracks `ai_state` 32, not the helper role, and is a *conditional grant* of
+> 0.46 that lapses, not a zero write. (2) **The `dt_role` enum 0/1/2/3 is
+> incomplete** — **5 = unassigned** (the empty-slot value the engine actually
+> tests). (3) **"No positional coupling"** holds for the *engagement* system,
+> but a convergence-warp (`0x00196FE0`) does move aligned pair participants,
+> and the driven-back outcome is produced *natively* by winning the contest
+> (N-1), not by any position write. The double team was fully fixed on
+> 2026-08-12: it commits, holds, never releases, and drives the defender back
+> proportional to combined weight+strength. This doc's *mechanism map* (the
+> block cycle, DT-1..DT-4, the kind enum) remains sound; the three claims above
+> are the ones the campaign overturned.
+
 > "There is no such thing as double teams."
 
 **That is wrong.** The engine has a designed, coordinated double-team

@@ -308,3 +308,108 @@ the code lives.
 behaviour out of a change; the other proves the change did not reach further
 than intended. A project needs both: scope discipline before the code, and
 isolation testing after it.
+
+## Part 9 — The block system, and the patching lessons the double-team campaign earned (2026-08-12)
+
+The double team went from a quarter-second touch-and-abort to a
+mass-proportional pancake over one campaign (four shipped words: P1, P4, P11,
+N-1). The *procedure* lessons are in `tracing-method.md`; the *architecture*
+and the *deploy discipline* live here because a future investigation of this
+engine needs them before it starts.
+
+### 9.1 The block pipeline, end to end (transferable)
+
+A block is not one system; it is a pipeline, and a defect can live at any
+stage. Naming the stages is what let the campaign attack the right one:
+
+1. **Assignment market** (`0x001f4790`, per-frame). Re-shops every blocker's
+   target every frame with no awareness of double-team records. It was
+   *stealing the participants* — the touch-abort. Fixed by P1 (a commit guard:
+   don't re-shop a live record member). See `double-team-solution.md`.
+2. **Registry** (`dt_record`/`dt_role` at +0x436/+0x437; block `[0x00601280]`,
+   records at T+4+20k). Bookkeeping only — it does NOT sustain a pairing; the
+   engagement *kinds* do. `dt_role` **5 = unassigned** (not in the published
+   0/1/2/3 enum). The role-1 helper is always at record+0x04, stored as a
+   HANDLE (resolve via `0x0013B798`), and `+0x436` has **zero readers
+   image-wide** — there is no "find my helper" function.
+3. **Contest** (`0x001f0c40`, at lock-in). Stamps three comps at
+   +0x414/+0x418/+0x41C from ratings and weight. **It scores ONE blocker vs
+   ONE defender** — the reason a doubled man wins his shed. N-1 folds the
+   helper's weight+STR in here so the contest finally knows two men are on him.
+4. **Outcome grid** (`0x00526F90`, 6×5, keyed on the comp pools + drive).
+   Selects a *cell* by margin size: stalemate, shed, drive, pancake. **Cell,
+   not scalar** — this is why T3 (outcome variety) is a fold-magnitude tune,
+   not new code.
+5. **Animation** (state 32, clip via the group registry; root motion
+   `0x0018F9E0` → `0x0018F980` onto +0x190/+0x194/+0x1A8). Owns both bodies'
+   transforms during kinds 5/6.
+
+**The load-bearing architectural fact:** during a pair clip, nothing moves the
+*loser's* logical position — the pancake animation is **skeletal, visual
+only**. Real "drive him back" is not a position write; it is winning a native
+contest so the engine selects a driving outcome cell. Four patches (P8–P10)
+died writing positions before this was established by a single field-writer
+census. (One qualifier: a convergence-warp at `0x00196FE0` *does* write
++0x190/+0x194 for aligned participants — the "stale garbage" earlier work saw.
+"Nothing writes position" is true of the *engagement* system, not the whole
+image.)
+
+### 9.2 Latching vs accumulating patches — the distinction that saves a patch
+
+A patch that **accumulates** an effect per frame (a position nudge, a timer
+tick) needs the host to run at a known high frequency; five firings buys
+inches. A patch that **latches** a decision (a contest outcome, a target
+choice) needs to fire *once at the right moment* — the outcome governs the rep
+until the next lock-in. N-1 fires only 2–8×/play and works, because it latches.
+Counting firing frequency without asking which kind of patch it is will reject
+a good latching patch for the wrong reason. Record this next to
+`tracing-method.md`'s "count frequency in situ" rule — the count is necessary,
+but its *interpretation* depends on the patch class.
+
+### 9.3 The canary: a hand-rolled execution counter, and its one gotcha
+
+To prove a cave executed (and how often), append 3–4 words that increment a
+stock-zero word in unused padding (cave #11 spare words). Read it after the
+run. It settled three "does this host even run?" questions that no static
+derivation could. **Gotcha:** `load_state` restores EE memory including the
+canary region, so a multi-iteration trial WIPES it each load — the reading is
+per-play, not cumulative. (A per-frame execution counter belongs in the
+harness; it was hand-rolled twice before anyone said so.)
+
+### 9.4 Deploy discipline (operational, and each cost a cycle)
+
+* **Five-axis cave census, by the deployer, every time.** Four regions
+  documented safe were live this session (#1 poisoned via a distant
+  `lui`-formed base, #3 live, #2 a branch landing inside from `0x0044C404`,
+  plus a recommended region). A prior agent's clean census does NOT transfer —
+  the axis it omitted is the one that bites. `recon/cave_census.py` runs all
+  five (data-word pointers, branches/jumps in, jal targets, lui/addiu
+  materialisations, ELF-vs-savestate identity). Census in BOTH the ELF and the
+  target savestate's memory.
+* **pnach encoding.** `patch=1,EE,addr,word,VALUE` is a proven 32-bit write in
+  this fork. The `extended` type encodes width in the address's LEADING DIGIT
+  (0=byte, 1=half, 2=word) — a bare `001f6b0c,extended` silently byte-wrote and
+  cost a cycle. Use `word`.
+* **`patch=1` for cave bodies, not `patch=0`.** `load_state` restores the cave
+  region, so a boot-time (place 0) cave body is wiped by the first savestate
+  load and the trial measures unpatched code. Every line `patch=1`.
+* **Verify the patched words over PINE before believing a run (S0).** "The
+  cheat file parsed" ("Found N cheats" in the log) is not "the words are in
+  memory." Read them back.
+* **EnableCheats reverts on emulator exit.** PCSX2 rewrites its global ini on
+  quit; editing it mid-session is undone. Use a per-game override
+  (`gamesettings/SLUS-20752_14F8B841.ini`, `[EmuCore] EnableCheats = true`).
+* **Two-boot regression discipline.** When a patch's blast radius reaches a
+  second play type (P11 reached pass pro via the kind-8 flap), run the
+  regression arm under the CURRENT set before adding the next patch, so any
+  movement attributes to the right change.
+
+### 9.5 The operator is the instrument of record
+
+Across this campaign the operator's screen observations corrected the
+instruments **seven times** — the statue, the pushback magnitude, timer-vs-
+priority, the touch-abort, a symmetric 256× test that cancelled, an over-claim
+on a 7-inch nudge, and reading P11's result as a shed-then-handoff. Every time
+the eyes were right and the metric was being read too generously. `obs:` from
+the console outranks the harness; when they disagree, the harness has a bug.
+This is `operator-observations-are-evidence` earning its rule, quantified.
