@@ -1,0 +1,120 @@
+gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
+comment=N-1 -- fold the helper's mass+strength into the primary's contest. Over P1+P4+P11.
+// The keystone (docs/n1-cave.md, docs/drive-lanes/3-native-drive.md). At the
+// sole contest lock-in (0x001F153C -> jal cave #4), if the defender is a live
+// record's role-2 man, resolve the role-1 helper (record+0x04 handle via
+// 0x0013B798) and add W+STR / AGI+STR/2 / W+STR+AWR+AGI into the primary's
+// freshly stamped comps. AGI pinned as index 1 (PAGI) two independent ways.
+// Gates: role-2, helper resolves, helper kind in {7,8}, record.primary==s0
+// (an extra insurance the author added -- both insurances fail toward stock).
+// 66 words in cave #4 (0x004F4AA0), re-censused DEAD on five axes by author
+// AND coordinator independently. Canaries: 0x0051497C entry, 0x00514978 fold.
+// ORACLE: the frame-23 shed the doubled DE currently WINS (P11 measured:
+// handoff, clips 147->161, dy -1.41) should resolve into the driven-back
+// family (ids 120-131). Must-not-move: slot 6, slot 7, any pair without a
+// live record, and 3x determinism.
+
+patch=1,EE,001F4A30,word,08145248
+patch=1,EE,00514920,word,8E82005C
+patch=1,EE,00514924,word,90410437
+patch=1,EE,00514928,word,2C210002
+patch=1,EE,0051492C,word,10200006
+patch=1,EE,00514930,word,00000000
+patch=1,EE,00514934,word,8C4303E0
+patch=1,EE,00514938,word,2463FFFE
+patch=1,EE,0051493C,word,2C630007
+patch=1,EE,00514940,word,14600009
+patch=1,EE,00514944,word,00000000
+patch=1,EE,00514948,word,12000005
+patch=1,EE,0051494C,word,00000000
+patch=1,EE,00514950,word,92010437
+patch=1,EE,00514954,word,2C210002
+patch=1,EE,00514958,word,14200003
+patch=1,EE,0051495C,word,00000000
+patch=1,EE,00514960,word,0807D28D
+patch=1,EE,00514964,word,00000000
+patch=1,EE,00514968,word,8E820000
+patch=1,EE,0051496C,word,0807D2AC
+patch=1,EE,00514970,word,00000000
+patch=1,EE,001F6A74,word,2C420169
+
+patch=1,EE,001F21E8,word,24050000
+
+patch=1,EE,001F153C,word,0C13D2A8
+patch=1,EE,004F4AA0,word,27BDFFF0
+patch=1,EE,004F4AA4,word,FFBF0000
+patch=1,EE,004F4AA8,word,0200202D
+patch=1,EE,004F4AAC,word,0C07C310
+patch=1,EE,004F4AB0,word,0280282D
+patch=1,EE,004F4AB4,word,3C080051
+patch=1,EE,004F4AB8,word,24090001
+patch=1,EE,004F4ABC,word,AD09497C
+patch=1,EE,004F4AC0,word,92880437
+patch=1,EE,004F4AC4,word,24010002
+patch=1,EE,004F4AC8,word,15010034
+patch=1,EE,004F4ACC,word,92890436
+patch=1,EE,004F4AD0,word,8F8ABB90
+patch=1,EE,004F4AD4,word,00095880
+patch=1,EE,004F4AD8,word,00096100
+patch=1,EE,004F4ADC,word,016C5821
+patch=1,EE,004F4AE0,word,014B5021
+patch=1,EE,004F4AE4,word,914D0014
+patch=1,EE,004F4AE8,word,11A0002C
+patch=1,EE,004F4AEC,word,8E8E0000
+patch=1,EE,004F4AF0,word,8D4F000C
+patch=1,EE,004F4AF4,word,15CF0029
+patch=1,EE,004F4AF8,word,8E0E0000
+patch=1,EE,004F4AFC,word,8D4F0004
+patch=1,EE,004F4B00,word,15CF0026
+patch=1,EE,004F4B04,word,00000000
+patch=1,EE,004F4B08,word,0C04EDE6
+patch=1,EE,004F4B0C,word,25440008
+patch=1,EE,004F4B10,word,10400022
+patch=1,EE,004F4B14,word,00000000
+patch=1,EE,004F4B18,word,8C5803E0
+patch=1,EE,004F4B1C,word,2718FFF9
+patch=1,EE,004F4B20,word,2F180002
+patch=1,EE,004F4B24,word,1300001D
+patch=1,EE,004F4B28,word,00000000
+patch=1,EE,004F4B2C,word,C4410AEC
+patch=1,EE,004F4B30,word,94580B8E
+patch=1,EE,004F4B34,word,94590B72
+patch=1,EE,004F4B38,word,94480B74
+patch=1,EE,004F4B3C,word,44981000
+patch=1,EE,004F4B40,word,468010A0
+patch=1,EE,004F4B44,word,0018C042
+patch=1,EE,004F4B48,word,44983800
+patch=1,EE,004F4B4C,word,468039E0
+patch=1,EE,004F4B50,word,44991800
+patch=1,EE,004F4B54,word,468018E0
+patch=1,EE,004F4B58,word,44882000
+patch=1,EE,004F4B5C,word,46802120
+patch=1,EE,004F4B60,word,0813D2EA    // T3: detour to k-scale tail (was add.s f5,f1,f2)
+patch=1,EE,004F4B64,word,C6460010
+patch=1,EE,004F4B68,word,46053180
+patch=1,EE,004F4B6C,word,E6460010
+patch=1,EE,004F4B70,word,46071A00
+patch=1,EE,004F4B74,word,C6490014
+patch=1,EE,004F4B78,word,46084A40
+patch=1,EE,004F4B7C,word,E6490014
+patch=1,EE,004F4B80,word,46042A80
+patch=1,EE,004F4B84,word,46035280
+patch=1,EE,004F4B88,word,C64B0018
+patch=1,EE,004F4B8C,word,460A5AC0
+patch=1,EE,004F4B90,word,E64B0018
+patch=1,EE,004F4B94,word,3C090051
+patch=1,EE,004F4B98,word,AD224978
+patch=1,EE,004F4B9C,word,DFBF0000
+patch=1,EE,004F4BA0,word,03E00008
+patch=1,EE,004F4BA4,word,27BD0010
+// --- T3 fold-scale tail (k = 0.5 at 004F4BCC; retune this one word) ---
+patch=1,EE,004F4BA8,word,3C01004F
+patch=1,EE,004F4BAC,word,C4204BCC
+patch=1,EE,004F4BB0,word,46000842
+patch=1,EE,004F4BB4,word,46001082
+patch=1,EE,004F4BB8,word,460039C2
+patch=1,EE,004F4BBC,word,460018C2
+patch=1,EE,004F4BC0,word,46002102
+patch=1,EE,004F4BC4,word,0813D2DA
+patch=1,EE,004F4BC8,word,46020940
+patch=1,EE,004F4BCC,word,3F000000
