@@ -678,3 +678,41 @@ run. Two spare words exist at 0x00514978/7C (cave #11's remainder, ELF-zero).
 That is the next step, and it is a measurement rather than a patch -- which is
 the discipline that has worked all session and which I skipped here by
 inferring the limiter from A2's series instead of measuring it.
+
+## THE STARVATION EXPLAINED (2026-08-12): the host runs 1 frame in 7, not every frame
+
+Answered from data already on disk -- no patch, no rig time. Gate conditions
+counted across iteration 0 of the P8b run:
+
+    helper kind == 8      35 frames
+    helper dt_role == 1   56 frames
+    defender dt_role == 2 56 frames
+    defender kind 4/5/6   79 frames
+    role pair (both)      56 frames
+    ALL FOUR TOGETHER     35 frames
+    ---------------------------------
+    canary measured        5 frames
+
+**The cave's gates pass on 35 frames and the cave ran on 5.** The gates were
+never the problem -- the HOST does not execute per attached frame. The design's
+premise ("Site B ... proven to run every attached frame, statically + the
+measured 1.75-yd RT freeze") is REFUTED by direct count: roughly 1 frame in 7.
+
+Consequences:
+* No gate widening can ever fix this, which is why P8b changed nothing. The
+  hook is in the wrong function, not gated too tightly.
+* At 35 driven frames the measured step (0.038-0.042 yd/f) gives 1.3-1.5 yd --
+  through R3's >= 1.0 target. The law and the cave body are sound; they need a
+  host that ticks.
+* dt_role is the better gate regardless: the role pair holds for 56 frames
+  against kind-8's 35, and the record already proves the pairing.
+
+**Next step: move the hook to a per-frame driver and gate on the role pair.**
+Candidates already mapped in this repo: the per-frame block manager chain
+0x001F7298 -> 0x001F72D0 (drives 0x001F5590/0x001F4790 every frame,
+established in dt3-review/1-gate-arms.md), and the drive sweep 0x001F1C20
+(tick 0x001F7344, established in dt-lanes/drive-machinery.md as copying staged
+values to both men EVERY frame). The sweep is the stronger candidate: it
+already walks engaged pairs per frame and already touches both bodies.
+Re-derive its per-frame guarantee by COUNT, not by argument, before hooking --
+that is the mistake this entry exists to record.
