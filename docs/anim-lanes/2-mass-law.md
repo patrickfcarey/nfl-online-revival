@@ -19,9 +19,13 @@ Context that shapes everything here: **Route C is confirmed** — animation
 root motion owns both bodies during a block. speed_cmd (P6) and velocity (P7)
 are proven dead levers for moving an engaged defender. So this law is a
 **selector input** (which clip family the pair gets) first, and a drive
-magnitude second. Lane 1 (`docs/anim-lanes/1-dispatcher.md`, sibling, not yet
-present as of this writing) owns the dispatcher; this document owns the
-formula, its calibration from real memory, and the hook that computes it.
+magnitude second. Lane 1 (`docs/anim-lanes/1-dispatcher.md`, sibling) owns
+the dispatcher; this document owns the formula, its calibration from real
+memory, and the hook that computes it. Lane 1's rescued fragment
+(`0-partials-rescued.md`: the selector "rolls on the +0x41C margin" and
+pushes yes-set id 168 with 85-degree facing sub-cases) is evaluated as an
+alternative implementation path in §4.0 — it changes the integration cost,
+not the design verdict.
 
 ---
 
@@ -269,6 +273,86 @@ Every row lands where football says it should, from one formula.
 ---
 
 ## 4. Where it plugs in — what the dispatcher needs
+
+### 4.0 The cheaper-path question: change what the contest produces (a), or
+### inject at the selector (b)? — VERDICT: (b), and lane 1's finding makes
+### (b) cheaper, not (a) viable
+
+Lane 1's fragment says the two-man selector rolls on the **+0x41C (comp3)
+margin** and pushes yes-set id 168. If the animation system already consumes
+contest output, the law could ride the existing bridge by changing what the
+contest emits at `0x001f0c40` — where weight already has four verified
+readers. Evaluated against the §5 design:
+
+**Status of the claim itself.** UNVERIFIED by this lane, but consistent with
+the access idiom: a displacement scan finds **zero** direct `1052(rX)` loads
+in the whole 0x001e0000–0x00200000 band, so every comp3 consumer goes
+through a biased base (`24(rX)` off a +0x404-biased register, exactly how
+`0x001f0c40` itself and the pass collapse access it) — invisible to quick
+scans, which is why lane 1's tracing is the map of record. One hard fact for
+lane 1's resume: the only literal `168` immediate in the band, at
+`0x001e7d54`, is **not the push** — that function (`0x001e7cf8`) *tests*
+current-anim ∈ {56, 149, 168} via `0x003ad410(player+0x304)` and then rolls
+`RandInt(0,100) < 76` plus a difficulty check (`0x0015e650(38)`); the actual
+id-168 push is elsewhere or table-driven.
+
+**Why (a) cannot express this law, in arithmetic.** The operator's law is a
+*ratio with a square response*; the comps are *sums* in which mass is one
+additive term among skill terms.
+
+* **(a1) additive** — add the helper's mass into the blocker's comps at
+  lock-in: the real double's 963-vs-521 mass advantage becomes a
+  few-hundred-point bump inside a ~1,200-point composite; after the
+  `(A−B)/A` normalization it is a ≈ +0.25 margin shift, *inside the reach of
+  one 0.33 jitter roll*. "Basically overpowering" is unreachable additively.
+* **(a2) multiplicative** — scale the blocker's comps by R²: reaches
+  overpowering, but comp1/2/3 have four other verified consumers, all
+  outside this requirement's code path (rule 1):
+  1. comp1 → the staged drive margin (`div.s` at 0x001f15a0): margins
+     saturate toward 1.0 under a 3.4× scale, destroying the value the sweep
+     stamps into both men;
+  2. comp2 → who-drives-whom and the bearing/facing arms (0x001f154c):
+     mass would start deciding *who wins the rep*, not how far the winner
+     drives — a different game rule than specified (skill wins reps; mass
+     moves bodies);
+  3. comp3 → the late-phase shed contest (≥ 46 frames): every big-on-small
+     block game-wide becomes near-unsheddable — a silent pass-rush
+     rebalance, the exact R5 violation this project keeps refusing;
+  4. comp3 → the pass collapse reads AND rewrites it per frame
+     (0x001f1050–0x001f1070, verified): the decay would eat the mass signal
+     over ~3 s of pass pro and the random rusher-gain would inject noise
+     into it — the law would evaporate and flicker exactly where S5 needs
+     it stable.
+* **(a3) surgical, comp3 only**: kills consumers 1–2, keeps 3–4. Still a
+  game-wide shed rebalance plus collapse contamination. And every (a)
+  variant still needs the same registry/touch-gate cave code for the helper
+  — (a) saves no cave complexity; it only relocates the hook upstream and
+  pays for it with contaminated consumers.
+
+**What lane 1's finding actually buys (b).** The finding means the selector
+already runs on a per-pair scalar read off the contest block. Then the
+cheapest correct integration is: this lane's cave computes D into **+0x404**
+(§4.1, comps untouched, every skill contest stock), and lane 1 **redirects
+the selector's comp3 read(s) to D** — on a +0x404-biased base that is a
+displacement edit `24(rX) → 0(rX)`, one word per load. One subtlety is
+load-bearing: D is stored **identically to both men**, so if the selector
+computes an A-minus-B margin over the redirected field it reads D − D = 0.
+The redirect must read ONE copy (D already *is* the pair-level margin) and
+feed the existing roll/threshold directly — kill the subtract, keep the
+compare; a few words in lane 1's patch, still far cheaper than new threshold
+machinery. Storing D asymmetrically (winner D, loser 0) to preserve a
+subtract was considered and REJECTED: the sweep stamps each man's speed_cmd
+from his *own* +0x404 copy, and asymmetric copies would split the pair's
+shared translation during plain kind-4 frames.
+
+**The end-to-end diagnostic this enables (run before anything ships):** a
+P5-style probe that inflates one man's +0x41C at lock-in exit and watches
+the clip distribution shift. It proves the selector linkage with zero new
+plumbing, costs one hook, and is decisive in both directions. If it shows
+the selector reads comp3 at a time when +0x404 is stale or zeroed (the
+kind-5/6 conversion question, §7), the fallback order is: leaf-ABI recompute
+(§4.4) first, (a3) with its two contaminations documented as the last
+resort.
 
 ### 4.1 The carrier: D lands in +0x404, stamped by the lock-in hook
 
@@ -541,7 +625,13 @@ this patch alone.
 * **Live proof that registry words deref as player bases** — relied on the
   deployed P1 cave (same pattern, ran on the rig without fault) rather than
   a fresh derivation of the handle format.
-* The sibling dispatcher doc (`1-dispatcher.md`) had not appeared by the end
-  of this lane; the §4 contract (D at +0x404, knees {0.40, 1.5}, leaf-ABI
-  fallback) is this lane's half of the interface and may need one round of
-  reconciliation when lane 1 lands.
+* **Lane 1's selector claim (+0x41C margin roll → id 168)** — evaluated in
+  §4.0 on its merits but NOT re-derived here: this lane's scans confirm only
+  that (i) all comp3 access in the band is biased-base (so the claim is
+  idiom-consistent and invisible to displacement scans), and (ii) the one
+  literal 168 immediate in the band (0x001e7d54) is a current-anim test,
+  not the push. The selector's actual load sites, its roll structure, and
+  its thresholds are still lane 1's to map; the §4 contract (D at +0x404,
+  knees {0.40, 1.5}, the §4.0 redirect-one-copy rule, leaf-ABI fallback)
+  is this lane's half of the interface and may need one round of
+  reconciliation when `1-dispatcher.md` lands.

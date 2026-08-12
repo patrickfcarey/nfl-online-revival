@@ -40,7 +40,7 @@ instructions**; 22 of them ≥ 128 bytes.
 |---|---|---|---|---|---|---|
 | **1** | `00139A68` | `03AA68` | **456 B** | 114 | three dead block-copy leaves — **the only sizeable cave inside the gameplay address band** | low |
 | 2 | `0044C1C0` | `34D1C0` | 640 B | 160 | dead libc varargs formatter | low |
-| 3 | `0045F598` | `360598` | 624 B | 156 | dead libc wrappers | low |
+| ~~3~~ | `0045F598` | `360598` | 624 B | 156 | **STRIKE -- NOT DEAD.** Re-censused 2026-08-11 (anim-lanes/2-mass-law.md): lui/addiu pairs materialise it at `0x00460178`/`0x00460180`. Do not use. | **DANGER** |
 | 4 | `004F4AA0` | `3F5AA0` | 608 B | 152 | dead string routines | low |
 | 5 | `00447888` | `348888` | 600 B | 150 | dead libc | low |
 | 6 | `0044BEB0` | `34CEB0` | 584 B | 146 | dead libc | low |
