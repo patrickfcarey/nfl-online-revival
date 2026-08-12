@@ -107,6 +107,13 @@ What that track has established, with every claim pinned to an address:
 - **diagnoses for four long-standing gameplay complaints** — zone bunching,
   pitch-play over-run, lead-blocker targeting and hang-ups, and the CPU's
   apparent animation monopoly at DT — each with fix candidates;
+- **a blocking fix that ships behaviour, not just a diagnosis** — double teams
+  now commit, hold, and drive the doubled defender backward in proportion to
+  combined weight+strength, through the engine's *own* contest (no warps, no
+  stat nerfs), operator-confirmed on the rig (`docs/double-team-requirements.md`);
+  the next ring — defender eligibility, a mass-based "gravity" assist,
+  big-on-small pancakes, and lead-blocker targeting — is charted with acceptance
+  tests in `docs/block-dominance-requirements.md`;
 - **a tuning catalog** for getting extreme-slider behaviour at default
   settings (`docs/default-uplift-tuning.md`).
 
