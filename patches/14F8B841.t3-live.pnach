@@ -107,7 +107,19 @@ patch=1,EE,004F4B98,word,AD224978
 patch=1,EE,004F4B9C,word,DFBF0000
 patch=1,EE,004F4BA0,word,03E00008
 patch=1,EE,004F4BA4,word,27BD0010
-// --- T3 fold-scale tail (k = 0.5 at 004F4BCC; retune this one word) ---
+// ===================================================================
+// !! FINETUNE PLACEHOLDER !!  k = 0.8 is a FIRST-PASS calibration.
+//   The operator judged it "just about right" in LIVE PLAY on slot 9
+//   (TE+RT vs a 3-4 DE) on 2026-08-12. It is NOT final:
+//   - tuned on ONE matchup/savestate; other personnel are unverified
+//   - not swept with the seed-testing plan (docs/seed-testing-plan.md)
+//   - retune is ONE word at 004F4BCC + reboot. Values:
+//       3F800000=1.0 max pancake | 3F4CCCCD=0.8 current
+//       3F333333=0.7 | 3F000000=0.5 losable | ~3F0A3D71=0.54 revert floor
+//   Related surfaces still to tune: T1 shed cadence, T2 swim-only,
+//   R11a/b losability+move-at-angle (docs/double-team-requirements.md).
+// ===================================================================
+// --- T3 fold-scale tail (k at 004F4BCC; retune this one word) ---
 patch=1,EE,004F4BA8,word,3C01004F
 patch=1,EE,004F4BAC,word,C4204BCC
 patch=1,EE,004F4BB0,word,46000842

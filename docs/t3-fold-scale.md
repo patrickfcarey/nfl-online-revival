@@ -1,5 +1,16 @@
 # T3 — scale the N-1 fold so moderate doubles WALK the man back
 
+> # !! FINETUNE PLACEHOLDER — THIS IS A CALIBRATION SURFACE, NOT A FINAL VALUE !!
+>
+> **k = 0.8 is a first-pass value the operator judged "just about right" in
+> live play on slot 9 (2026-08-12).** It sets the CENTER of the win/lose/drive
+> spectrum; live-game jitter spreads outcomes around it. Before this is
+> "done": sweep k across matchups and personnel, validate with the seed plan
+> (`seed-testing-plan.md`), and tune the sibling surfaces (T1 shed cadence,
+> T2 move variety, R11a/b losability). Retune = one word at `0x004F4BCC` +
+> reboot. **Grep `FINETUNE PLACEHOLDER` across the repo for every such dial.**
+
+
 Authored 2026-08-12, static/offline, against `extract/SLUS_207.52`
 (SLUS-20752, CRC 14F8B841) and the deployed
 `patches/14F8B841.n1-fold.pnach`. Every word below was round-tripped
