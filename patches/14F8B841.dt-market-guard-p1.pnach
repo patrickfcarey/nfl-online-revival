@@ -30,3 +30,8 @@ patch=1,EE,00514964,word,00000000
 patch=1,EE,00514968,word,8E820000
 patch=1,EE,0051496C,word,0807D2AC
 patch=1,EE,00514970,word,00000000
+
+// P4 -- the record cap, the binding constraint P1 exposed (window dies at 60).
+// sltiu v0, v0, 61 -> 361: the pair may now hold ~6 seconds; outcome peels
+// (R6b/c) become the natural enders instead of an arbitrary clock.
+patch=1,EE,001F6A74,word,2C420169
