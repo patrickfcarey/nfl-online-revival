@@ -1,0 +1,28 @@
+gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
+comment=DT-3 -- helper assignment runs on ALL play types (branch at 0x001f4ae8 -> nop).
+
+// ---------------------------------------------------------------------------
+// The manage-fn trace ended here. 0x001f4adc calls 0x0015ada0 (a property of
+// the CALLED PLAY -- addresses.yaml), and if the play-type code == 2 the
+// branch at 0x001f4ae8 skips the entire helper-assignment block, whose first
+// instructions load the two-man-animation engagement kinds (3/6/5). On a
+// type-2 play the registry forms but the second man is never ASSIGNED, so at
+// the touch he has nothing to execute and the single-block logic walks him
+// off. The operator described this exactly, twice, before the trace:
+// "no animation to do it and then it fails and then moves ahead".
+//
+// This is block-cycle.md's DT-3, verbatim from its fix table.
+//
+//   001f4ae8  10430046  beq v0, v1, 0x001f4c04   ->  00000000  nop
+//
+// Delay slot (daddu s2, zero, zero) executes identically either way; safe.
+// Every timer theory was eliminated by experiment first (kind-8, +0x42C,
+// kind-4 -- see double-team-requirements.md), so this is the surviving
+// mechanism, not a guess among many.
+//
+// Deployed ALONE (the kind-4 diagnostic is removed; rule 2). Acceptance on
+// slot 9: dt windows extend past 43 / the RG stays engaged after the touch /
+// operator sees an actual two-man block. Regression: slot 6, then slot 7.
+// ---------------------------------------------------------------------------
+
+patch=1,EE,001f4ae8,word,00000000
