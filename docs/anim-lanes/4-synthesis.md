@@ -115,3 +115,41 @@ cannot sample it from `addresses.yaml` as it stands. Sampling it DURING a
 block -- the observation that finally names the clips -- needs a harness
 accessor. That is now the top tooling task, because every animation patch
 depends on being able to read what changed.
+
+## A2 RESULT (rung A2 complete): the double team ALREADY plays 161 — B1 is invalidated
+
+First read of exact clip ids during a live block, via rung A1's anim_id.
+
+    TE  f39 a106/g15 -> f43 a161/g19/k5   37 frames on clip 161
+    DE  f39 a106/g15 -> f43 a161/g19/k6   same clip, same frames
+    RT  never enters 5/6 (stays k7/k8/k2) -- the helper is attached but is NOT
+        a participant in the paired clip
+
+Ids while kind in 5/6, whole line:
+    TE/DE   161 x37          <- the DOUBLE TEAM
+    RG/#14  161 x38
+    C/NT    121 x59, 158 x107  <- shed-lose then capture
+    LG/#11  151 x33, 129 x59, 158 x89
+    FB/#14  148 x34, 63 x26
+
+**B1 (0x00583390, putting 158 in the yes-set) IS INVALIDATED.** The double
+team never enters 158 -- that is the SINGLE-block capture. B1 would have
+changed single blocks and left the double untouched, and its oracle
+("record survives past 64") could never have fired for that reason.
+
+**Lane 3 is vindicated on the driving family**: 161, the pair family with 24
+outcome classes, is what the double team actually plays -- selected, not
+hypothetical. Lane 1's 158 and the shed ids 121/129/151 are real too, on the
+other pairings, exactly as the group decode predicted.
+
+**And this crowns the diagnosis.** The engine ALREADY selects a driving-class
+animation for a double team; it just plays it with no root motion (5-clip-
+semantics: pair families ship no static type-9 displacement spec, and the live
+pair's motion block reads zeroed). So there is no clip to go find and no
+selector to fix -- **the single remaining lever is writing the motion block
+itself** (anim-slot+0x10, post-0x0018F9E0), with the weight+STR law as the
+magnitude. Ladder fallback F-A is now the main line.
+
+Also new: the RT (the kind-8 helper) never enters kinds 5/6 at all. The paired
+clip has two participant roles and the helper is not one of them -- which is
+why he trails. Any drive written for the pair must carry him, or he detaches.
