@@ -1,0 +1,66 @@
+gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
+comment=P10 -- drive from state-32's ai_think, the genuinely per-frame host. Over P1+P4.
+// P9 starved at 5 frames/play and lane 1 found why: its sweep hook sits inside
+// 0x001F1C20's KIND-4-ONLY filter (bne at 0x001F1C98), so 5 frames was exactly
+// the blocker's kind-4 residency. Not a mystery -- an unseen gate.
+//
+// P10 hooks state-32's ai_think (0x001E8088) at 0x001E80C0, reached through a
+// GATE-FREE per-player dispatcher: frame loop 0x00103A88 -> sim 0x00154660 ->
+// 0x001540D8 -> 0x00154178 -> gameplay tick 0x00164EC0 -> dispatcher
+// 0x001AF9D0 -> jalr [0x00527238 + state*24 + 8]. Every link single-caller or
+// table-verified; no cadence divider anywhere. Both members of the pair hold
+// ai_state 32 during the capture, verified live in two savestates.
+//
+// s0 is this pair member; gate dt_role==2 fires once per pair per frame from
+// the defender's own think. a0 is restored to 1 before returning (the
+// displaced sb runs first). Facing untouched: no warps, no spin.
+// Step stays a flat 0.045 yd/f DIAGNOSTIC -- the question is still whether a
+// position write survives 5/6, not what magnitude is right. The weight+STR
+// law (D=2.42 here) layers on once frames exist.
+// Canary 0x00514974: P9 scored 14 over 3 runs. Expect ~110 (37 capture frames
+// x 3) if the host ticks as derived.
+
+patch=1,EE,001F4A30,word,08145248
+patch=1,EE,00514920,word,8E82005C
+patch=1,EE,00514924,word,90410437
+patch=1,EE,00514928,word,2C210002
+patch=1,EE,0051492C,word,10200006
+patch=1,EE,00514930,word,00000000
+patch=1,EE,00514934,word,8C4303E0
+patch=1,EE,00514938,word,2463FFFE
+patch=1,EE,0051493C,word,2C630007
+patch=1,EE,00514940,word,14600009
+patch=1,EE,00514944,word,00000000
+patch=1,EE,00514948,word,12000005
+patch=1,EE,0051494C,word,00000000
+patch=1,EE,00514950,word,92010437
+patch=1,EE,00514954,word,2C210002
+patch=1,EE,00514958,word,14200003
+patch=1,EE,0051495C,word,00000000
+patch=1,EE,00514960,word,0807D28D
+patch=1,EE,00514964,word,00000000
+patch=1,EE,00514968,word,8E820000
+patch=1,EE,0051496C,word,0807D2AC
+patch=1,EE,00514970,word,00000000
+patch=1,EE,001F6A74,word,2C420169
+
+patch=1,EE,001E80C0,word,08110C9C
+patch=1,EE,00443270,word,A244000A
+patch=1,EE,00443274,word,92010437
+patch=1,EE,00443278,word,24030002
+patch=1,EE,0044327C,word,1423000C
+patch=1,EE,00443280,word,00000000
+patch=1,EE,00443284,word,C6010194
+patch=1,EE,00443288,word,3C013D38
+patch=1,EE,0044328C,word,342151EC
+patch=1,EE,00443290,word,44811000
+patch=1,EE,00443294,word,46020840
+patch=1,EE,00443298,word,E6010194
+patch=1,EE,0044329C,word,3C010051
+patch=1,EE,004432A0,word,34214974
+patch=1,EE,004432A4,word,8C220000
+patch=1,EE,004432A8,word,24420001
+patch=1,EE,004432AC,word,AC220000
+patch=1,EE,004432B0,word,24040001
+patch=1,EE,004432B4,word,0807A031
+patch=1,EE,004432B8,word,00000000
