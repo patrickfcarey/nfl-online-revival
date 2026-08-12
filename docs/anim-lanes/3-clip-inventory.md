@@ -65,7 +65,8 @@ through the same index (`0x0018daa4: jal 0x003aa790` with `andi a0,a0,0x7fff`).
 That component id's entry+0x0C is the **component record**:
 
 ```
-+0x00  u16 seq#, u16 frame count (0x2C = 44 frames for pair 146 variant 0)
++0x00  u32 {7, 0x2C} — CONSTANT across every component read (all groups);
+       a format tag, NOT per-clip frame count (semantics UNVERIFIED)
 +0x04  u32 participant count (2)
 +0x08  per-participant rows (20 bytes): { u16 role seq#, u16 flags,
         BAM24 relative heading, float rel-x, float rel-z }
@@ -75,6 +76,12 @@ Pair 146 variant 0 (component 8630, read at 0x00cefd2c in-play): roles
 seq# 0x56/0x57, alignment = **BAM24 0x82bfa1 ≈ 184° (face-to-face) at
 (1.83, −0.09) yd** — the blocker/defender chest-to-chest attach geometry the
 capture's 20° tolerance (`0x000E38E3` at request+0x34) is tested against.
+
+**Variant selection filters** (selector `0x0018d998`, read this pass):
+`request+0x43` = pick this exact variant index (255 = any), and
+`request+0x42` = must match the **class byte at variant-record+4**
+(`0x0018da74-7c: lw +8; lbu 4(v0)`; 255 = any). The class byte is how one
+pair id carries multiple gameplay outcomes — see id 161 in §3c.
 
 No name table exists for animations: the only "Pancake" string in the ELF
 (va 0x00602568) is a stats-screen label. Clip semantics below come from code
@@ -152,9 +159,9 @@ re-arms locomotion with speed 0.46 from `0x005fef3c` (`0x001e8224`).
 
 | ids | group (member) | family | evidence |
 |---|---|---|---|
-| 146-151 | g18 (member 0x0A) | two-man block, DT-gate **yes-set** | table 0x00583360 yes-arm exactly = g18's 146-155 range members |
-| 168-170, 173 | g18 (member 0x0A) | same family, later additions | yes-set; 12-16 variants each (146-151 have 6) |
-| 158, 161 | g19 (member 0x0B) | the capture/neutral pair | 158 = the id `0x001f7c98` hard-codes; NO-set |
+| 146-151 | g18 (member 0x0A) | two-man block, DT-gate **yes-set** | g18's top-level ids are EXACTLY {146-151, 168-170, 173} = table 0x00583360's yes-arm |
+| 168-170, 173 | g18 (member 0x0A) | same family, later additions | yes-set; 10-16 variants each (146-151 have 6-8) |
+| 158, 161 | g19 (member 0x0B) | 158 = neutral capture pair; 161 = directional drive family (§3c) | 158 hard-coded by `0x001f7c98`; both NO-set in 0x00583360, both YES in 0x00583920 |
 | 152-157, 159-160, 164-167, 171-172 | g1/g2/g12/g14/g16 | other interaction families | scattered; NO-set |
 | 162, 163 | **not loaded in-play** | — | absent from every resident group |
 | 118-131 | g17 (member 6) | shed-contest outcome pairs | selected by `0x001a7070` |
@@ -184,20 +191,95 @@ the shipped data, exactly as the operator's 256x pancake observation
 implied** — and they are selected today by the shed contest, not by the
 block-cycle capture (which hard-codes 158).
 
-### 3c. The yes-set displacement question (data decode — see §5 status)
+### 3c. FOUND: id 161 is the engine's directional DRIVEN-BLOCK family
 
-The per-sequence sections of a group (gd+0x0C: counted pointer table to
-variable-length rows; gd+0x10: **1511 pointers = one per sequence**, matching
-the group header's 0x05E7, to uniform 84-byte records; gd+0x14: counted
-pointer table) hold the per-role sequence headers. The 84-byte records at
-`[gd+0x10][seq#]` are the prime candidate for the `{vector, duration,
-heading}` spec consumed by `0x0018f9e0`. Decode status per id: §5.
+The second yes/no table `0x00583920` (consumed by the contact-range helper
+`0x001f5db0`) accepts exactly **{146-151, 158, 161, 168-170, 173}** — the
+g18 family plus g19's two — i.e. "is this a blocking pair" is literally
+"is the id in members 0x0A/0x0B". Ids {152-157, 159-160, 162-167, 171-172}
+are its no-arm.
 
-Sibling intel (lane 1, `0-partials-rescued.md`): the two-man selector rolls
-on the +0x41C contest margin and pushes **id 168** with facing sub-cases at
-85° — so the engine already picks yes-set clips by margin, and 168 is a live
-margin-driven selection. 168 has 16 variants (146-151 have 6), consistent
-with a richer outcome family.
+**The dispatcher that starts 161 was found and fully decoded.** Helper
+`0x001ef130` (sole caller `0x001efad0`, inside the Site A kind machinery):
+
+```
+001ef174  angle = |[self+0x1EC] desired bearing − [self+0x1A8] facing|
+001ef184  require > 0x2FA4F9 BAM ≈ 67°       (else no anim)
+001ef1c0  convert to degrees (×360/2^24), round to nearest 45° sector
+001ef1e8  require sector in 90..270
+001ef1f8  build request (ctor 0x0018e910): players +0/+4,
+          id 161 → +0x40 (001ef204/001ef214), 20° → +0x34,
+          distance float [0x005ff0a0] → +0x38
+001ef254  jump table 0x00583300 [sector/45 − 1] sets the CLASS → +0x42:
+            90° → 7      135° → 10     225° → 16     270° → 14
+            180° → 17 or 18 (straight back: left/right chosen by which
+                   side the partner is on — signed BAM test 0x001ef2c0)
+001ef2ec  jal 0x0018e648 (pair-anim start)
+001ef300  success: kind := 6 stamped on BOTH players (0x001f7398/0x001f74c8)
+```
+
+The class values {7, 10, 14, 16, 17, 18} are **exactly** the class bytes on
+161's 24 variants (6 direction classes × 4 geometry sub-variants at ~1.0 and
+~1.6 yd, mirrored) — the only pair family with non-trivial classes. So:
+
+* **161 class 17/18 = the defender taken STRAIGHT BACKWARDS** — the
+  on-skates clip the mission is looking for, shipped and dispatchable.
+* 7/14 = taken sideways, 10/16 = back-diagonals.
+* A second builder exists at `0x001ef6c0` (same shape, sector clamped to
+  ≤270°, its own class table `0x00583320`, distance float `0x005ff0a8`) —
+  the mid-drive refresh/re-aim variant of the same push (caller in the same
+  kind machinery; not traced further).
+* The trigger is GEOMETRY-ONLY: bearing-vs-facing divergence > 67°. Nothing
+  rating- or margin-gated here — which is why blocks look static: the pair's
+  frozen shared bearing rarely diverges 90°+ from facing, so 161 almost
+  never fires in normal play. **Route C's patch shape: make a winning
+  weight+STR margin either (a) re-aim the shared bearing into the loser's
+  backfield so this existing 67°/sector machinery fires 161 class 17/18 on
+  its own, or (b) call/redirect a builder to request 161 with the wanted
+  class directly.** The request is 8 stores + one jal, all mapped above.
+
+**158 vs 161:** the capture service `0x001f7c98` hard-codes 158
+(`0x001f7d08: addiu s3, zero, 158` — single materialization feeding both the
+already-playing check at 0x001f7d0c and the request store `sh s3, 0x40(sp)`
+at 0x001f7d5c). 158's 12 variants are pure approach-angle attach poses
+(align 87°-272° at 1.2-1.5 yd, class 0) — the neutral "lock up" pair, no
+outcome classes. It is the NO-set member that kills the DT gate
+(run-pass-contrast.md); 161 is its outcome-carrying sibling in the same
+group.
+
+Sibling intel (lane 1, `0-partials-rescued.md`): a selector rolls on the
++0x41C contest margin and pushes **id 168** (yes-set) with facing sub-cases
+at 85° — so g18's 168 is a live margin-driven selection too. 168 has 16
+variants in two blocks of 8 (alignment zeroed, classes 0 — variant chosen by
+index/geometry, not class). Between 161 (direction classes, geometry
+trigger) and 168 (margin roll), the engine demonstrably owns both halves of
+"who won → play a different clip"; they have simply never been wired to a
+sustained drive.
+
+### 3d. Variant/alignment census (read from the live registry)
+
+All components share the constant +0 tag; per-variant data that differs is
+the role seq# pair, the attach geometry, and the class byte:
+
+| id | variants | classes | attach geometry (p1 relative to p0) |
+|---|---|---|---|
+| 146 | 6 | 0 | 2 face-to-face @1.83 yd (184°/176°), 4 null (attach in place) |
+| 147-149, 151 | 6 each | 0 | all null-alignment (attach in place), mirror pairs |
+| 150 | 8 | 0 | all null-alignment |
+| 168 | 16 | 0 | all null-alignment (two blocks of 8: a29x, a30x) |
+| 169 | 12 | 0 | all null-alignment |
+| 170 | 10 | 0 | all null-alignment |
+| 173 | 13 | 0 | 13 distinct approach angles 58°-302° @0.4-1.8 yd — engage-from-any-angle |
+| 158 | 12 | 0 | 12 approach angles 87°-272° @1.2-1.5 yd (6 + 6 mirrored) |
+| **161** | **24** | **7/10/14/16/17/18** | per class: ~1.0 and ~1.6 yd sub-variants, mirrored |
+| 120,121 (shed lose) | 8 each | 0 | null |
+| 124,125 | 4 each | 0 | null |
+| 128,129 | 3 each | 0 | null |
+| 130,131 (bull) | 6 each | 0 | null |
+
+Null alignment = the pair animates from wherever contact happened; non-null
+= the starter glides them onto the authored anchor first (§2's second
+applier).
 
 ## 4. THE LIVE PROBE — sample "which clip is he playing" (ready to run)
 
@@ -221,25 +303,68 @@ side*11+index (addresses.yaml). Three complementary words per player:
 Recipe for the pancake hunt (one play, no patch): sample per frame for the
 engaged pair — `+0x3DE` u16, `+0x3E0` kind, anim slots (1), positions
 +0x190/+0x194. When the operator sees the pancake, the frame where kind
-enters 5 names the clip in +0x3DE, and the slot scan confirms which id was
+enters 5/6 names the clip in +0x3DE, and the slot scan confirms which id was
 playing while the displacement happened. Addresses above are all absolute
 player-record offsets; no code hook is needed.
 
-## 5. Status of the static displacement decode (updated in place)
+Verified against `experiments/states/double_team_slot9.p2s` (pre-snap):
+player base resolves to 0x00661B90 via [0x00600E48]; the slot scan reads
+stances 91 (QB) / 85 / 86 / 21 on all 22 players; +0x3DC/+0x3DE read
+0xFFFF/0xFFFF on 19 players. Caveat from the same read: three DL carry
+residual non-FF bytes (0101/ff02) from before the state was taken, so
+**treat +0x3DE as authoritative only while kind is 5/6 (or state 32)**; the
+slot-scan id (1) is authoritative at all times. To name 161's direction, read
+the class off the live variant: sample +0x3DC alongside — the launcher stores
+the participant word there at the same instant (both bytes 0xFF = idle).
 
-Decoded so far: id → variants → component → role seq#s → the per-sequence
-pointer tables. IN PROGRESS at cutoff: reading the 84-byte per-sequence
-records for the yes-set roles and 158 to extract `{vector, duration}` and
-rank the drivers statically. This section is updated below as records are
-read.
+## 5. Status of the static displacement decode — per-clip magnitudes are NOT statically readable; the probe (§4) closes the gap
+
+Followed to the bottom: role seq# indexes the group's per-sequence pointer
+table at `gd+0x10` (1511 pointers for g18, matching the header count 0x5E7).
+The rows there (84 bytes for the ones read, e.g. seq 0x56 → 0x00cf6a78) are
+**bit-packed quantized streams, not float spec blocks** — no plausible
+vectors or durations decode at fixed offsets. The float spec consumed by
+`0x0018f9e0` is produced at animation START by the decoder (staged 124-byte
+records that `0x003a8958` copies into the per-player instance slots at
+`[player+0x30C]`), so **no live pair exists in any owned memory image to
+read one from** — ee_inplay.bin and every .p2s are pre-snap.
+
+Consequences, stated plainly:
+
+* Which yes-set/158 variants carry LARGE root displacement cannot be ranked
+  from the shipped bytes without reversing the packed sequence format
+  (out of scope; the 200 KB stream ring at `0x004816b8` also means some
+  payloads may not even be resident until played).
+* The semantic ranking in §3 does not need it: **161's classes name the
+  drive directions in code**, and the shed lose-set is named by its
+  selection tables. The one unknown per clip is magnitude, and §4's probe
+  reads that off a single live rep (positions + clip id, no patch).
+* For the mass-law lane: per-frame displacement during a pair anim =
+  `motion_block{+0,+4}` (§2), computed once at start. A cave that scales
+  those two floats (and leaves +8 heading alone) after `0x0018f9e0` returns
+  would be a magnitude lever on ANY driving clip — margin-gated per Route C.
+  UNVERIFIED: whether the joint animation visually tolerates scaled root
+  motion (feet slide vs churn) — a rig question.
 
 ## 6. Could not establish
 
-1. The byte-level keyframe stream (joint curves) — streamed via the 200 KB
-   ring set up at `0x0012c088` (`0x004816b8`); not needed for Route C.
-2. What writes the glide kill-byte `0x0060111d`.
-3. Ids 162/163: absent from every in-play group; whether another .DAT member
-   carries them is unknown.
-4. The semantic meaning of each yes-set id (which is "drive", which
-   "stalemate") from static data alone — pending §5 or the §4 probe.
-5. The runtime interaction object's full layout (only rows +4/+6/+8 read).
+1. Per-clip root-displacement MAGNITUDES: the packed 84-byte sequence rows
+   resist fixed-offset decode (§5); ranking "which variant moves furthest"
+   needs either the packed-format reversal or one probed rep (§4).
+2. The byte-level keyframe stream (joint curves) — 200 KB stream ring set up
+   at `0x0012c088` (`0x004816b8`); not needed for Route C.
+3. What writes the glide kill-byte `0x0060111d`, and the exact caller/trigger
+   of the second 161 builder `0x001ef6c0` (both in the Site A kind machinery;
+   addresses recorded, conditions untraced).
+4. Ids 162/163: in the id namespace (the 146..173 dispatch windows cover
+   them) but absent from every resident group in-play; presumably in an
+   unloaded animdata member.
+5. The semantics of yes-set ids 146-151/169/170/173 individually (168 = the
+   margin-roll selection per lane 1; 161's classes are named; the rest need
+   the §4 probe or lane 1's full selector decode).
+6. The component record's +0 constant {7, 0x2C}; the runtime interaction
+   object's full layout (only rows +4/+6/+8 read); which of the two §2
+   appliers moves each participant when alignment is null vs authored.
+7. The meaning of h6 (entry+0x06 member tag) differing from the group-table
+   member word (8 vs 0x0A for g18) — bookkeeping only, nothing consumed it
+   in the code read.
