@@ -569,7 +569,16 @@ FIELDS = ("position", "dt_record", "dt_role", "ai_state", "engagement",
           # 30, so any reading >= 61 proves the patched immediate EXECUTED
           # through the recompiler. Sampled, not asserted, so an inert patch
           # and a non-executing patch are distinguishable from one file.
-          "reselect_timer")
+          "reselect_timer",
+          # The paired-animation id (+0x3DE) and its participant word (+0x3DC).
+          # Route C is confirmed -- animation root motion owns both bodies
+          # during a block -- so which CLIP is playing is the load-bearing
+          # observation for every drive experiment. Both animation lanes
+          # derived these addresses independently; the two disagree about which
+          # ids drive, and sampling this settles it (anim-lanes/4-synthesis.md).
+          # Authoritative only while engagement is 5/6: residuals persist
+          # otherwise, so every metric below masks on the kind.
+          "pair_anim", "pair_participant")
 
 METRICS = (
     Metric("dt_longest_hold", m_dt_longest_hold, "frames",

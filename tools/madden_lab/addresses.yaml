@@ -519,6 +519,29 @@ structs:
         type: u32
         confidence: doc
         source: lead-blocker-targeting.md
+      pair_anim:
+        offset: 0x3DE
+        type: u16
+        confidence: code
+        source: anim-lanes/1-dispatcher.md and 3-clip-inventory.md (independently)
+        note: >-
+          The paired two-man animation id, stamped on both members. AUTHORITATIVE
+          ONLY during engagement kinds 5/6 -- residual values persist pre-snap
+          and after a pair breaks, so read it alongside `engagement` and discard
+          it outside 5/6. Both animation lanes derived this address separately.
+          Known ids: 158 = the capture pair (hardcoded at 0x001f7d08, and the
+          engine never reconsiders it); the double-team yes-set is
+          {146-151, 168-170, 173}; 149/150/161 are candidate driving/pancake
+          families -- WHICH of them actually displaces a body is UNVERIFIED and
+          is what sampling this field is for.
+      pair_participant:
+        offset: 0x3DC
+        type: u16
+        confidence: code
+        source: anim-lanes/3-clip-inventory.md
+        note: >-
+          Companion word to pair_anim; the participant/role slot in the paired
+          animation. Same kinds-5/6 caveat.
       contest_power:
         offset: 0x414
         type: f32
