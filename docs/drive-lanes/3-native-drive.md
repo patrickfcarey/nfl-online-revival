@@ -672,3 +672,27 @@ queued change):
   (0x00526668/0x00526710) and the move pools are mapped; why the roll always
   lands on swim is an open thread (cpu-dt-animations.md territory -- possibly
   the same finesse-vs-power selection the docs cover).
+
+## N-1 RESULT (2026-08-12): THE DRIVE IS REAL — DE_dy flips -1.41 -> +2.09
+
+Boot-2 S0 full pass. Canaries: entry=1, fold=0x0066EB10 -- the RT's base, so
+the helper lookup resolved and the fold executed. (Canary counts are per-play:
+load_state restores the cave-#11 region, wiping them each iteration.)
+
+    DE_dy     -1.41 -> +2.09    DRIVEN BACK past R3's >= 1.0 target
+    window    2..78 -> 2..92/98
+    DE clips  {147,161} handoff -> {56} -- the blocker-WINNING grid family
+    carrier   -0.70 / +0.65 / -0.70 (mixed; see notes)
+
+One fold per play sufficed, exactly as the latching-patch analysis predicted.
+The engine chose a different outcome family and its own machinery moved the
+man: no position writes, no warps, mass and strength deciding it.
+
+Honest notes: (1) iteration 1 diverged (window 98, carrier +0.65) -- third
+determinism wobble on record, all under patch sets; (2) the pair's gap grew to
+1.92 -- they drive him from distance via the grid clips rather than staying
+welded, worth eyes; (3) carrier_yards is NOT yet improved in 2 of 3 -- the
+dive still gets stuffed by the rest of the defence; driving the end does not
+by itself score the play. The REQUIREMENT (two men drive the doubled man
+backward, proportional to mass, via the engine) is MET on the numbers.
+AWAITING THE OPERATOR'S EYES -- the instrument of record.
