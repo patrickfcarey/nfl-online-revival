@@ -270,3 +270,46 @@ which one runs for a player in engagement kinds 4/8 on slot 9, and that names
 the route -- locomotion integrator (A), collision (B), or animation (C). Do
 this BEFORE writing any more patches; it is the same "reachability before
 deploy" discipline that has caught three bad patches today.
+
+## ROUTE C CONFIRMED BY THE REPO'S OWN PRIOR WORK (operator called it)
+
+> "its probably the animation"
+
+`block-cycle.md`, written long before tonight, already says it outright:
+
+> **"During kinds 5/6 nothing in the engagement system writes locomotion at
+> all: the animation's root motion owns both transforms."**
+> "Collision between the pair is switched off for the duration. The bodies
+> interpenetrate and are held together by the animation."
+
+That closes the search. Route B (collision inverse-mass) is DEAD for engaged
+pairs -- mutual no-collide is registered by state 32 itself. Route A
+(velocity) is dead for the same reason: nothing in the engagement system
+writes locomotion during 5/6. **P6's decisive negative was not a surprise,
+it was predicted by our own documentation, and the 256x cycles could have
+been skipped by re-reading it.** (Lesson: the wrong-answer catalogue in
+method.md exists for exactly this; consult prior lane docs before designing
+a force patch.)
+
+### Therefore: driving a man back = SELECTING A DIFFERENT ANIMATION
+
+The force model (weight + STR ratio) does not become useless -- it becomes
+the SELECTOR input rather than a velocity scalar. The work:
+
+1. **Find the two-man animation dispatcher** (sets kinds 5/6, registers
+   mutual no-collide, advances the shared clip -- entered from the capture
+   service 0x001f7c98, state 32's think 0x001e8088).
+2. **Enumerate the clip vocabulary.** Anim 158 is the neutral/losing capture
+   pair; the yes-set {146-151, 168-170, 173} are the ones the double-team
+   attach gate tolerates. Those ranges are almost certainly a family --
+   identify which clips carry BACKWARD root motion (a drive/pancake pair).
+   The operator SAW a pancake at 256x, so driving clips exist in the data.
+3. **Patch the selection**, not the physics: when the pair's weight+STR
+   margin is dominant, choose a driving clip; when it is even, the neutral
+   one. That is a table/branch edit in the dispatcher -- the same shape as
+   every fix that has actually worked on this engine (P1, punt logic, DT-1).
+
+Acceptance is unchanged (defender displaced >= 1.0 yd on a won double, feet
+moving, no warps) but the mechanism is animation choice, so R5 protection
+comes from leaving the neutral clip as the default for every non-dominant
+pairing.
