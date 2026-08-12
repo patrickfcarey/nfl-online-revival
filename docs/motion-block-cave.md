@@ -748,3 +748,26 @@ five minutes each.
 
 Then swap the flat 0.045 for the weight+STR law (D=2.42 for this pairing,
 already derived) and the drive scales itself.
+
+### CORRECTION, immediately (operator): "are you sure? I dont see anything"
+
+He is right and the previous entry over-claimed. The arithmetic: 5 driven
+frames x 0.045 yd = **0.2 yards** -- seven inches -- and the defender's dy is
+still **-0.56**, i.e. still net penetrating, just travelling further while he
+does it. Nothing there is visible at 60 fps, and heading the entry "THE LEVER
+IS PROVEN" was the same over-claim pattern the operator has corrected five
+times today.
+
+What survives, stated at its true size: the numbers moved deterministically in
+the predicted direction (3/3 identical; DE travel 0.60 -> 1.22, carrier -0.70
+-> +0.82) from a direct position write. That is evidence the mechanism
+RESPONDS to this field. It is NOT evidence anyone was driven back, and the
+carrier gain may be a knock-on rather than the push -- 0.2 yd of displacement
+does not obviously buy 1.5 yd of runner.
+
+The claim is therefore downgraded to: **position writes at this hook produce a
+measurable, repeatable response; magnitude is far too small to see and the
+frame count is the binding constraint.** The mechanism question stays OPEN
+until a run with ~56 driven frames either shows visible drive or does not --
+which is the same next step, now correctly framed as the TEST of the lever
+rather than a victory lap.
