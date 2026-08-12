@@ -571,3 +571,25 @@ so N-1 alone would have nothing to flip. **P11 + N-1 is the pair that should
 finish this.**
 
 Operator watch item: with P11 alone, #93 should look MORE dominant, not less.
+
+### Operator's reading of P11, which names the remaining defect exactly
+
+> "it looks like he sheds the first RT block and then the TE picks him up
+> which is its own win in a way but then we need to make sure it still can
+> push him back"
+
+The clip sequence corroborates it precisely: 147 x41 (engage-and-hold) then
+161 x45 -- a shed followed by a re-engagement, i.e. a HANDOFF. That behaviour
+did not exist before P11 and is football-correct on its own.
+
+And it states the remaining defect better than this document did: **each
+blocker fights him one-on-one.** He beats the RT alone, so the TE takes over
+alone. The pair exists in the RECORD but not in the ARITHMETIC -- no contest
+input anywhere knows a second man is on him. That is exactly and only what
+N-1 changes.
+
+Prediction to carry into N-1: with the helper's weight+STR folded into the
+primary's comps, the shed he currently wins against one man he should LOSE
+against two -- which routes into the lose chains (120-131) instead of into a
+handoff. The handoff behaviour is worth preserving as the correct outcome when
+he DOES win, so N-1 should shift the odds, not remove the path.
