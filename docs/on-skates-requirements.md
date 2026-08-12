@@ -313,3 +313,31 @@ Acceptance is unchanged (defender displaced >= 1.0 yd on a won double, feet
 moving, no warps) but the mechanism is animation choice, so R5 protection
 comes from leaving the neutral clip as the default for every non-dominant
 pairing.
+
+## P7 RESULT: Route A dead too — all three routes now tested, Route C stands by elimination
+
+8x velocity, double-gated to engaged defenders only. Motion byte-identical to
+the P1+P4 baseline in all 3 iterations (dy -0.51, dist 0.60, carrier -0.70).
+
+Measurement caveat, stated because the number looked like data: the "DE peak
+|vel| 0.000" printed during analysis is an ARTIFACT -- vel_x/vel_y are not in
+double_team.py's FIELDS, so absent samples read as zero. It proves nothing.
+What is proven is that the DE's trajectory did not change under an 8x
+velocity amplifier aimed at him.
+
+Two readings, same conclusion: either the locomotion writer at 0x00212974
+never runs for an engaged player, or his velocity is overwritten by whatever
+owns him. Either way **velocity is not the drive lever**.
+
+### Scoreboard: speed_cmd (P6) dead, velocity (P7) dead, collision excluded by
+### the pair's mutual no-collide. Route C -- animation root motion -- stands.
+
+The operator called it before any of these ran. The next work is the
+animation dispatcher and the clip vocabulary (see the Route C section above):
+find the two-man dispatcher, enumerate which clips carry backward root
+motion, and patch SELECTION on the weight+STR margin. Driving clips
+demonstrably exist -- a pancake was observed at 256x.
+
+TOOL DEBT that made this test weaker than it should have been: add vel_x,
+vel_y and facing (+0x1A8) to double_team.py's FIELDS. Three probes in a row
+have now wanted fields the spec does not sample.
