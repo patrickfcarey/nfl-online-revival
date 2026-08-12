@@ -74,6 +74,7 @@ New to the repo? Read in this order:
 | `defender-catch-requirements.md` | corners drop balls that hit their hands — operator-observed, near-100% failure rate; Q1 answered (shared catch path, but two defender-only branches) |
 | `double-team-requirements.md` | make double teams real: 1.5x the primary, a helper that is not a statue, and a defender actually driven back |
 | `double-team-plan.md` | the order of work for double teams, and the play candidates to try — we have never observed one |
+| `on-skates-requirements.md` | driven blocks: losers give ground continuously, feet moving — the drive/translation scoping (S1-S5) |
 | `seed-testing-plan.md` | RNG seed sweeps for bounded regression testing, range cards, and staged S0-S4 release gates (hours-to-days runs, planned not discovered) |
 | `state-reachability.md` | **protocol** — evaluate a patch's gate conditions against the savestate's own memory before any deploy; born from the DT-3 unreachable-branch cycle |
 | `field-overlay-tool.md` | design: paint proven world points (landmarks, routes) onto a game screenshot for visual review |
