@@ -123,3 +123,30 @@ f20. Direction unchanged: the primary's earned bearing.
 
 k (STR's weight vs pounds) and f's clamp band are TUNING -- range cards per
 the seed-testing plan once the first sweep exists.
+
+## P5 DIAGNOSTIC RESULT (2026-08-11): lever proven, but it moves the WRONG BODY
+
+256x drive, 10/10 identical. speed_cmd reached **83.72** (normal ~1.0) --
+the lever unquestionably reaches the engine. **carrier_yards -0.70 -> +7.07**:
+the stuffed dive broke for seven yards, the first real outcome swing of the
+project.
+
+**But the doubled DE did not move backward: dy -0.70, dist 0.85 -- identical
+to baseline at 256x force.** Conclusion, and it reshapes S1-S3:
+
+* `speed_cmd` (+0x1E8) drives the BLOCKER's own locomotion. The engaged
+  defender does not consume it. The yards came from linemen travelling, not
+  from anyone being driven.
+* So "on skates" needs a SECOND mechanism: whatever moves the defender's body
+  during an engagement. The drive lane's Q1 chain (staged_drive -> speed_cmd,
+  stored into BOTH men) is real but only half the story -- the defender's
+  copy evidently governs his own gait, not displacement by the blocker.
+* Next question, now sharp and answerable: during a live engagement, what
+  writes the DEFENDER's position/velocity? Candidates: the collision layer
+  (0x00213038, inverse mass 1/(w*335.4), weight_copy +0x1E4 -- the only
+  mass-aware motion in the image), the shared-bearing translation, or an
+  animation-driven root motion that overrides both.
+
+The mass-drive law (weight+STR ratio) stands as the FORCE model; it must be
+applied to that second mechanism, not to speed_cmd. P5 stays available as the
+"is my lever wired to anything" template -- one hook, eight doublings, done.
