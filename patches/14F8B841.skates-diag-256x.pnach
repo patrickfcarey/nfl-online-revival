@@ -1,0 +1,68 @@
+gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
+comment=P1 market commit guard -- the market stops re-shopping live double-team members. Cave in #11 (linker padding).
+
+// Solution: docs/double-team-solution.md. Cave RELOCATED from the doc's
+// 0x00139AA0 -- reachability census found that "dead" memcpy band is
+// materialised into fp/s6/s7 by a selector at 0x00139DB0 (jalr-reachable).
+// Cave #11 (0x00514920, linker padding, owned by no object) passed the full
+// census: 0 jal, 0 lui/addiu refs, 0 data-word pointers, zero-filled in the
+// ELF and in slot 9's own memory. Internal branches are relative (layout
+// preserved); resume/skip jumps are absolute and unchanged.
+patch=1,EE,001F4A30,word,08145248
+patch=1,EE,00514920,word,8E82005C
+patch=1,EE,00514924,word,90410437
+patch=1,EE,00514928,word,2C210002
+patch=1,EE,0051492C,word,10200006
+patch=1,EE,00514930,word,00000000
+patch=1,EE,00514934,word,8C4303E0
+patch=1,EE,00514938,word,2463FFFE
+patch=1,EE,0051493C,word,2C630007
+patch=1,EE,00514940,word,14600009
+patch=1,EE,00514944,word,00000000
+patch=1,EE,00514948,word,12000005
+patch=1,EE,0051494C,word,00000000
+patch=1,EE,00514950,word,92010437
+patch=1,EE,00514954,word,2C210002
+patch=1,EE,00514958,word,14200003
+patch=1,EE,0051495C,word,00000000
+patch=1,EE,00514960,word,0807D28D
+patch=1,EE,00514964,word,00000000
+patch=1,EE,00514968,word,8E820000
+patch=1,EE,0051496C,word,0807D2AC
+patch=1,EE,00514970,word,00000000
+
+// P4 -- the record cap, the binding constraint P1 exposed (window dies at 60).
+// sltiu v0, v0, 61 -> 361: the pair may now hold ~6 seconds; outcome peels
+// (R6b/c) become the natural enders instead of an arbitrary clock.
+patch=1,EE,001F6A74,word,2C420169
+
+// ============ DIAGNOSTIC P5: 256x DRIVE (throwaway) ============
+// Proves the drive lever can move bodies at all. Hooks the per-frame sweep
+// that copies staged_drive -> speed_cmd and multiplies by 2^8 via eight
+// add.s doublings (no constant, no extra register clobbered). Cave #7
+// (0x00443270, dead byte-swap family; censused 0 jal / 0 refs / 0 ptrs --
+// but NOT execute-breakpoint proven, the one accepted risk here).
+// GLOBAL R5 VIOLATION BY DESIGN: every block in the game drives at 256x.
+// Delete this file after the test.
+patch=1,EE,001F2068,word,08110C9C
+patch=1,EE,001F2084,word,08110CA8
+patch=1,EE,00443270,word,46000000
+patch=1,EE,00443274,word,46000000
+patch=1,EE,00443278,word,46000000
+patch=1,EE,0044327C,word,46000000
+patch=1,EE,00443280,word,46000000
+patch=1,EE,00443284,word,46000000
+patch=1,EE,00443288,word,46000000
+patch=1,EE,0044328C,word,46000000
+patch=1,EE,00443290,word,0807C81C
+patch=1,EE,00443294,word,E62001E8
+patch=1,EE,004432A0,word,46000000
+patch=1,EE,004432A4,word,46000000
+patch=1,EE,004432A8,word,46000000
+patch=1,EE,004432AC,word,46000000
+patch=1,EE,004432B0,word,46000000
+patch=1,EE,004432B4,word,46000000
+patch=1,EE,004432B8,word,46000000
+patch=1,EE,004432BC,word,46000000
+patch=1,EE,004432C0,word,0807C823
+patch=1,EE,004432C4,word,E64001E8
