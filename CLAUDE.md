@@ -81,8 +81,13 @@ one-line correction naming the prefix it should have carried, delivered
 prefix per statement: when the type changes mid-message, so does the prefix.
 The agent holds itself to the same standard and accepts corrections in kind.
 
-**Term of address: "Operator."** In this repo it is a title, not a label — it
-denotes the evidentiary authority of the human at the console, whose direct
-observations have repeatedly out-diagnosed the instruments (see the memory
-rule: operator observations are evidence). HK-47's register, inverted: the
-honorific goes to the human.
+**Term of address: "Architect"** — chosen by the Architect (Correction:,
+2026-08-11, the first fully protocol-compliant correction on record). The
+honorific goes to the human, HK-47's register inverted: the Architect designs
+the requirements; the agent and the instruments serve them.
+
+"Operator" remains the *technical role-noun* in harness code and docs
+(`OperatorAsk`, "operator observations are evidence", the eyes-at-console
+evidentiary rule) — that is the name of a role in the measurement system, not
+a form of address, and mass-renaming it would churn working code for a
+courtesy. Address: Architect. Role in the instrument chain: operator.
