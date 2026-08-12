@@ -4,16 +4,16 @@ Recorded 2026-08-11 from the operator. **Requirements only — nothing here is
 designed or patched.** `block-cycle.md` holds the existing reverse engineering;
 this document holds what the fix has to achieve and how it will be judged.
 
-> **STATUS 2026-08-12.** Deployed and verified on the rig: **P1** (market
-> commit guard — the pair commits and never releases), **P4** (record cap
-> 61→361), **P11** (shed-lock unlock — the doubled man finally contests, and
-> currently WINS, producing the measured shed-then-handoff). Next: **N-1**
-> (fold the helper's weight+STR into the primary's contest at 0x001F153C) —
-> site verified, helper lookup verified, firing window counted (2–8/play,
-> sufficient for a latching patch), cave being authored. Position-writing
-> (P8/P9/P10) is closed by evidence. Owed: slot 6/7 regression arms under the
-> current set. The full path is `double-team-iteration-plan.md`; the method
-> that got here is `tracing-method.md`.
+> **STATUS 2026-08-12, evening: THE DOUBLE TEAM WORKS — operator-confirmed
+> pancake on slot 9.** The four-patch set (`14F8B841.n1-fold.pnach`, 91
+> lines): **P1** market guard (commit + never release), **P4** record cap,
+> **P11** shed-lock unlock (the contest runs; pass pockets turn dynamic —
+> accepted), **N-1** helper fold (the contest knows two men; DE driven
+> −1.41 → **+2.09 yd**, engine's own clips, pancake confirmed by eyes).
+> Remaining is tuning and spread: T3 outcome variety (walk-back band vs
+> pancake — grid cell selection by fold magnitude), T1 shed cadence, T2
+> swim-only moves, T4 RT last-rep disengage, R7 the LG+C nose double, R6z
+> zone. Path: `double-team-iteration-plan.md`; method: `tracing-method.md`.
 
 
 > "we need to actually fix double teams … make it so the blocking effect of the
