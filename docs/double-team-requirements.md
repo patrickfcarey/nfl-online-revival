@@ -790,3 +790,20 @@ Pad path repaired (keepalive-then-restart enumeration procedure). 2/2 clean.
   stuffed dive into a gain. The diagnostic stays a diagnostic (global R5
   violation), but it establishes that line-play hold time is a real lever on
   outcomes even without fixing the double team itself.
+
+## P1 RESULT (2026-08-11): THE MARKET GUARD WORKS — first kind-8 on a run play
+
+S0 22/22 words on a clean boot. Oracle, 3 iterations: TE's link STAYS on the
+DE through frames 15-22+ (baseline flipped to the LB at exactly 17, 5/5);
+one clean record 2..60 with roles held 59 consecutive frames (baseline max
+7); KIND 8 on the RT from frame 23 -- 21 sightings, the first run-play attach
+in the project's history. The engine's own machinery worked the moment the
+market stopped re-shopping its participants.
+
+Still true: carrier_yards -0.70 (outcome unmoved) and the window dies at 60 =
+B0's 61-frame record cap, the next binding constraint exactly as the solution
+staged it. Next levers: P4 (cap 61->361, predicted null alone, now
+meaningful), then the on-skates drive (S1-S3) to make the held pair GO.
+Deploy-cycle lessons banked: patch=0 cave bodies are wiped by load_state
+(all-place-1 is the rule); the solution doc's cave failed reachability (live
+memcpy selector at 0x00139DB0) and was relocated to cave #11.
