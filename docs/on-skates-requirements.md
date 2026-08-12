@@ -208,3 +208,27 @@ answers it: hook the write, scale absurdly, look.
 
 Also logged: iteration 1 diverged again (window 2..67, +2.67 yards) -- the
 second determinism wobble on record, both under heavy drive scaling.
+
+### The +7.07 was DEFENDERS OVERRUNNING, not blocking working (operator flagged the oddity)
+
+Operator: "those were very weird results." Correct -- the arms invert. Both
+sides boosted = +7.07 yards; offence-only boosted = -0.70 (baseline). Helping
+only your own team should help MORE.
+
+Defender path length, iteration 0, totalled over all 11:
+
+    P5 both sides boosted   188.8 yd     <- defenders travelled 78% further
+    P6 offence only         110.0 yd
+    P1+P4 stock drive       106.1 yd     <- P6 is barely above stock
+
+**So P5's seven yards came from the DEFENCE being fast and blowing past the
+play, not from the offence blocking better.** P6 leaves the defence stock and
+the run returns to -0.70 immediately. The earlier entry calling +7.07 "the
+first real outcome swing of the project" is WITHDRAWN -- it was an artifact of
+breaking the defence.
+
+Two clean conclusions survive, both negative and both worth the cycles:
+* speed_cmd does not drive an engaged defender (P6, one-sided 256x).
+* speed_cmd DOES govern free locomotion strongly enough that scaling it wrecks
+  pursuit -- which is why any future drive law must be gated to ENGAGED pairs,
+  never applied to the field at large.
