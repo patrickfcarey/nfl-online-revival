@@ -447,3 +447,34 @@ re-locks before trusting N-1's window.
    sync family (flags-bit-0x10-gated) — region+caller classification only.
 7. The +0x1F4 mode-table handlers not read (modes other than 0/1/5): none is a
    position writer by census, but their semantics were not decoded.
+
+### RE-LOCK CENSUS (2026-08-12): N-1 fires 2-8x per play, and that is ENOUGH
+
+Counted from /tmp/p11.jsonl (already on disk, no rig time), slot 9 iteration 0:
+
+    record window (dt_role==2)      frames 2..78  (77 frames)
+    kind re-entries into 4/8        2   (frames 23 and 69)
+    animation changes in-record     6
+    => N-1 firing opportunities     ~2-8 per play
+
+**The caveat that blocked N-1 is RESOLVED.** The lane warned that at
+first-contact lock-in no record exists (roles read 5). On slot 9 the record is
+live from frame 2 and the first kind-4 lock is at frame 23 -- so dt_role == 2
+IS set when the fold would run. N-1 will fire.
+
+**And 2 firings is sufficient, unlike every previous patch.** P8/P9/P10 tried
+to ACCUMULATE displacement, so frame count was everything and 5 frames meant
+7 inches. N-1 changes a CONTEST OUTCOME, which then governs the rep until the
+next re-lock: comp2's winner selects the drive axis for the whole engagement,
+comp1's margin selects the outcome-grid cell. One firing at frame 23 sets the
+rep; the frame-69 re-lock re-decides it.
+
+This is the distinction the tracing method should record: **frequency matters
+for accumulating patches and barely matters for latching ones.** Counting
+frames without asking which kind of patch it is would have rejected N-1 for
+the wrong reason.
+
+**Status: N-1 UNBLOCKED.** Site 0x001F153C verified, registers audited, helper
+lookup verified (mgr+4+20k, k = lbu def+0x436, helper at record+0x04, handle
+resolved via 0x0013B798), cave regions #4/#5/#6 censused clean on four axes,
+firing window confirmed. Next action is to write the ~35-40 word cave.
