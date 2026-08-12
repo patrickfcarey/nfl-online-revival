@@ -61,6 +61,19 @@ DEFAULT_MAP = Path(__file__).with_name("addresses.yaml")
 #: PS2 main RAM. A dump shorter than this is not an EE image.
 EE_SIZE = 32 * 1024 * 1024
 
+#: Below this is PS2 kernel space; no engine heap object lives there (every
+#: pointer this project has resolved lands in 0x0066xxxx). The floor exists
+#: because a read through a junk pointer does not fail -- it returns whatever
+#: bytes are at the junk address -- so an unfollowable pointer must be refused
+#: before the read, not detected after. Same window the pre-snap checks in
+#: experiments/ use.
+HEAP_LO = 0x00100000
+
+
+def plausible_heap_ptr(word: int) -> bool:
+    """True when `word` can be followed as a pointer into EE main RAM."""
+    return HEAP_LO <= word < EE_SIZE
+
 #: Scalar type codes used in the map: (width, struct format or None).
 #: `ptr`, `handle`, `fn_ptr` and `cstr_ptr` are all 32-bit words -- they are
 #: distinct names because what you may legally do with the value differs, and
@@ -254,10 +267,29 @@ class EmuReader:
 # ---------------------------------------------------------------------------
 
 class Field:
-    """One entry under `structs.<name>.fields`."""
+    """One entry under `structs.<name>.fields`.
+
+    Two shapes. A **flat** field's addresses follow from the struct base by
+    arithmetic, so it can join any batched read. An **indirect** field --
+    `indirect:` in the YAML -- is a pointer chase, generalised from the one
+    pattern the engine keeps using: the u32 at `base+offset` points at an
+    array of `slots` records of `stride` bytes, and the field's value is the
+    `type`-typed word at `value_offset` of the first record whose u16 at
+    `status_offset` equals `status_equals`. That is the engine's own
+    active-slot convention -- for the animation slots at player+0x304, status
+    3 is "playing", and the playing slot is the answer to "which clip is on".
+
+    An indirect field's final addresses depend on memory, so it reads in two
+    phases (`pointer_spec`, then `indirect_specs`/`decode_indirect`) and
+    `specs()` refuses, so no unconverted call path can quietly read the
+    pointer word as the value. `decode_indirect` returns None -- a missing
+    reading, never garbage -- for a null or implausible pointer, for a
+    pointer that moved between the phases, and for "no slot is active",
+    which during a clip transition is the true state of the world.
+    """
 
     __slots__ = ("name", "offset", "type", "count", "enum", "source",
-                 "confidence", "note")
+                 "confidence", "note", "indirect")
 
     def __init__(self, name: str, spec: Dict[str, Any]) -> None:
         self.name = name
@@ -268,6 +300,41 @@ class Field:
         self.source = spec.get("source")
         self.confidence = spec.get("confidence")
         self.note = spec.get("note")
+        self.indirect = self._parse_indirect(spec.get("indirect"))
+
+    def _parse_indirect(self, ind: Optional[Dict[str, Any]]) -> Optional[Dict[str, int]]:
+        if ind is None:
+            return None
+        try:
+            parsed = {key: int(ind[key])
+                      for key in ("stride", "slots", "value_offset",
+                                  "status_offset", "status_equals")}
+        except (KeyError, TypeError, ValueError) as exc:
+            raise MapError(
+                "field %s: an indirect spec needs integer stride, slots, "
+                "value_offset, status_offset and status_equals" % self.name
+            ) from exc
+        if parsed["stride"] < 1 or parsed["slots"] < 1:
+            raise MapError("field %s: indirect stride and slots must be >= 1"
+                           % self.name)
+        if self.count != 1:
+            raise MapError("field %s: indirect fields cannot carry count > 1"
+                           % self.name)
+        # Both offsets must land inside one record, or the "slot" being read
+        # is partly the neighbouring slot -- a typo, not a layout.
+        if not (0 <= parsed["value_offset"]
+                and parsed["value_offset"] + self.width <= parsed["stride"]):
+            raise MapError("field %s: value_offset outside the slot record"
+                           % self.name)
+        if not (0 <= parsed["status_offset"]
+                and parsed["status_offset"] + 2 <= parsed["stride"]):
+            raise MapError("field %s: status_offset outside the slot record"
+                           % self.name)
+        return parsed
+
+    @property
+    def is_indirect(self) -> bool:
+        return self.indirect is not None
 
     @property
     def width(self) -> int:
@@ -277,13 +344,62 @@ class Field:
             raise MapError("field %s has non-scalar type %r" % (self.name, self.type))
 
     def specs(self, base: int) -> List[Spec]:
-        """The read batch for this field at `base`."""
+        """The read batch for this field at `base`. Flat fields only."""
+        if self.is_indirect:
+            raise MapError(
+                "field %s is indirect (a pointer chase): its addresses depend "
+                "on memory, so it has no flat batch. Read it via pointer_spec/"
+                "indirect_specs/decode_indirect -- Player.field, .snapshot and "
+                "World.certified_batch all do." % self.name)
         w = self.width
         return [(base + self.offset + i * w, w) for i in range(self.count)]
 
     def decode(self, words: Sequence[int]) -> Any:
         vals = [_decode(self.type, w) for w in words]
         return vals if self.count > 1 else vals[0]
+
+    # -- the two-phase read of an indirect field ---------------------------
+    def pointer_spec(self, base: int) -> Spec:
+        """Phase A: the u32 holding the pointer this field chases."""
+        return (base + self.offset, 4)
+
+    def indirect_specs(self, base: int, pointer: int) -> List[Spec]:
+        """Phase B: the value batch, given the pointer phase A resolved.
+
+        Empty for an unfollowable pointer -- zero reads, and the decode is
+        None. The first spec re-reads the pointer word itself, which is what
+        lets `decode_indirect` prove the chase did not go stale between the
+        two phases.
+        """
+        if not plausible_heap_ptr(pointer):
+            return []
+        ind = self.indirect
+        out: List[Spec] = [self.pointer_spec(base)]
+        for k in range(ind["slots"]):
+            record = pointer + k * ind["stride"]
+            out.append((record + ind["value_offset"], self.width))
+            out.append((record + ind["status_offset"], 2))
+        return out
+
+    def decode_indirect(self, pointer: int, words: Sequence[int]) -> Any:
+        """The active slot's value, or None. None is an answer, not an error.
+
+        The scan is real: the first record whose status halfword equals
+        `status_equals` wins, in slot order. Do not shortcut it to slot 0 --
+        slot 0 has carried the active mark in every read so far, and "so
+        far" is exactly the kind of claim this project keeps having to
+        retract.
+        """
+        if not plausible_heap_ptr(pointer) or not words:
+            return None
+        if words[0] != pointer:
+            return None  # the object moved between the phases; stale chase
+        ind = self.indirect
+        for k in range(ind["slots"]):
+            value, status = words[1 + 2 * k], words[2 + 2 * k]
+            if status == ind["status_equals"]:
+                return _decode(self.type, value)
+        return None
 
 
 def _decode(type_: str, raw: int) -> Any:
@@ -427,8 +543,37 @@ class Player:
     # -- single fields -----------------------------------------------------
     def field(self, name: str) -> Any:
         f = self.world.map.field("player", name)
+        if f.is_indirect:
+            addr, size = f.pointer_spec(self.base)
+            pointer = self.world.reader.read(addr, size)
+            words = read_many(self.world.reader,
+                              f.indirect_specs(self.base, pointer))
+            return f.decode_indirect(pointer, words)
         words = read_many(self.world.reader, f.specs(self.base))
         return f.decode(words)
+
+    def anim_id(self) -> Optional[int]:
+        """The clip id currently PLAYING on this player, or None.
+
+        `u16[[base+0x304] + 0x64*k + 4]` for whichever slot k's status
+        halfword (+6) reads 3 -- the engine's "playing" mark. Slot 0 has
+        carried it in every read so far, but the slot array is scanned, not
+        assumed (`Field.decode_indirect`). None means no slot is playing (a
+        transition) or the pointer could not be followed.
+
+        This is the GLOBAL clip vocabulary -- pre-snap it reads 91 on the
+        QB, 85/86 on the position groups, 21 on slot 9's nose tackle -- and
+        it is NOT `pair_anim` (+0x3DE), whose 15/17/18/19 values are a
+        class/group index and authoritative only during engagement kinds
+        5/6. Both lanes of docs/anim-lanes derived this chain independently
+        and the live probe of 2026-08-11 confirmed it.
+
+        Interactive use only, live: this method spends two round trips on
+        one player. A sampler should name "anim_id" in snapshot() or
+        certified_batch(), which fold the chase into the phases everything
+        else already pays for.
+        """
+        return self.field("anim_id")
 
     @property
     def handle(self) -> Handle:
@@ -496,27 +641,45 @@ class Player:
 
     # -- the batched read --------------------------------------------------
     def snapshot(self, fields: Optional[Iterable[str]] = None) -> Dict[str, Any]:
-        """Every mapped field (or a named subset) in one round trip.
+        """Every mapped field (or a named subset) in one round trip -- two
+        when an indirect field is among them, never more.
 
         Field order follows the map, which puts position next to position and
         velocity next to velocity. That is deliberate: PINE reads are not
         synchronised with emulation, and adjacency is the only lever available
         for narrowing how far apart two related samples can be taken.
+
+        An `indirect:` field (the current-anim id) has no fixed addresses
+        until its pointer is read, so those pointers are resolved first --
+        all of them in ONE batch -- and the slot reads then join the main
+        batch in map order. However many indirect fields are chosen, the
+        cost is exactly one extra round trip; with none chosen this is
+        byte-for-byte the single batch it always was.
         """
         m = self.world.map
         chosen = list(fields) if fields is not None else list(m.fields("player"))
+        plan = [(name, m.field("player", name)) for name in chosen]
+        chased = [f for _name, f in plan if f.is_indirect]
+        pointers: Dict[str, int] = {}
+        if chased:
+            raw = read_many(self.world.reader,
+                            [f.pointer_spec(self.base) for f in chased])
+            pointers = {f.name: word for f, word in zip(chased, raw)}
         specs: List[Spec] = []
         spans: List[Tuple[str, Field, int]] = []
-        for name in chosen:
-            f = m.field("player", name)
-            s = f.specs(self.base)
+        for name, f in plan:
+            s = (f.indirect_specs(self.base, pointers[f.name])
+                 if f.is_indirect else f.specs(self.base))
             spans.append((name, f, len(s)))
             specs.extend(s)
         raw = read_many(self.world.reader, specs)
         out: Dict[str, Any] = {"side": self.side, "index": self.index}
         pos = 0
         for name, f, n in spans:
-            out[name] = f.decode(raw[pos:pos + n])
+            if f.is_indirect:
+                out[name] = f.decode_indirect(pointers[f.name], raw[pos:pos + n])
+            else:
+                out[name] = f.decode(raw[pos:pos + n])
             pos += n
         return out
 
@@ -866,6 +1029,21 @@ class World:
         list of fixed addresses and cannot chase a pointer mid-flight. The
         pointer is stable for the life of a play; if there is no play (the
         pointer is null) certification is impossible and both ticks are None.
+
+        **Indirect fields widen this to two batches, never to 2N.** A field
+        marked `indirect:` in the map (the current-anim id) reads through a
+        per-player pointer that is NOT assumed stable, so when any part asks
+        for one, phase A reads the clock plus every needed pointer in one
+        batch, and phase B reads everything else in one more: a 22-player
+        frame is 2 round trips instead of 1, regardless of player count. The
+        certificate still means what it meant -- the clock opens phase A and
+        closes phase B, so equal ticks prove the whole sample, pointer
+        resolution included, lay within one game tick. And because "same
+        tick" brackets an interval the EE is executing through, each
+        indirect value also re-reads its own pointer inside phase B and
+        decodes to None if the object moved between the phases: a stale
+        chase becomes a missing reading, not a number. With no indirect
+        field requested this is byte-for-byte the single batch above.
         """
         clock_specs: List[Spec] = []
         obj = self.deref("play_manager")
@@ -879,37 +1057,71 @@ class World:
         composites = {"xyz": ("pos_x", "pos_y", "pos_z"),
                       "velocity": ("vel_x", "vel_y", "vel_z")}
 
-        specs: List[Spec] = list(clock_specs)
-        spans: List[List[Tuple[str, List[Field], int]]] = []
+        plans: List[List[Tuple[str, List[Field]]]] = []
+        chase: List[Tuple[int, Field]] = []
         for player, fields in parts:
-            plan: List[Tuple[str, List[Field], int]] = []
+            plan: List[Tuple[str, List[Field]]] = []
             for name in fields:
                 members = [self.map.field("player", part)
                            for part in composites.get(name, (name,))]
+                chase.extend((player.base, m) for m in members if m.is_indirect)
+                plan.append((name, members))
+            plans.append(plan)
+
+        # Phase A, only when something chases: every pointer in one batch,
+        # opened by the clock so the certificate brackets the resolution too.
+        pointers: Dict[Tuple[int, str], int] = {}
+        tick_before: Optional[int] = None
+        if chase:
+            raw_a = read_many(self.reader, list(clock_specs)
+                              + [f.pointer_spec(base) for base, f in chase])
+            if clock_specs:
+                tick_before = raw_a[0]
+            for (base, f), word in zip(chase, raw_a[len(clock_specs):]):
+                pointers[(base, f.name)] = word
+
+        def member_specs(member: Field, base: int) -> List[Spec]:
+            if member.is_indirect:
+                return member.indirect_specs(base, pointers[(base, member.name)])
+            return member.specs(base)
+
+        def member_decode(member: Field, base: int, words: Sequence[int]) -> Any:
+            if member.is_indirect:
+                return member.decode_indirect(pointers[(base, member.name)], words)
+            return member.decode(words)
+
+        specs: List[Spec] = [] if chase else list(clock_specs)
+        spans: List[List[Tuple[str, List[Field], int]]] = []
+        for (player, _fields), plan in zip(parts, plans):
+            row: List[Tuple[str, List[Field], int]] = []
+            for name, members in plan:
                 s: List[Spec] = []
                 for member in members:
-                    s.extend(member.specs(player.base))
-                plan.append((name, members, len(s)))
+                    s.extend(member_specs(member, player.base))
+                row.append((name, members, len(s)))
                 specs.extend(s)
-            spans.append(plan)
+            spans.append(row)
         specs.extend(clock_specs)
 
         raw = read_many(self.reader, specs)
-        pos = len(clock_specs)
-        tick_before = raw[0] if clock_specs else None
+        pos = 0 if chase else len(clock_specs)
+        if not chase:
+            tick_before = raw[0] if clock_specs else None
         tick_after = raw[-1] if clock_specs else None
 
         decoded: List[Dict[str, Any]] = []
-        for plan in spans:
+        for (player, _fields), row in zip(parts, spans):
             out: Dict[str, Any] = {}
-            for name, members, n in plan:
+            for name, members, n in row:
                 if len(members) == 1:
-                    out[name] = members[0].decode(raw[pos:pos + n])
+                    out[name] = member_decode(members[0], player.base,
+                                              raw[pos:pos + n])
                 else:
                     parts_raw, cursor = [], pos
                     for member in members:
-                        width = len(member.specs(0))
-                        parts_raw.append(member.decode(raw[cursor:cursor + width]))
+                        width = len(member_specs(member, player.base))
+                        parts_raw.append(member_decode(member, player.base,
+                                                       raw[cursor:cursor + width]))
                         cursor += width
                     out[name] = tuple(parts_raw)
                 pos += n

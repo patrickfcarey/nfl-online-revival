@@ -578,7 +578,26 @@ FIELDS = ("position", "dt_record", "dt_role", "ai_state", "engagement",
           # ids drive, and sampling this settles it (anim-lanes/4-synthesis.md).
           # Authoritative only while engagement is 5/6: residuals persist
           # otherwise, so every metric below masks on the kind.
-          "pair_anim", "pair_participant")
+          "pair_anim", "pair_participant",
+          # The clip ACTUALLY PLAYING: u16[[player+0x304] + 0x64*k + 4], where
+          # k is whichever animation slot's status halfword (+6) reads 3 --
+          # the engine's "playing" mark. THE STATUS-3 RULE IS THE FIELD: slot
+          # 0 has held the mark in every read so far, but the accessor scans
+          # the four slots and takes the status-3 one, and a frame where no
+          # slot carries 3 samples as None (a real transition, not a dropped
+          # read). This is the GLOBAL clip vocabulary -- pre-snap 91 on the
+          # QB, 85/86 by position group, 21 on this state's nose tackle --
+          # and it is a DIFFERENT vocabulary from pair_anim above, whose
+          # 15/17/18/19 values are a class/group index that is authoritative
+          # only during engagement kinds 5/6. Reading the two side by side
+          # during a live block is the decisive experiment 4-synthesis.md
+          # names: it says which actual clip each pair_anim class resolves
+          # to, and whether the capture really plays one id forever.
+          # Cost, so nobody has to rediscover it: anim_id is a pointer chase,
+          # so sampling it makes each certified frame TWO batched PINE round
+          # trips (pointer phase + value phase) instead of one -- never one
+          # per player. See World.certified_batch.
+          "anim_id")
 
 METRICS = (
     Metric("dt_longest_hold", m_dt_longest_hold, "frames",

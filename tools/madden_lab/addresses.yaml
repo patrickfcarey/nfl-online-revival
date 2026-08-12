@@ -485,6 +485,46 @@ structs:
         note: >-
           Pointer to 4-byte {id, p1, p2, p3} records; [0] is the current state
           id and [4] the next. Bit 7 of byte 0 means "more follow".
+      anim_id:
+        offset: 0x304
+        type: u16
+        indirect:
+          stride: 0x64
+          slots: 4
+          value_offset: 0x04
+          status_offset: 0x06
+          status_equals: 3
+        confidence: code
+        source: anim-lanes/1-dispatcher.md and 3-clip-inventory.md
+          (independently); live probe 2026-08-11 (4-synthesis.md); verified
+          against experiments/states/double_team_slot9.p2s and
+          extract/ee_inplay.bin
+        note: >-
+          The clip CURRENTLY PLAYING -- the global animation vocabulary, and
+          the load-bearing observation for every drive experiment now that
+          Route C (root motion moves blocked bodies) is confirmed. NOT a flat
+          field: [player+0x304] points at an array of four 0x64-byte
+          animation slots, each with the clip id at +4 (u16) and a status
+          halfword at +6, and the value is the id in whichever slot's status
+          reads 3 ("playing"). Slot 0 has been the status-3 slot in every
+          read so far; the harness scans anyway, because "always slot 0" is
+          an induction from pre-snap reads, not a decoded rule. Vocabulary is
+          DISJOINT from pair_anim's (+0x3DE): pre-snap this reads QB 91,
+          HB/WR/LB/DB 85, FB/TE/OL/DE 86, slot 9's nose tackle 21 (and LB 28
+          / CB 74 in the inplay dump), while pair_anim reads 15/17/18/19
+          class values during kinds 5/6.
+          slots: 4 is MEASURED, not documented: in both owned images slots
+          0-3 hold clip-vocabulary ids with status 0 or 3, while the halfword
+          at slot 4's status offset reads ~17040 and slot 9's reads 0x3F80
+          (float bits) -- other members of the anim object, not slots.
+          Scanning past the real array is how a stray 3 in unrelated data
+          becomes a fake "playing" clip, so the bound deliberately errs
+          short; if a live read ever shows every slot idle mid-play, raise
+          the count HERE (a one-line data fix), not in code.
+          Reading it is a two-phase pointer chase -- see Field in world.py.
+          Decodes to None when no slot carries status 3, when the pointer is
+          not a plausible heap address, or when the pointer moved between the
+          phases.
       engagement:
         offset: 0x3E0
         type: u32

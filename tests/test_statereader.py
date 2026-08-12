@@ -37,6 +37,19 @@ class SavestateReaderTest(unittest.TestCase):
         from tools.madden_lab.world import World
         self.assertAlmostEqual(World(self.r).los(), 15.0, places=3)
 
+    def test_anim_id_via_typed_layer(self):
+        # The +0x304 pointer chase works over this reader's bare read():
+        # the pre-snap clip ids the live probe measured (anim-lanes/
+        # 4-synthesis.md). The full 22-player pin is in
+        # test_madden_lab_anim.py; these four are the distinctive ones.
+        from tools.madden_lab.world import World
+        w = World(self.r)
+        got = {(p.side, p.index): p.anim_id() for p in w.players()}
+        self.assertEqual(got[(0, 0)], 91)   # QB
+        self.assertEqual(got[(1, 2)], 21)   # the nose tackle
+        self.assertEqual(got[(0, 5)], 86)   # TE
+        self.assertEqual(got[(0, 3)], 85)   # WR
+
 
 if __name__ == "__main__":
     unittest.main()
