@@ -59,3 +59,40 @@ theories tonight all came from building before measuring.
 `experiments/double_team.py` needs the anim-id fields (`+0x3DE`, `+0x3DC`, and
 the `[player+0x304]` chain) in FIELDS. That is the fourth probe in a row to
 want fields the spec does not sample.
+
+## PROBE RESULT (2026-08-11): the field is paired, and both lanes' id vocabulary is WRONG for it
+
+Ran on slot 9 under P1+P4, masked to engagement kinds 5/6. First live read of
+a two-man animation in this project.
+
+**Confirmed strongly: +0x3DE is genuinely the PAIR field.** Every blocker and
+his defender read the identical value, every pairing, every frame:
+
+    TE 0:5  <-> DE 1:3    {19: 37}
+    C  0:8  <-> NT 1:2    {17: 59, 19: 107}
+    LG 0:7  <-> 1:1       {18: 33, 17: 59, 19: 89}
+    FB 0:2  <-> 1:0       {18: 34, 15: 26}
+    RG 0:9  <-> 1:5       {19: 38}
+
+**But the values are 15/17/18/19 -- NOT 158, 161, or 149/150.** Neither
+lane's id vocabulary appears. 65535 (0xFFFF) is the idle/none value; 65281
+(0xFF01) appears once on the RT, unexplained.
+
+**And the value CHANGES mid-block** (C/NT run 17 then 19), which refutes
+"plays 158 forever" *as a claim about this field*.
+
+Best hypothesis, unverified: +0x3DE holds a CLASS or group-local index rather
+than a global clip id -- the observed set overlaps lane 3's sector->class
+vocabulary {7,10,14,16,17,18} closely. 158 may still be hardcoded at
+0x001f7d08 (verified present in live memory this run: 0x001F7D08 = 2413009E =
+`addiu s3, zero, 158`) and simply live in a different word.
+
+**Next step, cheap and decisive:** sample the OTHER candidate address from the
+lanes -- the current-anim id at `u16[[player+0x304] + 0x64k + 4]` with status
+`+6 == 3`. That is a pointer-chase, so it needs a World accessor rather than a
+plain field offset. If it reads 158 on the TE/DE pair while +0x3DE reads 19,
+both lanes are right about different words and the picture resolves cleanly.
+
+Lesson banked: the probe was worth running BEFORE any patch. A one-word change
+to 0x001f7d08 would have been made on the belief that +0x3DE would show 158,
+and the observation would have been unreadable.
