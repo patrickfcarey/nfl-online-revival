@@ -838,3 +838,17 @@ by an adequate single blocker. The scorer and its modifier table are fully
 mapped (dt-lanes/help-score.md); this is a tuning target, not a hunt.
 Acceptance: C+LG record on the NT while LT handles the LE single -- and the
 TE+RT DE double unaffected.
+
+## P1+P4 RESULT (2026-08-11): the double exists and loses the fight — eyes and data agree 4/4
+
+Operator: "#93 does not move backwards at all... double teamed for a second...
+still able to move forward to where the TE can't touch him... but the TE does
+not release, which is awesome." Data: window 2..64 (~1.07s), zero re-shops;
+DE_dy -0.51 (he gains ground); TE-DE gap at record end 1.75 yd -- the pair
+trails him, roles intact, contact gone. 9/10 runs identical; iteration 5
+diverged (2..46), first determinism wobble on record.
+
+P4 note: cap 61->361 bought only 60->64 -- the ender at ~64 is separation
+geometry, not the clock. THE REMAINING WORK IS THE PHYSICAL CONTEST:
+sustained drive (S1), backward bearing (S2, the two heading stores), contact
+retention, mass (S3). The hold is solved; the push is next.
