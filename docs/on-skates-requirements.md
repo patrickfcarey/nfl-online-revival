@@ -66,3 +66,30 @@ motion, no warps, no skating on stalemates. carrier_yards moves on slot 9.
 * Q4: is weight in the drive math anywhere today?
 
 Static lane launched for Q1-Q4: docs/dt-lanes/drive-machinery.md.
+
+## S4-D — the double-team drive law (operator, 2026-08-11)
+
+> "when a second blocker is touching the blocked person, the direction the
+> original blocker was going is where they lead him at 2x the force now"
+
+**Direction:** the primary's established drive bearing — the helper adds no
+steering, he doubles the momentum already earned. This RESOLVES S2 for
+doubles: the engine's existing choice (drive along the winning blocker's own
+heading, stores 0x001f159c/15a8) is CORRECT here by design; the sideways
+-drift fix applies to singles only.
+
+**Magnitude:** 2x, gated on the helper actually TOUCHING (kind 8 attached, or
+helper link == defender with kind >= 4) — not on mere registry membership, so
+a shadowing helper adds nothing. Matches R1's "multiply the first guy's
+effect", now with the mechanism chosen.
+
+**Implementation path (drive lane, all mapped):** the margin lands at
+0x001f15a0 (div.s) and is stored to BOTH men at the 0x001f16dc-e8 confluence;
+the per-frame sweep 0x001f2068/84 re-stamps it. The 2x gate is a small cave
+at the confluence: if defender dt_role == 2 and helper-in-contact, double
+f20 before the stores. Cave #11 has only 3 words free -- next cave needs the
+census first (the #1 lesson: reachability before trust).
+
+**Sequencing:** AFTER yes-set+158. Until the record survives the capture,
+2x force would apply to ~20 contact frames and then die at 64 regardless.
+Order: survive contact -> then double the push through it.
