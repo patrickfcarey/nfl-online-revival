@@ -593,3 +593,35 @@ primary's comps, the shed he currently wins against one man he should LOSE
 against two -- which routes into the lose chains (120-131) instead of into a
 handoff. The handoff behaviour is worth preserving as the correct outcome when
 he DOES win, so N-1 should shift the odds, not remove the path.
+
+## N-1 build attempt (2026-08-12): BLOCKED on the helper lookup, cave #2 rejected
+
+Two findings before a word was written:
+
+**Cave #2 (0x0044C1C0) is NOT safe** -- a branch from 0x0044C404 lands inside
+it. It was listed safe in code-caves.md AND censused clean by an earlier agent
+whose pass omitted the branch-target axis. That is the FOURTH region this
+session documented as safe and found live (#1 poisoned, #3 lui/addiu-live, #2
+branch-in, plus the motion cave's original recommendation). Verified-clean
+alternatives, all four axes, this pass: **#4 0x004F4AA0, #5 0x00447888,
+#6 0x0044BEB0**.
+
+**The helper lookup is unverified and expensive.** N-1 must resolve, from the
+DEFENDER, the record's role-1 helper in order to add his mass into the
+primary's comps. The design asserts manager [0x00601280] -> record index at
+def+0x436 -> helper handle at record+4+20k+4. But the stride is 20 (not
+shift-friendly) and the value is likely a handle needing 0x0013b798 -- roughly
+20 extra cave words and a second nested call, on a path never checked against
+a live record.
+
+Site itself is confirmed: 0x001F153C = `jal 0x001f0c40`, identical in the ELF
+and in slot 9's memory, with s0 = blocker base and s4 = defender base live
+across it.
+
+**Status: N-1 designed, site verified, cave region chosen, BLOCKED on the
+helper-resolution path.** A lane has been redirected onto exactly that
+question (docs/drive-lanes/2-position-authority.md, section "Helper lookup for
+N-1"), including whether a cheaper route exists -- a cached helper base or an
+engine function returning "the other blocker on this man" would beat twenty
+words of pointer arithmetic. Building on the unverified path would have been
+the same mistake as writing into cave #2.
