@@ -822,3 +822,19 @@ P1 run data (/tmp/p1.jsonl on the rig) before touching the scorer. Levers if
 it is scoring: the radius/threshold constants; if authoring: play-data.md
 territory. Acceptance: two concurrent records on slot 9, LG+C on the NT,
 neither stealing from the other (P1's theft guard already protects this).
+
+### R7 DIAGNOSED (P1 data): a priority defect, not an availability defect
+
+The LG is never idle -- he pairs with the LT on the LEFT END from f19 (kind
+6, animation second slot) while the C singles the NT all play (kind 4,
+f9-82+). His options at f1 were near-equidistant (LE 2.77 vs NT 2.80 yd);
+the scorer's geometry modifiers picked the end, and once in kinds 6/4/5 he
+is excluded from the helper market for the rest of the play. Two men on the
+end the LT could handle alone; one man on the nose.
+
+Fix direction: a PRIORITY term in the election -- e.g. weight the candidate
+defender by mass/head-up alignment, or discount a defender already engaged
+by an adequate single blocker. The scorer and its modifier table are fully
+mapped (dt-lanes/help-score.md); this is a tuning target, not a hunt.
+Acceptance: C+LG record on the NT while LT handles the LE single -- and the
+TE+RT DE double unaffected.
