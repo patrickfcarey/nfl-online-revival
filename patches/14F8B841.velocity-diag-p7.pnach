@@ -1,0 +1,54 @@
+gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
+comment=P7 ROUTE A -- 8x velocity on ENGAGED DEFENDERS only, over P1+P4. Diagnostic.
+// Tests whether vel_x/vel_y (+0x1B8) moves an engaged man, where speed_cmd
+// provably cannot (P6). Gated twice in the cave: side byte != 0 (defence)
+// AND engagement kind >= 4 (in contact). Amplifies his EXISTING velocity 8x;
+// the question is only whether the field is live for an engaged player, so
+// direction is irrelevant -- any visible path change is a YES.
+// Hook is 0x00212974, NOT the store at 0x00212978: that word sits immediately
+// before a jal and a jump there would collide with the delay slot.
+// block-cycle.md predicts NO effect during kinds 5/6 (animation root motion
+// owns both transforms). Kind 4/8 is the untested window this probes.
+
+patch=1,EE,001F4A30,word,08145248
+patch=1,EE,00514920,word,8E82005C
+patch=1,EE,00514924,word,90410437
+patch=1,EE,00514928,word,2C210002
+patch=1,EE,0051492C,word,10200006
+patch=1,EE,00514930,word,00000000
+patch=1,EE,00514934,word,8C4303E0
+patch=1,EE,00514938,word,2463FFFE
+patch=1,EE,0051493C,word,2C630007
+patch=1,EE,00514940,word,14600009
+patch=1,EE,00514944,word,00000000
+patch=1,EE,00514948,word,12000005
+patch=1,EE,0051494C,word,00000000
+patch=1,EE,00514950,word,92010437
+patch=1,EE,00514954,word,2C210002
+patch=1,EE,00514958,word,14200003
+patch=1,EE,0051495C,word,00000000
+patch=1,EE,00514960,word,0807D28D
+patch=1,EE,00514964,word,00000000
+patch=1,EE,00514968,word,8E820000
+patch=1,EE,0051496C,word,0807D2AC
+patch=1,EE,00514970,word,00000000
+patch=1,EE,001F6A74,word,2C420169
+
+patch=1,EE,00212974,word,08110CC0
+patch=1,EE,00443300,word,C7A00040
+patch=1,EE,00443304,word,92210001
+patch=1,EE,00443308,word,1020000B
+patch=1,EE,0044330C,word,00000000
+patch=1,EE,00443310,word,8E2103E0
+patch=1,EE,00443314,word,2C210004
+patch=1,EE,00443318,word,14200007
+patch=1,EE,0044331C,word,00000000
+patch=1,EE,00443320,word,46010840
+patch=1,EE,00443324,word,46010840
+patch=1,EE,00443328,word,46010840
+patch=1,EE,0044332C,word,46000000
+patch=1,EE,00443330,word,46000000
+patch=1,EE,00443334,word,46000000
+patch=1,EE,00443338,word,E62101B8
+patch=1,EE,0044333C,word,08084A5F
+patch=1,EE,00443340,word,00000000
