@@ -696,3 +696,29 @@ dive still gets stuffed by the rest of the defence; driving the end does not
 by itself score the play. The REQUIREMENT (two men drive the doubled man
 backward, proportional to mass, via the engine) is MET on the numbers.
 AWAITING THE OPERATOR'S EYES -- the instrument of record.
+
+### OPERATOR VERDICT (2026-08-12): PANCAKE CONFIRMED — the double team works
+
+> "overall it pancakes the defender. i wish it drove it backwards in the sense
+> that he was walking backwards as an option besides pancaking -- is that
+> possible? ... the right tackle kinda disengages at one point, maybe on the
+> very last rep"
+
+The eyes and the numbers agree: two blockers, held, driving, pancake. The
+original requirement -- "EXACTLY like a real double team", mass-proportional,
+no nerfs, no warps -- is MET on slot 9.
+
+**T3 -- outcome variety (walk-backward vs pancake): POSSIBLE, mechanism known.**
+The outcome grid (0x00526F90) has multiple blocker-winning cells; the margin
+size selects the cell. N-1 folds the helper's raw W+STR -- a huge margin --
+so the extreme cell (pancake) fires every time. Tuning the fold's magnitude
+(scale the terms, or substitute the D-law curve from anim-lanes/2-mass-law.md)
+centres the margin in the sustained-drive band instead -- clips 50/53/54, the
+walking-backward cells -- with pancakes reserved for lopsided matchups. In
+live games the contest's jitter rolls then mix outcomes around that centre
+naturally. Work: decode the grid's margin band edges (lane 1 has the grid;
+the bands need reading), pick the target band, scale the fold. Own patch,
+own test.
+
+**T4 -- RT disengage on the last rep.** Logged; likely the kind-7 61-frame
+fuse or the record end near the whistle. Low priority; observe again after T3.
