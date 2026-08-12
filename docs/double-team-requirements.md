@@ -4,16 +4,19 @@ Recorded 2026-08-11 from the operator. **Requirements only — nothing here is
 designed or patched.** `block-cycle.md` holds the existing reverse engineering;
 this document holds what the fix has to achieve and how it will be judged.
 
-> **STATUS 2026-08-12, evening: THE DOUBLE TEAM WORKS — operator-confirmed
-> pancake on slot 9.** The four-patch set (`14F8B841.n1-fold.pnach`, 91
-> lines): **P1** market guard (commit + never release), **P4** record cap,
-> **P11** shed-lock unlock (the contest runs; pass pockets turn dynamic —
-> accepted), **N-1** helper fold (the contest knows two men; DE driven
-> −1.41 → **+2.09 yd**, engine's own clips, pancake confirmed by eyes).
-> Remaining is tuning and spread: T3 outcome variety (walk-back band vs
-> pancake — grid cell selection by fold magnitude), T1 shed cadence, T2
-> swim-only moves, T4 RT last-rep disengage, R7 the LG+C nose double, R6z
-> zone. Path: `double-team-iteration-plan.md`; method: `tracing-method.md`.
+> **STATUS 2026-08-12: THE DOUBLE TEAM IS DONE on slot 9 (operator-confirmed),
+> and now in FIRST-PASS TUNING.** Live set (`14F8B841.t3-live.pnach`, 101
+> lines): **P1** market guard, **P4** record cap, **P11** shed-lock unlock,
+> **N-1** helper fold, **T3** fold-scale. The single constant **k (at
+> `0x004F4BCC`) = 0.8** sets the win/lose/drive center; the operator judged 0.8
+> "just about right" in live play.
+>
+> **!! FINETUNE PLACEHOLDER — NOT FINAL !!** k was tuned on ONE matchup, is not
+> seed-swept, and the sibling surfaces (T1 shed cadence, T2 swim-only variety,
+> R11a losability tail, R11b move-at-angle, R7 second double, R6z zone) remain
+> to tune. **Grep `FINETUNE PLACEHOLDER`** for every dial. Path:
+> `t3-fold-scale.md`, `double-team-iteration-plan.md`; method:
+> `tracing-method.md`.
 
 
 > "we need to actually fix double teams … make it so the blocking effect of the
