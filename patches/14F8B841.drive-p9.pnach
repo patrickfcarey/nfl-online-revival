@@ -1,0 +1,72 @@
+gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
+comment=P9 -- per-frame drive on the doubled defender. Over P1+P4. Supersedes P8.
+// P8's cave was sound but its host ran 1 frame in 7 (gates passed on 35
+// frames, canary counted 5 -- measured, docs/motion-block-cave.md). P9 moves
+// the SAME idea into the per-frame sweep at 0x001F2070, where P5/P6 proved
+// s1 and s2 are the two members of an engagement EVERY frame.
+// Gate: dt_role == 2 identifies the doubled defender; nothing else is
+// touched, so single blocks and unpaired players are byte-identical.
+// Step is a fixed 0.045 yd/frame -- deliberately a DIAGNOSTIC magnitude, not
+// the weight+STR law. Prove the hook drives a body first; the law (D = clamp(
+// margin + R^2 - 1, 0, 3), TE+RT vs DE = 2.42) layers on once it does.
+// Canary 0x00514974 counts driven frames; expect ~56/play (the role pair's
+// measured lifetime) against P8's 5.
+// Cave #7 re-censused clean this session on five axes; P8's body is
+// overwritten in place.
+
+patch=1,EE,001F4A30,word,08145248
+patch=1,EE,00514920,word,8E82005C
+patch=1,EE,00514924,word,90410437
+patch=1,EE,00514928,word,2C210002
+patch=1,EE,0051492C,word,10200006
+patch=1,EE,00514930,word,00000000
+patch=1,EE,00514934,word,8C4303E0
+patch=1,EE,00514938,word,2463FFFE
+patch=1,EE,0051493C,word,2C630007
+patch=1,EE,00514940,word,14600009
+patch=1,EE,00514944,word,00000000
+patch=1,EE,00514948,word,12000005
+patch=1,EE,0051494C,word,00000000
+patch=1,EE,00514950,word,92010437
+patch=1,EE,00514954,word,2C210002
+patch=1,EE,00514958,word,14200003
+patch=1,EE,0051495C,word,00000000
+patch=1,EE,00514960,word,0807D28D
+patch=1,EE,00514964,word,00000000
+patch=1,EE,00514968,word,8E820000
+patch=1,EE,0051496C,word,0807D2AC
+patch=1,EE,00514970,word,00000000
+patch=1,EE,001F6A74,word,2C420169
+
+patch=1,EE,001F2070,word,08110C9C
+patch=1,EE,00443270,word,AE2201F0
+patch=1,EE,00443274,word,24030002
+patch=1,EE,00443278,word,92210437
+patch=1,EE,0044327C,word,1023000C
+patch=1,EE,00443280,word,00000000
+patch=1,EE,00443284,word,92410437
+patch=1,EE,00443288,word,14230016
+patch=1,EE,0044328C,word,00000000
+patch=1,EE,00443290,word,C6410194
+patch=1,EE,00443294,word,3C013D38
+patch=1,EE,00443298,word,342151EC
+patch=1,EE,0044329C,word,44811000
+patch=1,EE,004432A0,word,46020840
+patch=1,EE,004432A4,word,E6410194
+patch=1,EE,004432A8,word,10000009
+patch=1,EE,004432AC,word,00000000
+patch=1,EE,004432B0,word,C6210194
+patch=1,EE,004432B4,word,3C013D38
+patch=1,EE,004432B8,word,342151EC
+patch=1,EE,004432BC,word,44811000
+patch=1,EE,004432C0,word,46020840
+patch=1,EE,004432C4,word,E6210194
+patch=1,EE,004432C8,word,00000000
+patch=1,EE,004432CC,word,00000000
+patch=1,EE,004432D0,word,3C010051
+patch=1,EE,004432D4,word,34214974
+patch=1,EE,004432D8,word,8C220000
+patch=1,EE,004432DC,word,24420001
+patch=1,EE,004432E0,word,AC220000
+patch=1,EE,004432E4,word,0807C81D
+patch=1,EE,004432E8,word,00000000
