@@ -89,6 +89,7 @@ New to the repo? Read in this order:
 | `block-dominance-requirements.md` | **the charter** for the next blocking ring: eligibility (C1, the keystone), gravity (GRAV), big-on-small pancake (BOS), lead-blocker targeting — dependency map, acceptance tests, attack order |
 | `wr-block-measurement.md` | the objective A/B spec for W1 (does the WR pairing-arm fix help?): the isolating formation/defense, entity resolution, metrics, harness-controlled protocol, pre-registered decision rule |
 | `defense-fatigue-requirements.md` | new campaign: run plays should tire the defense more than pass, accumulating over the game (200 yds / ~30 runs ⇒ exhausted by Q4) — requirement, acceptance test, and the F1–F6 stamina-system hunt that gates it |
+| `ai-coach-playcalling-requirements.md` | new campaign: make the CPU coach smart by leveraging `ptrk` (the 48-play tracker) — expand what it tracks (run/pass, in/out, target, 1st downs, TDs), call to counter tendencies (anti-cheese), formation checks, PA-bite via a multi-variable model, and drop the rating cheese LAST |
 | `seed-testing-plan.md` | RNG seed sweeps for bounded regression testing, range cards, and staged S0-S4 release gates (hours-to-days runs, planned not discovered) |
 | `state-reachability.md` | **protocol** — evaluate a patch's gate conditions against the savestate's own memory before any deploy; born from the DT-3 unreachable-branch cycle |
 | `field-overlay-tool.md` | design: paint proven world points (landmarks, routes) onto a game screenshot for visual review |
