@@ -110,6 +110,63 @@ states the wanted defenders actually occupy; and a savestate where an in-box
 coverage defender should be blockable but isn't. **This is the highest-blast-
 radius change in the whole project — it gets the heaviest regression pass.**
 
+### C1 DIAGNOSTIC RESULT (2026-08-12): CONFIRMED — eligibility was the whole wall
+
+C1-full deployed in isolation (`patches/14F8B841.c1-eligibility-diag.pnach`,
+one word `001F2D60 = 1000000F`) on the rig. Operator, live play, first try:
+
+> "the Right guard pulling is now covering the CB/LB/or RT as need fit. it's
+> actually working as you would hope."
+
+**The pulling guard's targeting logic was never broken — the correct man was
+invisible to it.** Making every defender eligible let the existing finder pick
+the right block. This confirms the lead-blocker diagnosis
+(`lead-blocker-requirements.md`) and the eligibility keystone at one stroke.
+
+**It also uncovered the next layer, not created it.** The operator saw WRs now
+*attempt* CB blocks (previously impossible — the CB was ineligible, issue #15)
+and *execute them badly* — poor lead, bad angle, the CB slips past. The defect
+moved downstream from "can't select the man" to "blocks him poorly." Captured
+as WR below, a separate code path (rule 1).
+
+**OPEN — the blast-radius question that decides C1-full vs C1b:** whether the
+interior five linemen chase DBs downfield / abandon the pocket under C1-full.
+Not yet reported by the operator; if absent, C1-full is closer to shippable
+than predicted and C1b may be unnecessary. Awaiting operator eyes on the O-line.
+
+### C1 BLAST-RADIUS RESULT (2026-08-12): the predicted regression did NOT occur
+
+Operator, live play:
+> "the o line is not 'chasing' dbs, they are just rightfully coming into their
+> list of targets now correctly. i saw a wr block a cb, and then when the cb was
+> breaking free of the block the pulling guard then arrived and finished the
+> block. it was actually amazing."
+
+**The "linemen chase DBs downfield" prediction was WRONG** (agent's, refuted by
+operator eyes). C1-full produced emergent, correct *team* blocking — a WR and a
+puller combining on one corner — not chaos.
+
+**Mechanism, verified this session — why C1-full is self-scoping:** the
+target-finder `0x001FEB98` is a **nearest-in-cone** search, not "pick any
+eligible man". It seeds best-distance with a max sentinel (`[0x005ff248] =
+32767.0`), calls the cone test (`jal 0x001fec78`), and keeps the **minimum**
+distance candidate (`c.lt.s f1,f0` / `bc1fl`); a hard local corridor gate
+(`0x004AE048`, prior review) bounds it further. So a blocker always takes the
+CLOSEST in-cone defender — for an interior lineman that is the DT/LB in his
+face, never a deep DB. **Eligibility was the ONLY over-exclusion; the distance +
+cone gates already supply the relevance C1b was meant to add.** A DB wins
+"closest" only for a blocker actually near one (a WR; a puller at the 2nd
+level) — exactly the observed layered block.
+
+**Consequence: C1-full may be shippable and C1b may be unnecessary.** NOT yet
+promoted to a finding — this is a handful of plays, not a proven negative
+([[sample-paths-not-endpoints]]). To promote: a regression sweep
+(`linemen_downfield` metric + the must-not-break table across play types),
+watching the residual misfire cases — **pass pro** (a lineman leaving a rushing
+DL for a closer coverage DB drifting into the backfield; blitz pickup is
+correct, abandoning a rusher is the bug), **screens**, and **goal line**. If it
+stays clean, C1-full ships as-is and WR execution becomes the main event.
+
 ---
 
 ## GRAV — Gravity: a mass+strength-scaled capture, and a small intentional warp
@@ -228,6 +285,84 @@ tick 82 vs 100/120/140 on an existing capture — if it flips into 2/30, the del
 gate alone may fix the measured play and prove the partial-C1 idea. Then sweep N.
 
 ---
+
+## WR — receiver / perimeter block execution (uncovered by the C1 diagnostic)
+
+**A separate code path from the pulling-guard lead block (rule 1).** Surfaced
+2026-08-12 the moment C1 made coverage DBs eligible: WRs now *attempt* to block
+corners and *do it badly*.
+
+**Operator observation (evidence, not yet diagnosed):**
+> "the wide receivers ... are bad at targetting because of route choices and all
+> kinds of things ... they definitely are leading poorly. They are letting CBs
+> slip by them a LOT."
+
+**What it is / is not.** NOT an eligibility defect — C1 fixed that; the WR can
+now pick the corner. It is an *execution* defect: target choice, lead/approach
+angle, and sustain. The operator names ≥2 sub-defects (route/positioning; poor
+lead) — treat as distinct until measured.
+
+**Rule (provisional, pending measurement).** A WR/slot assigned to block a
+perimeter defender should lead him (get playside/between the defender and the
+ball) and sustain, not let him cross face and slip to the carrier.
+
+**Acceptance test (to build).** New metrics on the receiver block: `wr_block_
+target` (does he pick the play-relevant defender), `wr_leverage` (is he on the
+playside shoulder at contact), `wr_defender_crossface` (frames the blocked
+defender gets to the carrier side of the WR — should trend to 0). Thresholds
+after a baseline capture.
+
+**Mechanism (unknown — to trace).** Likely the shared target-finder
+(`0x001FEB98`) + cone/range gates, but the WR block state and its route
+interaction are unconfirmed. `fb-wr-blocking.md` (#15) is the entry point. **Do
+not patch until the WR block path is traced and a savestate is measured**
+(rules 1, 3, 4).
+
+**Status.** Requirement stub only. Needs: a savestate of a play with a WR
+perimeter block (screen / WR-side run / bubble); a trace of the WR block state;
+the three metrics. Unmeasured — nothing here is a finding yet.
+
+## MOM — momentum / closing-speed on the initial hit
+
+Operator, 2026-08-12: the initial hit of a fullback running full speed should be
+more powerful against a stationary defender. A third sibling of N-1 / BOS — same
+lock-in hook, same "fold a term into the comps" mechanism — but the folded input
+is **momentum**, not mass.
+
+**Finding (verified this session): the block contest is blind to velocity.**
+- Lock-in contest `0x001f0c40` reads none of the kinematic fields (no speed, no
+  velocity, no position).
+- `BreakBlockContest 0x001a66f8` reads move terms (`+0x10/+0x14`), weight
+  (`+0xAEC`), STR, and a leverage constant — **no velocity term**.
+So a sprinting FB and a standing FB produce the identical contest. Momentum is
+unmodeled; the requirement is real and addressable.
+
+**Rule.** A blocker arriving at speed into a stationary defender wins the initial
+contest decisively, scaled by closing speed. Gate: blocker speed high AND
+defender speed ≈ 0 (a standing blocker gets nothing = stock behaviour).
+
+**Acceptance test.** On an FB iso / lead dive: defender dy-backward at the
+initial contact scales with the FB's closing speed at impact; a slow-approach FB
+and a matched-speed pair are byte-identical to stock. Metric: `impact_closing_
+speed` (blocker speed the frame before the kind-4 flip) vs resulting outcome cell
+/ defender dy.
+
+**Mechanism.** Fold a momentum term (closing_speed × mass, or a closing-speed
+bonus) into comp1 at the lock-in — the N-1 cave pattern, gated on defender speed
+≈ 0. Blocker speed field: `+0x1E8` (commanded) is the clean proxy; the exact
+actual-velocity field AT CONTACT is **TO-DERIVE** (deploy-time read on a live
+FB). **Timing subtlety — load-bearing:** the contest fires on the contact frame,
+which is the same frame the engine overwrites locomotion (kind-4 flip), so the
+speed must be read BEFORE it is zeroed. That timing is the whole point of
+"*initial* hit".
+
+**Scope fork (unresolved) — which "hit":**
+- FB as **lead blocker** hitting a defender → the block path above.
+- FB as **ball carrier** trucking a tackler at speed → a DIFFERENT module (the
+  tackle/truck path, `0x001869ec` region), not the block contest. Do not conflate.
+
+**Status.** Requirement stub. Blocked on: the scope fork; the actual-velocity
+field at contact; a savestate of an FB hitting a stationary LB at speed.
 
 ## Attack order
 

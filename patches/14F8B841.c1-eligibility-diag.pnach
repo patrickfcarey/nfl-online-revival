@@ -1,0 +1,42 @@
+gametitle=Madden NFL 2004 (SLUS-20752) [14F8B841]
+comment=C1-FULL DIAGNOSTIC -- force every defender eligible as a block target.
+
+// ===================================================================
+// !! DIAGNOSTIC, NOT A SHIPPABLE FIX !!
+// ===================================================================
+// PURPOSE: prove that the block-target eligibility filter at 0x001F2D60
+//   is the whole reason a CB/LB/SS in coverage can never be selected as
+//   a block target (docs/block-dominance-requirements.md, C1;
+//   docs/fb-wr-blocking.md Gate B; docs/lead-blocker-requirements.md).
+//
+// WHAT IT DOES: the filter admits a defender only if his ai_state is in
+//   {2 pursuit, 30 rush/engaged, 51 authored wait} or he is human
+//   (flag 0x4000). The admit path is reached by the branch
+//     001F2D60  12C0000F  beq s6, zero, 0x001f2da0   (s6 = "prior admit?")
+//   Forcing it ALWAYS-TAKEN makes the admit path unconditional:
+//     001F2D60  1000000F  beq zero, zero, 0x001f2da0
+//   Same branch target (0x001F2DA0); rs and rt both zero. Every
+//   defender now enters the block-target pool regardless of state.
+//
+// EXPECTED (the point of the run):
+//   * a previously-free CB (the blitzing corner on the misdirection
+//     play; a coverage DB near a blocker) becomes a legal target and
+//     gets picked up. THIS is the observation we want.
+//
+// KNOWN REGRESSION -- this is why it is a diagnostic, not the fix:
+//   * C1-FULL is GLOBAL. Every blocker on every play now sees every
+//     defender, so the five linemen may chase DBs downfield, abandon
+//     the pocket, and draw ineligible-man-downfield. Watch for it; it
+//     is EXPECTED and is exactly what the scoped fix (C1b) exists to
+//     avoid. Confirm the CB becomes blockable, then we build C1b.
+//
+// ISOLATION (rule 2): this file is C1 ALONE. Deploy it BY ITSELF (not
+//   combined with the t3-live double-team set) so the observation is
+//   unconfounded. The double-team fix is a different code path and can
+//   be re-deployed after.
+//
+// REVERT: delete the file (or restore t3-live.pnach) + reboot the VM.
+//   In-place code word, patch=1 so it re-applies after load_state.
+// ===================================================================
+
+patch=1,EE,001F2D60,word,1000000F
