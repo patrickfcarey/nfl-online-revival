@@ -140,3 +140,17 @@ patch=1,EE,004F4BCC,word,3F4CCCCD
 // man; O-line does NOT chase DBs (finder is nearest-in-cone). Diagnostic
 // C1-FULL; C1b scoping pending a regression sweep.
 patch=1,EE,001F2D60,word,1000000F
+
+// ===================================================================
+// W1 -- give the WR a real blocking pairing arm (docs/fb-wr-blocking.md
+// Gate D; docs/block-dominance-requirements.md WR). The blocker-position
+// pairing table 0x00583860 gives every skill position a bespoke arm
+// EXCEPT the WR, whose slot points at the do-nothing default 0x001F3848.
+// Repoint it to the TE/tackle arm 0x001F3518. DATA word (no code cache).
+//   0x00583868: 0x001F3848 (default) -> 0x001F3518 (TE/tackle arm)
+// !! UNVERIFIED -- DISABLED. A controlled A/B on the sweep savestate
+// found W1 ON vs OFF "indistinguishable" by eye (docs/block-dominance-
+// requirements.md, W1 RESULT). Do NOT ship until an objective harness
+// measurement (kind-4 contact frames / gap / angle, OFF vs ON) settles
+// it. Re-enable by uncommenting the line below only after that.
+// patch=1,EE,00583868,word,001F3518

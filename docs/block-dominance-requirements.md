@@ -312,15 +312,84 @@ playside shoulder at contact), `wr_defender_crossface` (frames the blocked
 defender gets to the carrier side of the WR — should trend to 0). Thresholds
 after a baseline capture.
 
-**Mechanism (unknown — to trace).** Likely the shared target-finder
-(`0x001FEB98`) + cone/range gates, but the WR block state and its route
-interaction are unconfirmed. `fb-wr-blocking.md` (#15) is the entry point. **Do
-not patch until the WR block path is traced and a savestate is measured**
-(rules 1, 3, 4).
+**Mechanism — TRACED and verified live 2026-08-12 (W1).** From
+`fb-wr-blocking.md` Gate D: the blocker-pairing scorer `0x001f31d0` dispatches on
+blocker position through a 24-entry table at `0x00583860`. HB/FB, TE/tackles,
+guards, centre each get a bespoke pairing arm — **the WR slot is the generic
+do-nothing default.** Verified against the image AND live rig memory: WR slot
+`0x00583868` = `0x001F3848` (the default; 15 of 24 slots share it); the TE/tackle
+arm `0x001F3518` is a real arm (idx 3/4/8). So C1 makes the DB a legal target but
+the WR has no logic to COMMIT — he runs past. Operator, live: "on run plays the
+WR should be blocking [and runs past the DB]."
 
-**Status.** Requirement stub only. Needs: a savestate of a play with a WR
-perimeter block (screen / WR-side run / bubble); a trace of the WR block state;
-the three metrics. Unmeasured — nothing here is a finding yet.
+**W1 — the fix (one data word, no cave):** repoint the WR slot
+`0x00583868` from `0x001F3848` → `0x001F3518` (give the WR the TE/tackle pairing
+arm). It is DATA, not code — testable by live PINE poke (no restart) and
+instantly reversible (write `0x001F3848` back).
+
+**Acceptance test.** On a run play, the WR engages the play-side DB (gets in
+front, mirrors, walls him off) instead of running past. Operator eyes; then the
+`wr_*` metrics for a regression sweep.
+
+**W1 RESULT (2026-08-12): INCONCLUSIVE by eye — an early "CONFIRMED" was
+retracted (Correction).** First impression on ONE live play ("he blocks now")
+was overturned by a controlled A/B on the same savestate: with W1 OFF (default
+arm) the WR still tries to block, and ON vs OFF is "really indistinguishable" to
+the operator. The effect (if any) is below eye-resolution amid play variance.
+NOT disproven — undetermined. Needs objective measurement, not eyes.
+
+Two distinct sub-defects surfaced by the A/B, both separate from W1:
+- **Bad approach angles.** Even when the WR commits, the angle is poor. Possibly
+  BECAUSE the TE/tackle arm W1 borrows is tuned for line-of-scrimmage blocking,
+  not a WR blocking in space — a hint W1 (arm-reuse) may be the wrong shape and a
+  bespoke WR arm (cave) is needed. Own requirement once measured.
+- **Decoy routes, unpredictable.** On some run plays the WR is correctly NOT
+  blocking (authored route); the operator cannot predict which. This is the
+  unread per-play assignment class (`fb-wr-blocking.md`, #15 open unknown).
+
+**Correct disambiguation that DOES hold:** an earlier "runs past like a curl
+route" WAS an intentional decoy (the WR never enters the pairing scorer on a
+route play) — that half stands. What does NOT hold is that W1 fixes the blocking
+case; that is now unproven.
+
+**NEXT: objective A/B, not eyes.** Run the harness with canned inputs on the
+sweep savestate and measure the WR→CB engagement OFF vs ON over N reps:
+kind-4 (contact) frames, gap to the CB, cross-face (CB reaching the ball side of
+the WR), approach angle. Numbers settle what eyes cannot.
+
+**Status.** W1 unverified; **removed from the deploy pnach** (commented out) until
+measured. Live poke reverted to stock. W2 (FB run-play arm, slot `0x00583864`,
+HB pass-pro-only arm `0x001F3768`) untouched.
+
+### WR PLAN — grounded 2026-08-12 (why W1 wasn't enough, and the three layers)
+
+Disassembled the two arms to see what W1 actually changed:
+- **Default arm (WR) `0x001F3848`:** load distance, add a fixed bias, compare to a
+  threshold. **Crude proximity, ZERO geometry** — no notion of where to be
+  relative to the defender.
+- **TE arm (W1) `0x001F3518`:** DOES compute geometry (`sub.s`/`abs.s` on
+  coordinates) but **gated on the double-team registry** (`[0x00601280]+0x54 <
+  30`) — LOS / double-team-window logic, NOT open-field stalk blocking. So W1
+  handed the WR geometry for the wrong situation → angles stayed bad. Right
+  instinct, wrong arm.
+
+**Three layers to "WRs block better", with the lever for each:**
+1. **Assignment** — is he told to block? Play-file class (decoy vs block); some
+   plays correctly make him a route decoy. **Leave alone** — don't break decoys.
+2. **Selection** — which man? The pairing arm. Default = no geometry, TE = wrong
+   geometry ⇒ needs a **bespoke WR arm (cave)** scoring by *leverage to the ball*
+   (play-side force defender threatening the carrier's path), not nearest, not
+   LOS/DT geometry.
+3. **Execution** — how he blocks once a man is picked: the block-state steering
+   (state 33 run-block / 47 lead). Does it aim AT the defender (charge) or at a
+   **wall-off point between defender and ball**? "Slips by cross-face" ⇒ it
+   charges. **Leading suspect for the bad-angle defect — TO-TRACE.**
+
+**Order:** (1) run the measurement (`wr-block-measurement.md`) — it localizes
+selection vs execution (TE arm null + angle bad under both ⇒ execution). (2) fix
+execution steering to the leverage point — hypothesized bigger win: a good angle
+makes even crude selection look like real blocking. (3) bespoke selection arm if
+selection is also implicated. Measure before cutting any cave (project rule).
 
 ## MOM — momentum / closing-speed on the initial hit
 

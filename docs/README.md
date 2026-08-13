@@ -87,6 +87,7 @@ New to the repo? Read in this order:
 | `dt-lanes/`, `anim-lanes/`, `drive-lanes/` | investigation lanes: block-market economics and teardown (dt-), the animation registry and clip semantics (anim-), and the per-frame-host / position-authority / native-drive trio (drive-) that produced P11 and N-1 |
 | `on-skates-requirements.md` | driven blocks: losers give ground continuously, feet moving — the drive/translation scoping (S1-S5) |
 | `block-dominance-requirements.md` | **the charter** for the next blocking ring: eligibility (C1, the keystone), gravity (GRAV), big-on-small pancake (BOS), lead-blocker targeting — dependency map, acceptance tests, attack order |
+| `wr-block-measurement.md` | the objective A/B spec for W1 (does the WR pairing-arm fix help?): the isolating formation/defense, entity resolution, metrics, harness-controlled protocol, pre-registered decision rule |
 | `seed-testing-plan.md` | RNG seed sweeps for bounded regression testing, range cards, and staged S0-S4 release gates (hours-to-days runs, planned not discovered) |
 | `state-reachability.md` | **protocol** — evaluate a patch's gate conditions against the savestate's own memory before any deploy; born from the DT-3 unreachable-branch cycle |
 | `field-overlay-tool.md` | design: paint proven world points (landmarks, routes) onto a game screenshot for visual review |
