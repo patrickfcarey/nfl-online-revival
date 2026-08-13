@@ -213,6 +213,35 @@ These fold into Layer 2 (smarter calling): the CPU's per-snap decision reads
 situation — and adjusts. The 41-slot game-state array + `ptrk` supply (b) and (c)
 today; (a) formation-personnel is the one read to locate.
 
+## Self-scheme — the CPU builds off its own success & keeps a coach's "look" (operator, 2026-08-13)
+
+> The CPU needs to track its OWN plays so it can build off the successful ones —
+> maintain the same "look" more or less, like a real coach — and try something
+> else if what they try doesn't work.
+
+Today the selection is **blind to its own history**: `ai-play-calling.md` found
+every `ptrk` read in the offense weighting is for the **opponent**; "no term
+reduces a play's weight because the AI just called it." The CPU neither builds off
+its own success nor abandons its own failures.
+
+**But the infrastructure already exists: the ring has TWO sides.** The CPU's own
+calls + outcomes are already recorded on its side (and Layer 1's outcome
+expansion — success / 1st down / TD — applies to it). The new selector just needs
+to read its OWN side, **symmetric to the anti-cheese read of the opponent's
+side**:
+- **Build off success:** up-weight the CPU's own recently-successful plays/concepts.
+- **Abandon failure:** down-weight its own recently-failed plays — "try something else".
+- **Keep a look (coach identity):** a scheme-inertia term — lean toward the CPU's
+  established concepts rather than calling randomly, so its offense reads as one
+  coherent philosophy that builds on what's working.
+
+So the **coach brain reads BOTH ring sides**: the opponent's side to counter
+tendencies (anti-cheese), its own side to build a consistent, self-improving game
+plan. Same ring, both directions — the self-referential half the current engine
+entirely lacks. Note: this uses the exact infrastructure the ptrk investigation is
+already mapping (both-side ring + outcome signals), so it changes the DESIGN, not
+the investigation targets.
+
 ## Requirements + acceptance tests
 
 - **T-track:** after the human runs N times / feeds one receiver M times, the new
@@ -221,6 +250,10 @@ today; (a) formation-personnel is the one read to locate.
 - **T-call:** a human who spams one tendency (e.g. outside runs, or targeting
   WR#1) sees a **measurable shift** in CPU play/coverage selection over the game
   toward the counter — quantified from CPU call logs, not vibes.
+- **T-self:** the CPU up-weights its own recently-successful concepts (builds off
+  them, keeps a "look") and down-weights its own recently-failed ones (tries
+  something else) — measured as a shift in CPU self-call distribution as a
+  function of its own play outcomes, holding the opponent constant.
 - **T-check:** presenting an empty formation makes the CPU check to a pass-safe
   shell (and a heavy/goal-line look makes it check run-strong) THIS snap —
   measured as a change in the CPU's pre-snap call/shift vs a neutral formation.
@@ -299,9 +332,131 @@ Play-calling AI + `ptrk` + the rating-cheat consumers. Does NOT touch blocking o
 fatigue. Online (h-v-h) is inert by construction. The de-cheese step is the only
 one that changes single-player *difficulty feel* — gate and measure it.
 
+## Investigation results
+
+### ptrk internals — DONE, spot-checked 2026-08-13 (full: `ai-coach-investigation-ptrk.md`)
+
+Three findings that materially shrink the work:
+
+1. **De-cheese is surgical — TWO getters.** `0x0024E188` (repetition) has exactly
+   the **9 documented cheat consumers** as callers (verified: coverage ×5,
+   break-block, tackle, ball-contest, event-rate); `0x0024E1C0` (success) feeds
+   the defensive-AI branches. **Neuter the two getters → all rating cheese zeroes,
+   recording + selection untouched.** Still do it LAST per ordering, but it's a
+   2-site change, not a hunt.
+2. **Layer 1 is MOSTLY ALREADY RECORDED.** The recorder `0x00148900` (not the
+   recompute) already writes per play: `@4` opponent play id, **`@8` direction/zone
+   bitmask (inside/outside, L/R, short/deep)**, **`@13` yards**, **`@14` 5-way
+   outcome class**, **`@15` run/pass** (via the `0x001F82E8` gate — verified: it
+   stores 1 or 2). Only **pass-target player is missing** → one new field. The
+   existing fields' only readers are the two LEGACY selection inputs we're
+   replacing, so they free up for the new selector automatically.
+3. **Resize (48→200) is mechanical + one hazard.** ~30 baked immediates (alloc
+   1556 ×3, stride 768 ×~13, count-offset 1552 ×5, caps 47/48/49). **Hazard:** the
+   two 4-entry, UNCLAMPED weight tables (`0x00540FE0`/`0x00540FF0`) — `i/12` hits
+   band 16 at 200 records and reads 13 words OOB. Must extend to ≥17 bands or
+   **reformulate as a decay curve** (which we want anyway for the fast-cheese top
+   band). Persistence: saved as one opaque `'STPG'` GBIN section; resize relocates
+   side-1 ring + counts → **save versioning/migration required**. Phase per Layer 0.
+
+Struct is self-contained (all refs in one 6 KB module `0x0024CAFC–0x0024E45C`) —
+nothing external dereferences it, which makes the resize safer.
+
+### Situational + PA-bite inputs — DONE, spot-checked 2026-08-13 (full: `ai-coach-investigation-inputs.md`)
+
+1. **Situation state — CONFIRMED, but it's an OBJECT, not a flat array
+   (correction).** Single global at `*0x00601F4C`, ~40-accessor library
+   (`0x0025FF00`–`0x00260E30`). Supersedes the "41-slot array" framing used
+   above/in `ai-play-calling.md`. Proven fields: quarter `+0x00`, possession
+   `+0x40`, per-team score `+0x44/+0x46`, clock `+0x38`, flags `+0x3C`. Reachable
+   from the coach (possession drives weighting dispatcher `0x0024DBF8`; score/clock
+   getters called from the `0x00148/0x00149` play-calling module). **GAP: down,
+   distance, timeouts, current-play-ids are in unlabeled slots — need ONE live
+   read to bind** (dump 0x120 B at `*0x00601F4C` mid-play, compare to HUD). These
+   are load-bearing for the situational model, so this read is a prerequisite.
+2. **Formation recognition — DIY from position bytes.** No pre-built formation id
+   and no RB/WR count field in the ELF (closed census). Signal = player position
+   byte **`+0xB04`** (enum QB0/HB1/FB2/WR3/TE4…), pre-snap. Empty check = iterate
+   the offense's 11 and count `+0xB04∈{1,2}` (RB/FB) vs `==3` (WR). Tractable, just
+   a small loop we write.
+3. **PA-bite — BIG REFRAME: the CPU defense is OMNISCIENT about run/pass.**
+   `IsRun 0x001F82E8` reads the **authored** play-type (possession → play object
+   `0x00243F58`, verified), not a visual signal. Defenders gate on it
+   (man-cover think `0x001BE2D0`: `IsRun` true → abandon coverage to state 85).
+   **So a play-action pass returns IsRun=0 and the fake fools the CPU NOT AT ALL
+   today** — explaining why PA feels useless vs the CPU. Layer 5 is therefore not
+   "tune a bite value" — it's **introduce foolability**: replace the omniscient
+   `IsRun` gate at the defensive-read sites with a probabilistic diagnosis driven
+   by the multi-variable model (run success, down/distance, field pos, score/time,
+   formation). Note `IsRun` is the SAME primitive the ptrk recorder uses for `@15`
+   — a shared choke point.
+4. **Own-personnel/matchup — inputs reachable, scoring absent.** `+0xB70` ratings
+   ARE read from the play-calling band (AWR at 76 sites); coverage reads defender
+   position `+0xB04` and AWR `+0xB74`; assignment is in the state-chain record
+   `*(player+0x2FC)`. **Negative finding:** nothing compares the covered WR's
+   rating vs the covering defender's — CB-vs-WR matchup scoring is a **build
+   target on already-reachable inputs** (supports "forced to a subpar package").
+
+### Play-caller & the SEAM — DONE, spot-checked 2026-08-13 (full: `ai-coach-investigation-playcaller.md`)
+
+1. **THE SEAM — `0x00249498` ("AI select play from group"), verified.** Indexes
+   the per-team playbook block (stride `0xAFBC`, base `[0x00609770]`) and runs the
+   selection query. **Exactly two callers** (verified): `0x0024BCAC` and
+   `0x0024BE58`, both VM command handlers. Live regs at the call: `a0`=side(0/1),
+   `a1`=flag, `a2`=group id, `s2`=VM context. **The hook: retarget those two
+   `jal 0x00249498` to the coach-brain cave** — one clean cut-in point for the
+   entire new selector.
+2. **Play-caller conflict RESOLVED.** `0x001459B4` is inside `0x00145940` = the
+   pre-snap **defensive line/LB shift** picker (confirms `ai-play-calling.md`,
+   corrects `play-tendency-ai.md`). It reads `ptrk` to bias *alignment*, not to
+   pick a play. Closed: no offensive play-caller among any `ptrk`-getter caller.
+3. **The selection spine:** VM cmd11 (`0x0024BC8C`) → seam `0x00249498` →
+   `0x002BFF68` (assembles+runs `select LPBP from IABP where RGIA=group`) → query
+   engine `0x004C7E38`. Columns: `LPBP` play id, `RGIA` group, `tcrp` weight,
+   `TSBP` tendency key. The **weighting (tcrp + the 0.8 class-renorm + weighted-
+   random) runs on the QUERY path, not in ELF AI code** — so taking over at the
+   seam *replaces* it wholesale (we decide, we don't run the query's weighting).
+   The 225-slot no-bound-check buffer is that query's result set.
+4. **VM / disc-script boundary:** interpreter `0x0024BFC0`, command handler
+   `0x0024BB50` (13-entry table): cmd11→seam (select-from-group), cmd8/9→
+   `0x0024B100` (set-specific-play), others clock/huddle. **Script = disc asset
+   #69** (loader `0x0047F480`, exec `0x0024C7C8`). Situational policy (clock,
+   4th-down, which group) is authored disc data; **the ELF-patchable boundary is
+   the command handler** — so we can override *which play* at the seam, and the
+   4th-down/clock *policy* is the separate disc-asset surface.
+
+**One live read closes the remainder:** break in `0x002BFF68` to watch the
+weighting/renorm/pick execute + confirm the result-set row width and the 225 bound.
+
+## Build target & portability (operator, 2026-08-13)
+
+> The goal is always to be able to build the modified ISO for online play
+> eventually, and hopefully port it to the Xbox version for a friend.
+
+Two consequences that settle the space/approach question:
+
+1. **A modified ISO is the deliverable ANYWAY (Track 1 online play).** So the
+   ELF-expansion path is not a detour or a burden — it IS the destination. The
+   `~9.2 KB` cave budget stops being a ceiling: code caves become a **dev-time
+   convenience** for fast emulator iteration (pnach, no rebuild), while the real
+   coach-brain ships in a **relinked, properly-sized ELF** in the rebuilt ISO.
+   Build in caves to iterate; land in the expanded ELF to ship.
+2. **The Xbox version is a DIFFERENT ARCHITECTURE (x86), not just different
+   addresses.** Our PS2 MIPS work — every address, every cave, every disassembly
+   — does NOT transfer. Only the **design** transfers: the objective function, the
+   tendency data schema (the `ptrk` fields), the coach-brain algorithm, the
+   de-cheese approach, the hook *semantics*. **Consequence for how we build:**
+   keep the coach-brain a **clean, self-contained module** with a
+   **platform-agnostic design spec** (algorithm + data model + "what each hook
+   does" in words, not just MIPS addresses), so a future Xbox effort re-derives
+   the equivalent structures on the x86 binary instead of starting from raw
+   gameplay observations. A coherent module ports; scattered cave hacks do not.
+   This reinforces the "new system, not a patch" decision.
+
 ## Status
 
-New, scoped. Foundation (`ptrk`) already mapped. Next: a focused investigation to
+New, scoped. Foundation (`ptrk`) mapped AND its internals investigated (above).
+Play-caller/seam and situational/PA-bite investigations still running. Next: a focused investigation to
 (a) resolve the play-caller conflict + find the weighting hook, (b) confirm the
 ring's free fields, (c) locate the run/pass + direction + target signals at the
 recompute, (d) list the exact de-cheese sites (mostly already in
