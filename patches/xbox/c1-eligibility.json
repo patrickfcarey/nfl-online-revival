@@ -1,0 +1,11 @@
+{
+  "_comment": "C1 -- block-target eligibility filter, Xbox build of Madden NFL 2004.",
+  "_ps2_equivalent": "patch=1,EE,001F2D60,word,1000000F  (beq s6,zero -> beq zero,zero)",
+  "_what_it_does": "The defender-list builder admits a defender only if his ai_state is 2 (pursuit), 30 (rush/engaged) or 51 (authored wait), or he is human-controlled (flag 0x4000). Everything else -- a corner in coverage, a deep safety -- is rejected, so a coverage DB is a legal block target for nobody. Forcing the gate branch always-taken admits every defender.",
+  "_evidence": "docs/xbox-c1-port.md. Function 0x000A43E0 = twin of PS2 0x001F2CD8. Polarity verified: taken -> 0x000A44BB, which computes &list[bl*0x70] and stores the defender at +0x5C (the candidate-list write). No MSVC inversion.",
+  "_operator_note": "On PS2 this is the patch that made the pulling guard read the fit (CB/LB/RT as needed) -- operator-confirmed live 2026-08-13. It is NOT the double team (that is P1+P4+P11+N-1+T3, which needs an x86 cave).",
+  "patches": [
+    { "va": "0x000A4496", "new": "EB23", "expect": "7423",
+      "note": "je 0xa44bb -> jmp 0xa44bb; rel8 unchanged, 2 bytes, exact fit" }
+  ]
+}
