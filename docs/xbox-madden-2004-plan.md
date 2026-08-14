@@ -44,6 +44,26 @@ whole effort — which is why it's phase X1 and cheap.
 one-evening test that answers "how shared is this build" before any
 disassembly.
 
+## Effort model — why this is far cheaper than the PS2 campaign (operator, 2026-08-14)
+
+The PS2 cost was **discovery**: learning what the systems are, sixteen dead ends,
+seven refuted patches. The Xbox inherits the answers — the system map, the
+requirements and acceptance tests, the field semantics, which one-word levers do
+what. Porting answers ≫ faster than asking questions; the multiplier is already
+measured *on PS2 itself*: with the map in hand, C1 went diagnose→patch→
+operator-confirmed in ~an hour and W1 located-and-poked in minutes, versus the
+full sessions their original investigations cost. X2's job — find the x86 twin of
+a known site from known anchors — is minutes-to-hours per site, not weeks.
+
+Where the time actually goes (the honest residue):
+1. **The instrument, not the science** — the xemu/XBE operational layer (GDB stub
+   in the PINE role, XBE bake in the pnach role). Harness *design* transfers;
+   transport is new. The biggest single build item.
+2. **Re-verification per ported site** — fast with a map, never skippable
+   (rule 4 is this project's core lesson).
+3. **Genuine divergence** — wherever the Xbox build actually differs, the map
+   doesn't cover; X1 prices that in one sweep before anything is committed.
+
 ## Toolchain
 
 - **Disc:** XISO (XDVDFS) extraction — the volume descriptor is trivially
@@ -103,9 +123,59 @@ disassembly.
 - **xemu GDB stub state in the rig build** — verify before counting on live
   debugging.
 
+## X0 + X1 RESULTS (2026-08-14): SHARED BUILD — the port thesis is CONFIRMED
+
+Run same-day against the operator's dump (`Madden NFL 2004 (USA).xiso.iso`,
+3.11 GB, XISO game-partition format, magic at 0x10000).
+
+**X0 — extraction + inventory: DONE.**
+- XDVDFS walked clean: 66 files; the `/DATA/` tree mirrors the PS2 disc
+  nearly name-for-name (`DB_TEAMS.DAT`, `DB_TEMPLATES.DAT`, `PLADATA.DAT`,
+  `GAMEDATA.DAT`, the whole `UIS_*` family our `lzh1` tooling opens).
+  Inventory: `extract/xbox/inventory.txt`.
+- `default.xbe` extracted (4,890,624 B; PS2 ELF is 5.35 MB — sibling-sized).
+  Cert title `'Madden NFL 2004'`, title id `0x45410036`, retail entry
+  `0x0025A6C6`, base `0x00010000`, 11 sections (`.text` 3.55 MB at `0x11000`;
+  `.rdata` raw `0x3D5000`; `.data` raw `0x40D000`).
+- **No-online is now a FINDING, not an assumption:** the linked-library table
+  is XAPILIB / D3D8 / XGRAPHC / XBOXKRNL / DSOUND / LIBCMT / D3DX8 —
+  **no XNET, no XONLINE**; zero `DNAS`/`easo.ea.com` strings. Gameplay-only
+  scope confirmed.
+
+**X1 — the anchor sweep: DONE, verdict SHARED BUILD.**
+- **14/14 fourccs present.** Registration constants as reversed-byte code
+  immediates exactly as predicted (`ptrk` @0x11C215 in `.text`, `fatg`
+  @0x39824, `madt`, `prac`); DB tags as forward ASCII in the string pool
+  (`HCOC` ×346 in `.rdata`, `LPBP` ×30, `tcrp` ×5…). (Counting note: the
+  palindromic pairs PBAI↔IABP and AIGR↔RGIA match each other's reversed form.)
+- **The ptrk weight tables, byte-identical:** the 16-byte recency run
+  1/24, 1/48, 1/96, 1/192 at **0x44C2F4** — with the **success table adjacent**
+  (0.0625, 1/96, 1/192, ~0.00269) and two further 4-float weight tables at
+  +0x20 (richer than what we dumped on PS2; note for X2).
+- **The same DB-query dialect**, in the same neighborhood: `select 'YTDC' into
+  … from 'HCOC' where 'DIGT' = … and 'SPOC' = …`, and the clincher —
+  **`select 'STPG' into … from 'NIBG'`** (`GBIN` reversed): the ptrk franchise
+  save/load path, present and identical in shape.
+- **Constants:** `165.75` (the shed power gate) **exactly once** — unique on
+  PS2 too; `12.75` (fatigueB→ratings) ×4; `0.175` ×3; `2.1` ×8; `32767.0` ×6;
+  `0.3` ×67 (noisy, expected).
+- **Two genuine divergence candidates:** `−0.13` (the kind-8 helper debuff) and
+  `335.4` (collision inverse-mass) absent as float AND double (and as
+  0.13 / reciprocal). Either different tuning, computed forms, or changed
+  implementation — **X2 items**, resolved by finding each site's twin and
+  reading what it actually loads. Two misses against this wall of confirmation
+  does not move the verdict.
+
+**Consequence:** X2 proceeds as re-derivation-from-a-map, as the effort model
+predicted. Immediate next steps: (1) the data-tooling test — `madden_tdb.py` /
+`lzh1` against `/DATA/` (if the PS2 tooling reads Xbox data unchanged, the
+data layer is fully shared); (2) stand up the Ghidra project over `default.xbe`
+and locate the twins of the priority hooks (the seam, the two ptrk getters, the
+recorder, `IsRun`, the shift picker); (3) solidify the one-shot XDVDFS/XBE
+scripts into `recon/` tools with tests.
+
 ## Status
 
-Plan only — nothing acquired, nothing swept. **X1 is the everything-gate**: one
-cheap sweep decides whether this is a port or a second research project. No rig
-or PS2-side work is blocked on any of this; it proceeds whenever a disc dump
-exists.
+X0 and X1 **DONE — shared build confirmed** (above). Next: the data-tooling
+test and the X2 hook re-derivation. The rig enters only at X3 (xemu boot of a
+patched XBE); delivery target remains the friend's softmodded console.
