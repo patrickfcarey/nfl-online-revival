@@ -123,8 +123,23 @@ shouldn't:
   *motion* is legitimate; reacting to the *call change* is not.)
 - **Disguise & late safety-rotation:** show one look, rotate to another late —
   gated on secondary quality (great DBs disguise; a weak secondary plays honest).
-  "Hide your looks behind your best players." (Highest-uncertainty piece — depends
-  on whether a coverage-rotation primitive exists; see §7.)
+  "Hide your looks behind your best players."
+  **B3 RESOLVED 2026-08-14 — FEASIBLE (the highest-uncertainty item is closed).**
+  No *shipped* disguise exists: the shell is 3 authored bytes at
+  `base+slot*40+63`, installed only by pre-snap setup, and no defender enters
+  37/38/39 post-snap. **But a post-snap coverage→coverage conversion ALREADY
+  SHIPS**, on exactly the two positions this feature targets: state-22 `ai_think`
+  jump table `0x00582570` (index `+0xB04−13`) routes **FS(17)/SS(18)** to the
+  shared handler `0x001BE6A8`, which — for a man defender with nobody to cover —
+  does `addiu a0,zero,40` (state 40 = deep zone) and calls the state change at
+  `0x001AFB50` with a side-chosen landmark. **Coordinator-verified.** So late
+  rotation is a NEW CALL SITE on an existing mechanism, not a new subsystem.
+  Supporting: man defenders re-target every tick, every coverage state's
+  `can_leave` is the always-1 stub `0x001B0520`, the state id is data-driven
+  (`andi 0x7F`), and alignment vs assignment live in different tables (so the
+  shown look and the played coverage are already separable).
+  **Remaining risk is behavioural, still static:** whether 22/37/38/39's `enter`
+  handlers tolerate mid-play entry (37/39 derive drop geometry at enter).
 
 Offense builds identity *around* the stars; defense hides looks *behind* them —
 "let your best players define you."
