@@ -88,12 +88,27 @@ Same-size baking hits a hard wall at `filesz`: new code beyond ~9 KB of caves
 needs a **bigger ELF** — a second PT_LOAD (or a grown segment) and an ISO that
 can hold a larger file. Scoped, not started:
 
-- **ELF side:** add a PT_LOAD (phnum 1→2, new header entry, section appended to
-  the file). **Placement is the open question:** `.bss` runs to `0x559FDC`,
-  the live stack sits at `0x0065A000`, and the runtime heap's start is
-  unmapped — the new segment's vaddr must dodge all three (candidates: just
-  past the stack once the heap is mapped, or a high fixed address in the
-  mostly-empty upper half of the 32 MB). **B6 investigation item.**
+- **ELF side — B6 ANSWERED 2026-08-14 (`docs/shipping-questions.md`).** The
+  premise "find free EE RAM" was **wrong: there is none.** The pool partitioner
+  `0x002F9A00` (one caller, unconditional boot path) carves *every* byte from
+  `_end` to the top of RAM into named pools — STATE `0x00660000`, SOUND
+  `0x006CB000`, MAIN `0x006CC800`, DB `0x01D5AFF0`… gapless, and the static
+  computation reproduces two live EE dumps byte-for-byte. `0x01000000` is 73%
+  written in play; only 16 bytes at `0x01FFFFF0` are provably free.
+  **So the segment is CARVED, in two words:** `0x002F9A08` `3C0D0066`→`3C0D0067`
+  and `0x002F9A0C` `3C0B0006`→`3C0B0005`. Since `SOUND.base = t5 + t3`, adding
+  64 KB to the base and subtracting it from the size leaves **every other pool
+  boundary byte-identical** (coordinator-verified by disassembly). Recommended
+  segment: **`0x00660000`, 64 KB.** Both patches bake through the existing P1 path.
+- **And the file side is already solved:** **64,744 bytes of all-zero file space
+  at `0x0050A5C0..0x0051A2A8`** (the DVP overlay bodies + `.stack`) lie **outside
+  every PT_LOAD** — coordinator-verified all-zero and past the segment's
+  `0x50A579` end. `code-caves.md` rejected that space for being *unloaded*, which
+  is precisely what makes it usable for a **new** program header. The phdr table
+  has **4,012 verified-zero bytes of room at `0x54`** (phnum is 1), so a second
+  PT_LOAD needs **no file growth → no ISO directory surgery at all**, and
+  `bake_pnach.py` already iterates all program headers with per-segment deltas, so
+  it needs no change. ISO record-repointing is only required above ~63 KB.
 - **ISO side:** a bigger file no longer fits its extents. Standard modder
   path: **append the enlarged ELF to the end of the image** and repoint the
   directory record's LBA+size (no relayout of anything else); full rebuild is
