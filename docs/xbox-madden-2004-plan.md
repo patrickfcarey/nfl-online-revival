@@ -166,6 +166,16 @@ Run same-day against the operator's dump (`Madden NFL 2004 (USA).xiso.iso`,
   reading what it actually loads. Two misses against this wall of confirmation
   does not move the verdict.
 
+**!! CORRECTION (2026-08-14, caught by the X2 agent): the addresses quoted in
+this X1 section are FILE OFFSETS, not virtual addresses.** The recency table is
+at file `0x44C2F4` = **VA `0x0045AF14`** (it lives in `.data`: raw `0x40D000` →
+vaddr `0x41BC20`); the query strings and `165.75` likewise. This matters because
+x86 cross-referencing searches for the 4-byte absolute VA: searching the file
+offset finds **0 xrefs** and would read as "the Xbox build doesn't have it,"
+while the true VA finds the function that reads it. Coordinator-verified; pinned
+in `tests/test_xbe.py`. Convert with the section table (`.text`: VA = fileoff +
+0x10000).
+
 **Consequence:** X2 proceeds as re-derivation-from-a-map, as the effort model
 predicted. Immediate next steps: (1) the data-tooling test — `madden_tdb.py` /
 `lzh1` against `/DATA/` (if the PS2 tooling reads Xbox data unchanged, the
@@ -174,8 +184,46 @@ and locate the twins of the priority hooks (the seam, the two ptrk getters, the
 recorder, `IsRun`, the shift picker); (3) solidify the one-shot XDVDFS/XBE
 scripts into `recon/` tools with tests.
 
+## X2 FIRST PASS (2026-08-14): the hook twins are located
+
+Full table + evidence: `docs/xbox-hook-map.md`. Toolchain: **capstone 5.0.7 is
+installed** (Ghidra is not) — recommendation is capstone as a dev-only pip
+dependency, keeping `recon/` stdlib-pure for the rig.
+
+| hook | PS2 | Xbox |
+|---|---|---|
+| `ptrk` ctor | `0x0024D890` | **`0x0012C210`** |
+| repetition getter | `0x0024E188` | **`0x0012CA40`** |
+| success getter | `0x0024E1C0` | **`0x0012CA70`** |
+| recorder | `0x001488D8` | **`0x0012C360`** |
+| IsPass (ex-"IsRun") | `0x001F82E8` | **`0x000A8F70`** |
+| **the seam** | `0x00249498` | **`0x001311C0`** |
+| selection query | `0x002BFF68` | **`0x00203F00`** |
+| VM cmd handler | `0x0024BB50` | **`0x00133580`** |
+
+**Coordinator-verified spot checks:** the ctor twin opens
+`push 0x7074726b` ('ptrk') / `push 0x614` (**1556 — the exact PS2 allocation
+size**); the seam twin does `imul ebp, ebp, 0xafbc` (**the same playbook stride
+as the PS2 seam's `mult a0,a0,0xafbc`**) then `call 0x203f00`, with **6 direct
+callers** confirmed by a rel32 census. Same constants, same structure, different
+ISA — the port thesis proven at the instruction level.
+
+Three consequences:
+1. **De-cheese is CHEAPER than on PS2** — both getters neuter with a 7-byte
+   in-place overwrite (`fld [..]; ret`); no cave, no relocation.
+2. **A kill switch already exists in shipped code** — both getters return 0.0
+   when `byte [[0x00532B48]+0x17E]` is nonzero. If that is a settable option,
+   Phase-4's acceptance run may cost **zero patches**. Worth checking on PS2 too.
+3. **The seam has SIX call sites, not two** (two are the VM pair; three are
+   special-teams, one unclassified) — flagged as a rule-1 scope test, not folded in.
+
+The 16-byte record schema matches PS2 exactly (`@8/@13/@14/@15` at the same
+offsets), and the 1556-byte object layout was confirmed three independent ways.
+
 ## Status
 
-X0 and X1 **DONE — shared build confirmed** (above). Next: the data-tooling
-test and the X2 hook re-derivation. The rig enters only at X3 (xemu boot of a
-patched XBE); delivery target remains the friend's softmodded console.
+X0, X1 **and the X2 first pass are DONE** — shared build confirmed, hook twins
+located, data layer proven to be largely the same bytes
+(`docs/xbox-data-layer.md`). Remaining before patching: classify the seam's six
+call sites, and stand up the XBE bake + xemu loop. The rig enters only at X3;
+delivery target remains the friend's softmodded console.
