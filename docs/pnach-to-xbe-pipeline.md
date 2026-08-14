@@ -692,6 +692,56 @@ Mechanical. `recon/xdvdfs.py` already *reads* XDVDFS; this adds the writer:
 - Output verification: re-extract the XBE from the produced ISO and byte-compare
   against the emitter's output.
 
+### 8.1 XISO layout — measured against the operator's image (2026-08-14)
+
+A strict pass over the real 3.11 GB dump. **Every number below was read from the
+image**, and one of them overturns the draft's assumption.
+
+| fact | value |
+|---|---|
+| image size | 3,114,663,936 B = **1,520,832 sectors exactly** (no partial tail sector) |
+| files / dirs | 66 files, 1 directory (`/DATA/`) |
+| `default.xbe` | start sector **265**, size **4,890,624 B = exactly 2,388 sectors** (already whole-sector) |
+| its directory record | root table sector **264**, record at table offset `0x14` → **file offset `0x84014`** |
+| record fields | `start_sector` u32 at **+4**, `size` u32 at **+8** — a repoint is an **8-byte write** |
+| packing density | sum of sector-rounded extents = **100.0%** of the image |
+| tail slack after the last file | 62,848 B, and **not zero-filled** |
+
+**⚠ CORRECTION to the draft — in-place XBE growth headroom is ZERO, not 4 KB.**
+The two sectors immediately after `default.xbe` (2653–2654) look like a gap
+between files, and a naive "next file starts at 2655" calculation reports 4,096
+free bytes. They are **the `/DATA/` directory table** (root entry: `DATA`,
+start_sector 2653, size 4,096 — and the bytes there decode as directory records,
+e.g. `UIS_GRP_MADDEN_REC`). Overwriting them would destroy the filesystem for
+every other file on the disc. **Any XBE growth requires relocation.**
+
+**Consequence — the packaging design is forced, and it is cheap:**
+1. **Same-size XBE** (site patches only, no new section) → in-place overwrite at
+   sector 265. The image is otherwise byte-identical. This is the C1-tracer-bullet
+   path and needs no directory surgery at all.
+2. **Grown XBE** (any cave, i.e. any new section) → **append the padded XBE at the
+   end of the image and repoint its record**: write the new `start_sector` and the
+   true byte `size` (not the padded length) as two u32s at file offset `0x84014`.
+   The old extent is left in place as garbage — harmless, and it keeps the edit to
+   eight bytes. The image grows by the padded XBE size.
+   *Do not attempt to reclaim the vacated 2,388 sectors*: the image is 100% packed
+   by construction, so there is nothing to gain and a rebuild to lose.
+3. **Never rebuild the whole image** unless a future need forces it — the append +
+   repoint path avoids relayout entirely.
+
+**Why this is low-risk despite being a growth path:** the only structural edit is
+eight bytes in one directory record whose offset is known and verified. There is
+no ISO-level checksum, no volume-size field that must agree (the volume descriptor
+records the root table's sector/size, not the image length), and no other record
+references `default.xbe`.
+
+**Sector arithmetic to get right (the failure modes):** the appended XBE must
+start on a sector boundary and be zero-padded to a whole sector, while the
+directory record's `size` field must carry the **true byte count** — the reader
+uses `size` for extraction, so a padded value corrupts every downstream byte-diff.
+The current XBE is a whole number of sectors, which makes the same-size case
+trivially safe, and this is exactly the invariant the output verification checks.
+
 **Delivery — and why this phase is not on the critical path.** The friend runs a
 softmodded console, and the delivery mechanism decided in
 `docs/xbox-madden-2004-plan.md` is **FTP the patched `default.xbe` into the
