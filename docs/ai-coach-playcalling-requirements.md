@@ -222,11 +222,28 @@ Full detail: `ai-coach-investigation-{ptrk,inputs,playcaller}.md`.
 - **Structure:** ctor `0x0024D890`, 1556 B = 16-B header + two 48×16 rings (per
   side) + counts. Self-contained (all refs in `0x0024CAFC–0x0024E45C`).
   Franchise-persisted as one `'STPG'` GBIN section (`0x0024E458`).
-- **Record already holds most of Layer-1's data** (recorder `0x00148900`): `@4`
-  opponent play id, `@8` direction/zone (inside/outside, L/R, short/deep), `@13`
-  yards, `@14` 5-way outcome, `@15` run/pass (via `IsRun 0x001F82E8`, verified).
-  **Only pass-target player is missing → one new field** (+ a game/session id for
-  §2.5). Existing fields' only readers are the legacy selection we're replacing.
+- **Record already holds most of Layer-1's data.** Recorder entry is
+  **`0x001488D8`** (**corrected 2026-08-14** — `0x00148900` is mid-prologue with
+  ZERO callers; the real entry has one, `0x0014A11C`). Fields: `@4` opponent play
+  id, `@8` direction/zone, `@12` **target player roster index**, `@13` yards
+  (signed, `endSpot − LOS`), `@14` 5-way outcome (**write-once**), `@15` run/pass.
+  - **`@12` PASS-TARGET IS ALREADY RECORDED (corrected 2026-08-14)** — the earlier
+    "pass-target nowhere stored" was WRONG. The recorder walks the per-play event
+    log (`*0x00600E30`); **event type 5 = the throw** carries the target player
+    pointer at `event+8`, and the recorder reads it: `0x00148CA0 lw v0,8(s0)` →
+    `0x00148CB0 lbu a1,2(v0)` (byte 2 of a player object = its roster index) →
+    `@12`. **Verified by the coordinator.** The real defect is that `@12` is
+    **last-writer-wins** (event types 4/6/8 also write it), so Phase 2 adds a
+    DEDICATED target byte at `0x00148CB0` rather than a whole new signal — plus
+    the throw kind from `event@4` (free; separates real throws from
+    handoff/pitch/spike).
+  - **`@8` detail:** pass → L/M/R + depth buckets (<7 / 7–15 / ≥15 yd); run →
+    L/M/R + absolute field-side flags, **no depth buckets** (the earlier
+    "short/deep" summary over-stated runs).
+  - **`@14` is write-once and all five values are taken**, with NO 1st-down/TD bit
+    → **T-track needs a new field or a relaxed guard** (settles ledger A3 statically).
+  - **`@15` already distinguishes a SCRAMBLE from a called run** — a free signal.
+  - Still needed for Phase 2: the game/session id (§2.5) and the dedicated target byte.
 - **De-cheese = TWO getters (verified).** `0x0024E188` (repetition) has exactly the
   9 cheat consumers as callers (coverage ×5, break-block, tackle, ball-contest,
   event-rate); `0x0024E1C0` (success) feeds the defensive branches. Neuter both →
@@ -256,9 +273,17 @@ Full detail: `ai-coach-investigation-{ptrk,inputs,playcaller}.md`.
   the `0x00148/9` module). **GAP: down/distance/timeouts unbound — one live read.**
 - **Formation = position byte `+0xB04`** (QB0/HB1/FB2/WR3/TE4). No formation-id;
   empty check = count `+0xB04∈{1,2}` vs `==3` over the 11.
-- **PA omniscience:** `IsRun 0x001F82E8` reads the authored play type
-  (`0x00243F58`); defenders gate on it (`0x001BE2D0`). The fake fools the CPU not
-  at all today — §2.6.
+- **PA omniscience (polarity CORRECTED 2026-08-14):** `0x001F82E8` is **IsPASS,
+  not IsRun** — its leaf `0x00243F58` returns 1 iff the AUTHORED playType ∈ [1,6]
+  (`lw a0,0x14(a0)` / `sltiu v1,a0,7` / `sltu v0,zero,a0` — coordinator-verified),
+  and that range is pass (evidence: `@8`'s depth buckets fire only when `@15==2`).
+  **So `@15`: 2 = pass, 1 = run**, and every defensive branch consulting it runs
+  the OPPOSITE way from what earlier notes said (e.g. `0x001BE2D0`).
+  **The load-bearing conclusion is unchanged and strengthened:** the predicate
+  reads the AUTHORED play type from the play object, never a visual cue — the
+  defense is omniscient about run/pass regardless of polarity. §2.6's fix
+  (replace the gate with a probabilistic diagnosis) stands; only the branch sense
+  must be read correctly when patching.
 - **Ratings reachable both rosters:** `+0xB70` block (STR `+0xB8E`, STA `+0xB8C`,
   AWR `+0xB74`), position `+0xB04`, assignment `*(player+0x2FC)`. CB-vs-WR matchup
   scoring is absent — a build target on reachable inputs. Roster-analysis home: the
