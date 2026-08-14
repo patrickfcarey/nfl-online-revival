@@ -342,7 +342,18 @@ with the PA-bite diagnosis; gate the audible-mirror; disguise + late rotation IF
 Phase 0 finds a rotation primitive.
 
 **Phase 4 — Drop the cheese (LAST).** Neuter the two getters (§4.1) — only after
-the calling is smart, or the CPU gets dumber.
+the calling is smart, or the CPU gets dumber. **COST RESOLVED 2026-08-14: TWO
+NOPS, 8 bytes, no cave.** Both getters share one shape — `jal 0x00172960` (the
+practice check) then `beq v0,zero,<real read>`; the return-0.0 path already sits
+in shipped code below it. Nopping the branch at **`0x0024E198`** (repetition) and
+**`0x0024E1D0`** (success) makes both always fall through to `mtc1 zero,f0`.
+Coordinator-verified. All 15 consumers are covered — nothing reads `gp−14396`
+outside the module.
+*Negative that matters:* the Xbox "kill switch" hypothesis is **refuted** — that
+byte is the SAME practice flag (`'prac'` +0x17E), reachable only by three
+construction-time writers from a DB read, with **169 call sites in 133 functions**
+branching on it (fatigue, penalties, announcer, franchise stats). It is not a
+free difficulty toggle; the two nops are the honest lever.
 
 **Phase 5 — Resize + persistence.** 48 → 200 (or a full season ~1200/side). **The
 ring is HEAP-allocated** (ctor `0x0024D890` mallocs 1556 B via `0x0039D6C8`;
