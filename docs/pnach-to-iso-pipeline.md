@@ -30,13 +30,13 @@ Word patches don't change the file size, so the ISO's filesystem is never
 touched — the ELF's bytes are overwritten where they lie, exactly the roster
 tool's trick.
 
-1. **`tools/bake_pnach.py`** *(to build)* — pnach in, patched ELF out.
+1. **`tools/bake_pnach.py`** — **BUILT 2026-08-14** (49 tests). pnach in, patched ELF out.
    - Parse `patch=1,EE,addr,word,value` lines; **classify each**: file-backed →
      write at `vaddr − 0xFF000`; `.bss` → REFUSE (until an init-hook mechanism
      exists); outside → error. Duplicate-address collision check.
    - Emit a **manifest** (addr, old word, new word) — the audit/revert record,
      and the input to verification.
-2. **`tools/patch_iso_elf.py`** *(to build)* — patched ELF into the ISO.
+2. **`tools/patch_iso_elf.py`** — **BUILT 2026-08-14** (25 tests). Patched ELF into the ISO.
    - Locate `SLUS_207.52;1` in the image (reuse `patch_iso_roster.py`'s
      `locate()`: xorriso, then scan). Same-size overwrite; refuse otherwise;
      `-o` / `--in-place`.
@@ -103,9 +103,43 @@ can hold a larger file. Scoped, not started:
   well-formed second segment should Just Work — verify early with a trivial
   segment before the coach-brain depends on it.
 
+## P1 RESULT (2026-08-14): BUILT AND VERIFIED AGAINST THE LIVE SET
+
+Both tools exist, tested, and independently re-verified by the coordinator (bake
+re-run from scratch, output disassembled directly — not trusting the builder's
+own report):
+
+    102 patch lines | file-backed 102 | .bss 0 | outside 0
+    102 words written (7 already matched) | 5,354,036 bytes, size unchanged
+    verify: 102/102 read back as intended; NO byte outside a patched word differs
+    original ELF md5 1a5e551634f2644739cfb4ba39025ef8 UNCHANGED
+
+Spot-disassembly of the baked image (coordinator's own run): C1 `0x001F2D60` =
+`beq zero,zero` (was `beq s6,zero`, same target); N-1 `0x001F153C` =
+`jal 0x004f4aa0` (was `jal 0x001f0c40`); T3 k at `0x004F4BCC` = float 0.8;
+P11 `0x001F21E8` = `addiu a1,zero,0`; P1 `0x001F4A30` = `j 0x00514920`. 95
+distinct words differ (102 written − 7 that already held their value: cave
+delay-slot zeros into already-zero space).
+
+Safety paths proven on the REAL ELF: a `.bss` address (`0x0060A000`) and an
+out-of-segment address are refused by name with the `.bss` span printed and
+**no output file created**. Round trip proven end to end on a synthetic ISO
+carrying the real stock ELF: patch → re-extract → byte-identical to the baker's
+output, image size unchanged, differences confined to the ELF's extent.
+
+Beyond spec, the builder added: straddle-the-filesz detection, duplicate vs
+conflict handling (`--allow-conflicts`, last-line-wins as the cheat engine
+resolves it), `--audit` (classify, write nothing), unknown-directive refusal
+(a silently skipped line is a patch that didn't ship), and a real ISO9660
+directory walk as the xorriso fallback (yields the exact LBA *and* size the
+size-check needs) with `SYSTEM.CNF`/`BOOT2` boot-file autodetect.
+
+**What remains for a shippable ISO:** the operator's own disc image. The tools
+are ready; `patch_iso_elf.py` has never run against a real PS2 ISO.
+
 ## Status
 
-P1 is fully specified and **unblocked** — the audit already passed on the live
+P1 is **BUILT** (above) — the audit already passed on the live
 set; the two tools are an afternoon each against existing prior art. P2 is
 scoped with one real unknown (segment placement vs heap) parked in the
 ai-coach ledger as B6. First deliverable when built: the **baked
