@@ -375,7 +375,29 @@ its first large tenant. Caves carry dev iteration until it lands. **Scoped in
 102/102 against the live patch set; P2 is the grow path with the segment-placement
 question (B6). The Xbox port rides the same philosophy: `xbox-madden-2004-plan.md`.
 
-**Ongoing — Expand the play pool.** **Custom playbooks must hold ≥200 plays**
+**Ongoing — Expand the play pool. C1 ANSWERED 2026-08-14 — the ≥200 target is
+already met by shipped data.** Largest shipped book = **243 plays** (34 of 38
+offensive books are already ≥200; median 223). **I-Form max = 84 plays** (deepest
+formation of any kind: Single Back 114). **No per-formation cap exists in the
+schema** — set/formation ids are 8-bit, play ids 16-bit, counts u16. The real
+limit is a per-table `max_records` u16 at table-header +20 (runtime +110,
+`0x004CB3A8`; inserts refuse at `count >= capacity` with error 19), and in a
+shipped book **cap EQUALS count** (member 22: PBPL 243/243) — so it is authored
+per playbook at build time, NOT an engine ceiling. The template's `PLYL`/`PBPL` =
+100 and `PBAI` = 175 are **create-a-playbook defaults**; the "~175" figure was the
+AI-ASSIGNMENT cap, never a play cap (member 44 carries 989 PBAI rows).
+**Consequence: a ≥200-play custom book is a TEMPLATE REBUILD, not an ELF patch.**
+Coordinator-verified against the data.
+**Correction (mine):** the "225 no-bound-check" evidence I cited was WRONG —
+`0x2BD2EC` is `addiu a0,sp,224` and `0x2C1E20` is `addiu sp,sp,224` (stack-frame
+arithmetic), and **zero** `slti/sltiu` against 224/225 exists in the DB module.
+The 225 figure has no re-derivable static citation; largest shipped group is 167,
+so headroom is 1.35× — ledger A2 must close this on the rig.
+**B2 data half ANSWERED:** defensive books DO carry package rows (279 `SPKF` /
+574 `SPKG` across 13 of 14 books; Nickel/Dime/Quarter are real formations with
+plays). **Nickel needs no new authored rows — the gap is purely selection logic.**
+
+(Original requirement text follows.) **Custom playbooks must hold ≥200 plays**
 (template is ~175 today, ~18/group) so the archetypes (§2.1) and situational calling
 have real depth. A playbook-DB capacity change — investigate the per-team playbook
 block size (`0xAFBC`, Agent A), the PBAI row cap, and where create-a-playbook limits
